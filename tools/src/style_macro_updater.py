@@ -24,27 +24,9 @@ import sys
 import re
 from datetime import datetime
 
-from patterns import (
-    ACCESSIBLE_TITLE_STORAGE_PATTERN,
-    TITLE_H1_RENDER_PATTERNS,
-    TITLE_RENDER_CONTEXT_PATTERNS,
-    QNS_PATTERNS,
-    Q_PATTERNS,
-    REQUIRED_ACCESSIBLE_TITLE_STORAGE,
-    REQUIRED_TITLE_SETTER,
-    REQUIRED_TITLE_H1_RENDER,
-    REQUIRED_RENEW,
-    REQUIRED_NEW,
-    REQUIRED_DEF,
-    TITLE_PATTERNS,
-    SOL_PATTERNS,
-    ACC_HEADINGS,
-)
-
 from common import (
     ensure_accessibility_package,
     backup_file,
-    replace_first_matching_pattern,
 )
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -56,10 +38,115 @@ LOG_FILE = os.path.join(
     f"style_macro_updater_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
 )
 
+# Macro patterns (line-based to safely handle legacy one-line definitions)
+TITLE_PATTERNS = [
+    re.compile(r"^\s*\\renewcommand\{\\title\}\[1\]\{.*\}\s*$", re.MULTILINE),
+    re.compile(r"^\s*\\newcommand\{\\title\}\[1\]\{.*\}\s*$", re.MULTILINE),
+    re.compile(r"^\s*\\def\\title#1\{.*\}\s*$", re.MULTILINE),
+]
+
+ACCESSIBLE_TITLE_STORAGE_PATTERN = re.compile(
+    r"^\s*\\newcommand\{\\accessibletitle\}\{\}\s*$", re.MULTILINE
+)
+
+TITLE_H1_RENDER_PATTERNS = [
+    re.compile(
+        r"\{\\dunhb\s+\\hfill\s+\\dunhbb\s+\\AccessibilityHeadingOne\{\\title\}\s+\\par\}",
+        re.MULTILINE,
+    ),
+    re.compile(
+        r"\{\\dunhb\s+\\hfill\s+\\dunhbb\s+\\title\s+\\par\}",
+        re.MULTILINE,
+    ),
+]
+
+TITLE_RENDER_CONTEXT_PATTERNS = TITLE_H1_RENDER_PATTERNS + [
+    re.compile(
+        r"\{\\dunhb\s+\\hfill\s+\\dunhbb\s+\\AccessibilityHeadingOne\{\\accessibletitle\}\s+\\par\}",
+        re.MULTILINE,
+    )
+]
+
+QNS_PATTERNS = [
+    re.compile(r"^\s*\\renewcommand\{\\qns\}\[1\]\{.*\}\s*$", re.MULTILINE),
+    re.compile(r"^\s*\\newcommand\{\\qns\}\[1\]\{.*\}\s*$", re.MULTILINE),
+    re.compile(r"^\s*\\def\\qns#1\{.*\}\s*$", re.MULTILINE),
+]
+Q_PATTERNS = [
+    re.compile(r"^\s*\\renewcommand\{\\q\}\[2\]\{.*\}\s*$", re.MULTILINE),
+    re.compile(r"^\s*\\newcommand\{\\q\}\[2\]\{.*\}\s*$", re.MULTILINE),
+    re.compile(r"^\s*\\def\\q#1#2\{.*\}\s*$", re.MULTILINE),
+]
+
+# AccessibilityHeading* patterns
+ACC_HEADINGS = [
+    (
+        "One",
+        r"\\newcommand\{\\AccessibilityHeadingOne\}\[1\]\{.*?\}",
+        r"\\newcommand{\\AccessibilityHeadingOne}[1]{#1}",
+    ),
+    (
+        "Two",
+        r"\\newcommand\{\\AccessibilityHeadingTwo\}\[1\]\{.*?\}",
+        r"\\newcommand{\\AccessibilityHeadingTwo}[1]{#1}",
+    ),
+    (
+        "Three",
+        r"\\newcommand\{\\AccessibilityHeadingThree\}\[1\]\{.*?\}",
+        r"\\newcommand{\\AccessibilityHeadingThree}[1]{#1}",
+    ),
+    (
+        "Four",
+        r"\\newcommand\{\\AccessibilityHeadingFour\}\[1\]\{.*?\}",
+        r"\\newcommand{\\AccessibilityHeadingFour}[1]{#1}",
+    ),
+]
+
+# Required macro definitions
+REQUIRED_RENEW = {
+    "title": r"\renewcommand{\title}[1]{\gdef\accessibletitle{#1}\AccessibilitySetDocumentTitle{#1}}",
+    "qns": r"\renewcommand{\qns}[1]{\bf\item \AccessibilityHeadingTwo{#1}}",
+    "q": r"\renewcommand{\q}[2]{\bf\item (#1 pts.)\quad \AccessibilityHeadingThree{#2}}",
+}
+REQUIRED_NEW = {
+    "title": r"\newcommand{\title}[1]{\gdef\accessibletitle{#1}\AccessibilitySetDocumentTitle{#1}}",
+    "qns": r"\newcommand{\qns}[1]{\bf\item \AccessibilityHeadingTwo{#1}}",
+    "q": r"\newcommand{\q}[2]{\bf\item (#1 pts.)\quad \AccessibilityHeadingThree{#2}}",
+}
+REQUIRED_DEF = {
+    "title": r"\def\title#1{\gdef\accessibletitle{#1}\AccessibilitySetDocumentTitle{#1}}",
+    "qns": r"\def\qns#1{{\bf\item \AccessibilityHeadingTwo{#1}}}",
+    "q": r"\def\q#1#2{{\bf\item (#1 pts.)\quad \AccessibilityHeadingThree{#2}}}",
+}
+
+REQUIRED_ACCESSIBLE_TITLE_STORAGE = r"\newcommand{\accessibletitle}{}"
+REQUIRED_TITLE_SETTER = REQUIRED_RENEW["title"]
+REQUIRED_TITLE_H1_RENDER = (
+    r"{\dunhb \hfill \dunhbb \AccessibilityHeadingOne{\accessibletitle} \par}"
+)
+
+
+def _replace_first_matching_pattern(content, patterns, macro_name):
+    for idx, pattern in enumerate(patterns):
+        if pattern.search(content):
+            if idx == 0:
+                replacement = REQUIRED_RENEW[macro_name]
+            elif idx == 1:
+                replacement = REQUIRED_NEW[macro_name]
+            else:
+                replacement = REQUIRED_DEF[macro_name]
+            return pattern.subn(lambda _m: replacement, content, count=1)
+    return content, 0
+
 
 def update_macros_in_content(content, filepath):
     filename = os.path.basename(filepath)
     changes = []
+
+    # Update \title
+    content, n = _replace_first_matching_pattern(content, TITLE_PATTERNS, "title")
+    if n:
+        changes.append(f"Updated \\title in {filename}")
 
     # Ensure title storage macro exists for \title setter + render path.
     title_match = re.search(
@@ -118,47 +205,13 @@ def update_macros_in_content(content, filepath):
     if footer_changes:
         changes.append(f"Updated footer title references in {filename}")
 
-    # Update \title
-    content, n = replace_first_matching_pattern(
-        content,
-        TITLE_PATTERNS,
-        REQUIRED_RENEW["title"],
-        REQUIRED_NEW["title"],
-        REQUIRED_DEF["title"],
-    )
-    if n:
-        changes.append(f"Updated \\title in {filename}")
-
-    # Update \sol
-    content, n = replace_first_matching_pattern(
-        content,
-        SOL_PATTERNS,
-        REQUIRED_RENEW["sol"],
-        REQUIRED_NEW["sol"],
-        REQUIRED_DEF["sol"],
-    )
-    if n:
-        changes.append(f"Updated \\sol in {filename}")
-
     # Update \qns
-    content, n = replace_first_matching_pattern(
-        content,
-        QNS_PATTERNS,
-        REQUIRED_RENEW["qns"],
-        REQUIRED_NEW["qns"],
-        REQUIRED_DEF["qns"],
-    )
+    content, n = _replace_first_matching_pattern(content, QNS_PATTERNS, "qns")
     if n:
         changes.append(f"Updated \\qns in {filename}")
 
     # Update \q
-    content, n = replace_first_matching_pattern(
-        content,
-        Q_PATTERNS,
-        REQUIRED_RENEW["q"],
-        REQUIRED_NEW["q"],
-        REQUIRED_DEF["q"],
-    )
+    content, n = _replace_first_matching_pattern(content, Q_PATTERNS, "q")
     if n:
         changes.append(f"Updated \\q in {filename}")
 

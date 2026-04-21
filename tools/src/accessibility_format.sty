@@ -23,17 +23,7 @@
 \newcommand{\AccessibilityApplyDocumentMetadata}{%
   \@ifpackageloaded{hyperref}{%
     \hypersetup{pdftitle={\Accessibility@DocumentTitle}}%
-  }{%
-    % Fallback for documents without hyperref.
-    % 1) Try PDF management API when available.
-    \ifcsname pdfmanagement_add:nnn\endcsname
-      \csname pdfmanagement_add:nnn\endcsname{Info}{Title}{\Accessibility@DocumentTitle}%
-    \fi
-    % 2) Ensure /Info /Title is written for pdfTeX-only flows (Ally reads this).
-    \ifdefined\pdfinfo
-      \pdfinfo{/Title (\Accessibility@DocumentTitle)}%
-    \fi
-  }%
+  }{}%
 }
 
 % Semantic heading helpers with graceful fallback when tagpdf is unavailable.

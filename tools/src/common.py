@@ -13,28 +13,6 @@ def backup_file(filepath: str) -> str:
     return backup_path
 
 
-def replace_first_matching_pattern(
-    content, patterns, required_renew, required_new, required_def
-):
-    """Replace the first matching macro definition based on command style.
-
-    Expected pattern ordering:
-      0 -> renewcommand form
-      1 -> newcommand form
-      2 -> def form
-    """
-    for idx, pattern in enumerate(patterns):
-        if pattern.search(content):
-            if idx == 0:
-                replacement = required_renew
-            elif idx == 1:
-                replacement = required_new
-            else:
-                replacement = required_def
-            return pattern.subn(lambda _m: replacement, content, count=1)
-    return content, 0
-
-
 # Matches any variation of the accessibility_format package loader, including relative paths
 ACCESSIBILITY_ANY_PACKAGE_PATTERN = re.compile(
     r"\\(usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{(?:[^{}]+/)*accessibility_format\}",
@@ -132,7 +110,6 @@ def ensure_accessibility_package(
 PREAMBLE_REQUIRE = r"\RequirePackage{pdfmanagement-testphase}"
 PREAMBLE_METADATA = r"\DocumentMetadata{lang=en-US,pdfstandard=ua-1,pdfversion=2.0}"
 TAGPDF_SETUP = r"\tagpdfsetup{activate-all,uncompress}"
-
 
 def create_preamble_metadata(lang="en-US", pdfstandard="ua-1", pdfversion="2.0"):
     return f"\DocumentMetadata{{lang={lang},pdfstandard={pdfstandard},pdfversion={pdfversion}}}"

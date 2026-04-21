@@ -1,70 +1,51 @@
+import argparse
 import os
+import re
 import sys
+from datetime import datetime
+import accessibility_tool
 
+if __name__ == "__main__":
 
-def main():
     print(
         """
-╔════════════════════════════════════════════════════════════════╗
-║        EECS 16A Accessibility Tool                            ║
-╚════════════════════════════════════════════════════════════════╝
+        EECS 16A Accessibility Tool
+        -----------------------------------
+        This tool reformats LaTeX question bank files to help meet WCAG 2.1 accessibility standards.
+        It can achieve a 100% score on the bCourses Ally Checker using EECS 16A Discussion and Homework PDFs.
 
-Reformats LaTeX question bank files to meet WCAG 2.1 standards.
+        What this tool currently does:
+        - Ensures proper PDF tagging for:
+            • 1.3.1 Info and Relationships (semantic headings: title→H1, \qitem→H2, etc.)
+            • 2.4.2 Page Titled (A): Sets descriptive PDF document title metadata
 
-Current features:
-  • PDF tagging: Semantic headings (title→H1, questions→H2, etc.)
-  • Document title metadata for screen readers
+        Planned future features:
+        - 1.1.1 Non-text Content (A): Add alt-text for images and non-text elements
+        - 1.3.4 Orientation: Ensure content is not restricted to a single orientation
+        - Contrast (AA): Validate sufficient contrast between text and background colors
 
-Note: This tool is a work in progress and focuses on PDF tagging.
+        Additional goal: Enable students to use Ally to generate “Alternative Formats” (Tagged PDF, HTML, Braille, ePub, MP3, etc.) for course files and bCourses Pages.
+
+        Note: This tool is a work in progress and currently focuses on PDF tagging.
         """
     )
 
-    print("\nSelect updater:")
-    print("  0) Style + Assignment files")
-    print("  1) Exam files (.tex)")
-    print("  2) Assignment files (.tex)")
-    print("  3) Style files (.sty)")
-    choice = input("Enter choice (0-3): ").strip()
+    parser = argparse.ArgumentParser(
+        description="LaTeX assignment semantic heading tagger."
+    )
+    parser.add_argument("target_directory", help="/path/to/target/directory")
 
-    updater_map = {
-        "1": ("exam_macro_updater", "Exam"),
-        "2": ("assignment_macro_updater", "Assignment"),
-        "3": ("style_macro_updater", "Style"),
-    }
+    parser.add_argument(
+        "--no-backup", action="store_true", help="Disable generating .bak files"
+    )
 
-    if choice not in ("0", "1", "2", "3"):
-        print("Invalid choice.")
-        sys.exit(1)
+    parser.add_argument(
+        "--no-log", action="store_true", help="Disable generating log file"
+    )
+    args = parser.parse_args()
 
-    if choice == "0":
-        modules = [
-            ("style_macro_updater", "Style"),
-            ("assignment_macro_updater", "Assignment"),
-        ]
-    else:
-        modules = [(updater_map[choice][0], updater_map[choice][1])]
+    root_dir = os.path.abspath(args.target_directory)
+    create_backup = not args.no_backup
+    create_log = not args.no_log
 
-    root_dir = input("\nTarget directory path: ").strip()
-    if not os.path.isdir(root_dir):
-        print(f"Error: Directory not found: {root_dir}")
-        sys.exit(1)
-
-    backup_input = input("Create backups? (y/n, default: y): ").strip().lower()
-    create_backup = backup_input != "n"
-
-    log_input = input("Create log file? (y/n, default: y): ").strip().lower()
-    create_log = log_input != "n"
-
-    try:
-        for module_name, label in modules:
-            module = __import__(module_name)
-            module.main(root_dir, create_backup, create_log)
-            print(f"✓ {label} files updated.")
-        print("\nAll updates completed successfully.")
-    except Exception as e:
-        print(f"\n✗ Error: {e}")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+    accessibility_tool.main(root_dir, create_backup, create_log)

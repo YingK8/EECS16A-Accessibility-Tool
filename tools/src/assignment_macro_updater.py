@@ -31,14 +31,6 @@ from common import (
     ensure_accessibility_package,
     backup_file,
     ensure_pdf_tagging_preamble,
-    replace_first_matching_pattern,
-)
-
-from patterns import (
-    SOL_PATTERNS,
-    REQUIRED_RENEW,
-    REQUIRED_NEW,
-    REQUIRED_DEF,
 )
 
 QITEM_DEF_PATTERN = re.compile(
@@ -87,22 +79,6 @@ INPUT_PATTERN = re.compile(
     r"^\s*\\input\{[^}]+\}\s*$",
     re.MULTILINE,
 )
-WRAPPER_PREAMBLE_INPUT_PATTERN = re.compile(
-    r"^\s*\\input\{[^}]*preamble[^}]*\}\s*$", re.MULTILINE | re.IGNORECASE
-)
-WRAPPER_BODY_INPUT_PATTERN = re.compile(
-    r"^\s*\\input\{body[^}]*\}\s*$", re.MULTILINE | re.IGNORECASE
-)
-WRAPPER_PDF_REQUIRE_PATTERN = re.compile(
-    r"^\s*\\RequirePackage\{pdfmanagement-testphase\}\s*$", re.MULTILINE
-)
-WRAPPER_PDF_METADATA_PATTERN = re.compile(
-    r"^\s*\\DocumentMetadata\{[^\n]*pdfstandard=ua-1[^\n]*\}\s*$", re.MULTILINE
-)
-WRAPPER_PDF_REQUIRE_LINE = r"\RequirePackage{pdfmanagement-testphase}"
-WRAPPER_PDF_METADATA_LINE = (
-    r"\DocumentMetadata{lang=en-US,pdfstandard=ua-1,pdfversion=2.0}"
-)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -133,48 +109,11 @@ def _infer_document_title(content: str, filepath: str) -> str:
 def ensure_accessibility_document_title(content: str, filepath: str):
     """Ensure title metadata is configured for screen readers."""
     original_content = content
-    has_documentclass = (
-        re.search(r"^\s*\\documentclass", content, re.MULTILINE) is not None
-    )
-    title_match_existing = ACCESSIBILITY_SET_TITLE_PATTERN.search(content)
 
-    # For wrapper files (no \documentclass), ensure title line appears after preamble \input.
-    if not has_documentclass:
-        preamble_input_match = WRAPPER_PREAMBLE_INPUT_PATTERN.search(content)
-        any_input_match = INPUT_PATTERN.search(content)
-        anchor_match = preamble_input_match or any_input_match
-
-        if title_match_existing and anchor_match:
-            if title_match_existing.start() < anchor_match.end():
-                title_line = title_match_existing.group(0).strip()
-                content = ACCESSIBILITY_SET_TITLE_PATTERN.sub("", content, count=1)
-                anchor_match = WRAPPER_PREAMBLE_INPUT_PATTERN.search(
-                    content
-                ) or INPUT_PATTERN.search(content)
-                if anchor_match:
-                    insert_pos = anchor_match.end()
-                    content = (
-                        content[:insert_pos] + "\n" + title_line + content[insert_pos:]
-                    )
-                else:
-                    content = title_line + "\n" + content
-            return content, (content != original_content)
-
-        if not title_match_existing:
-            title_value = _infer_document_title(content, filepath)
-            set_title_line = f"\\AccessibilitySetDocumentTitle{{{title_value}}}"
-            if anchor_match:
-                insert_pos = anchor_match.end()
-                content = (
-                    content[:insert_pos] + "\n" + set_title_line + content[insert_pos:]
-                )
-            else:
-                content = set_title_line + "\n" + content
-            return content, (content != original_content)
-
+    if re.search(r"^\s*\\documentclass", content, re.MULTILINE) is None:
         return content, False
 
-    if not title_match_existing:
+    if not ACCESSIBILITY_SET_TITLE_PATTERN.search(content):
         title_value = _infer_document_title(content, filepath)
         set_title_line = f"\\AccessibilitySetDocumentTitle{{{title_value}}}"
 
@@ -206,19 +145,9 @@ def ensure_accessibility_document_title(content: str, filepath: str):
                         + content[insert_pos:]
                     )
                 else:
-                    input_match = INPUT_PATTERN.search(content)
-                    if input_match:
-                        insert_pos = input_match.end()
-                        content = (
-                            content[:insert_pos]
-                            + "\n"
-                            + set_title_line
-                            + content[insert_pos:]
-                        )
-                    else:
-                        content = set_title_line + "\n" + content
+                    content = set_title_line + "\n" + content
 
-    if has_documentclass and not ACCESSIBILITY_APPLY_METADATA_PATTERN.search(content):
+    if not ACCESSIBILITY_APPLY_METADATA_PATTERN.search(content):
         apply_line = "\\AtBeginDocument{\\AccessibilityApplyDocumentMetadata}"
 
         begin_doc_match = BEGIN_DOCUMENT_PATTERN.search(content)
@@ -248,52 +177,6 @@ def ensure_accessibility_document_title(content: str, filepath: str):
     return content, (content != original_content)
 
 
-def ensure_wrapper_pdf_metadata(content: str):
-    """Ensure wrapper .tex files (without documentclass) include PDF metadata lines."""
-    original_content = content
-    has_documentclass = (
-        re.search(r"^\s*\\documentclass", content, re.MULTILINE) is not None
-    )
-    if has_documentclass:
-        return content, False
-
-    insertion_lines = []
-    if not WRAPPER_PDF_REQUIRE_PATTERN.search(content):
-        insertion_lines.append(WRAPPER_PDF_REQUIRE_LINE)
-    if not WRAPPER_PDF_METADATA_PATTERN.search(content):
-        insertion_lines.append(WRAPPER_PDF_METADATA_LINE)
-
-    if insertion_lines:
-        block = "\n".join(insertion_lines) + "\n"
-        content = block + content.lstrip("\n")
-
-    return content, (content != original_content)
-
-
-def is_discussion_wrapper_file(content: str) -> bool:
-    """Detect wrapper files that load a preamble/body via \input and no documentclass."""
-    has_documentclass = (
-        re.search(r"^\s*\\documentclass", content, re.MULTILINE) is not None
-    )
-    return (
-        not has_documentclass
-        and WRAPPER_PREAMBLE_INPUT_PATTERN.search(content) is not None
-        and WRAPPER_BODY_INPUT_PATTERN.search(content) is not None
-    )
-
-
-def cleanup_nonwrapper_preamble_lines(content: str):
-    """Remove preamble-only lines if they were accidentally added to include fragments."""
-    original_content = content
-    content = WRAPPER_PDF_REQUIRE_PATTERN.sub("", content)
-    content = WRAPPER_PDF_METADATA_PATTERN.sub("", content)
-    content = ACCESSIBILITY_SET_TITLE_PATTERN.sub("", content)
-    # Collapse runs of blank lines introduced by removals.
-    content = re.sub(r"\n{3,}", "\n\n", content)
-    content = re.sub(r"^\n+", "", content)
-    return content, (content != original_content)
-
-
 def process_file(
     filepath: str,
     root_dir: str,
@@ -309,8 +192,6 @@ def process_file(
 
     original_content = content
     changes = []
-    has_documentclass = re.search(r"^\s*\\documentclass", content, re.MULTILINE)
-    is_wrapper = is_discussion_wrapper_file(content)
 
     new_content = QITEM_DEF_PATTERN.sub(
         r"\\long\\def\\qitem#1{\\qpart\\item #1}", content
@@ -350,7 +231,7 @@ def process_file(
         changes.append("Ensured a blank line before \\sol/\\solution blocks")
 
     # 2. Ensure accessibility format is loaded with a relative path
-    if has_documentclass:
+    if re.search(r"^\s*\\documentclass", content, re.MULTILINE):
         content, pkg_changed = ensure_accessibility_package(
             content,
             filepath=filepath,
@@ -362,17 +243,6 @@ def process_file(
                 "Ensured accessibility_format loader is securely positioned with relative path"
             )
 
-    new_content, n = replace_first_matching_pattern(
-        content,
-        SOL_PATTERNS,
-        REQUIRED_RENEW["sol"],
-        REQUIRED_NEW["sol"],
-        REQUIRED_DEF["sol"],
-    )
-    if n:
-        content = new_content
-        changes.append("Updated \\sol macro to use AccessibilityHeadingFour (H4)")
-
     # 3. Ensure PDF tagging preamble is correct
     new_content, preamble_changed = ensure_pdf_tagging_preamble(content)
     if preamble_changed:
@@ -381,32 +251,15 @@ def process_file(
             "Updated PDF tagging preamble (pdfmanagement-testphase, DocumentMetadata, tagpdfsetup)"
         )
 
-    # 3b. Wrapper files without \documentclass still need metadata lines.
-    if is_wrapper:
-        new_content, wrapper_meta_changed = ensure_wrapper_pdf_metadata(content)
-        if wrapper_meta_changed:
-            content = new_content
-            changes.append(
-                "Ensured wrapper file has pdfmanagement-testphase and DocumentMetadata lines"
-            )
-
     # 4. Ensure document title metadata is configured for accessibility.
-    if has_documentclass or is_wrapper:
-        new_content, title_meta_changed = ensure_accessibility_document_title(
-            content, filepath
+    new_content, title_meta_changed = ensure_accessibility_document_title(
+        content, filepath
+    )
+    if title_meta_changed:
+        content = new_content
+        changes.append(
+            "Ensured AccessibilitySetDocumentTitle and begin-document metadata apply hook"
         )
-        if title_meta_changed:
-            content = new_content
-            changes.append(
-                "Ensured AccessibilitySetDocumentTitle and begin-document metadata apply hook"
-            )
-    else:
-        new_content, cleaned = cleanup_nonwrapper_preamble_lines(content)
-        if cleaned:
-            content = new_content
-            changes.append(
-                "Removed preamble-only metadata/title lines from include fragment"
-            )
 
     # Save outputs
     if content != original_content:

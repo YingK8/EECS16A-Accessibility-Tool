@@ -47,8 +47,6 @@ echo 'export TEXINPUTS="/path/to/questionBank:"' >> ~/.bashrc
 
 ---
 
-You should alwaysrunfromworkspaceroot!
-
 ## Example: Compile from any subdirectory
 ```
 cd /path/to/questionBank
