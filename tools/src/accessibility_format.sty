@@ -1,0 +1,115 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{accessibility_format}[2026/03/31 Semester accessibility format helpers]
+
+% ----------------------------------------------------------------------
+% INCLUDE GUARD & CATCODE SAFETY: 
+% Safely handle '@' catcode if the file is loaded via \input instead of \usepackage,
+% and prevent multiple-definition errors if loaded via differing relative paths.
+% ----------------------------------------------------------------------
+\edef\AccessibilityRestoreAtCatcode{\catcode`\noexpand\@=\the\catcode`\@\relax}
+\makeatletter
+
+\@ifundefined{AccessibilityFormatLoaded}{}{\AccessibilityRestoreAtCatcode\endinput}
+\gdef\AccessibilityFormatLoaded{}
+
+% Ensure color commands are available for contrast remapping.
+\@ifpackageloaded{xcolor}{}{\RequirePackage{xcolor}}
+
+% Default title fallback; callers can override with \AccessibilitySetDocumentTitle.
+\newcommand{\Accessibility@DocumentTitle}{EECS 16A Assignment}
+\newcommand{\AccessibilitySetDocumentTitle}[1]{\gdef\Accessibility@DocumentTitle{#1}}
+
+% Apply PDF title metadata when hyperref is available.
+\newcommand{\AccessibilityApplyDocumentMetadata}{%
+  \@ifpackageloaded{hyperref}{%
+    \hypersetup{pdftitle={\Accessibility@DocumentTitle}}%
+  }{%
+    % Fallback for documents without hyperref.
+    % 1) Try PDF management API when available.
+    \ifcsname pdfmanagement_add:nnn\endcsname
+      \csname pdfmanagement_add:nnn\endcsname{Info}{Title}{\Accessibility@DocumentTitle}%
+    \fi
+    % 2) Ensure /Info /Title is written for pdfTeX-only flows (Ally reads this).
+    \ifdefined\pdfinfo
+      \pdfinfo{/Title (\Accessibility@DocumentTitle)}%
+    \fi
+  }%
+}
+
+% Semantic heading helpers with graceful fallback when tagpdf is unavailable.
+\@ifundefined{tagstructbegin}{%
+  \newcommand{\AccessibilityHeadingOne}[1]{#1}
+  \newcommand{\AccessibilityHeadingTwo}[1]{#1}
+  \newcommand{\AccessibilityHeadingThree}[1]{#1}
+  \newcommand{\AccessibilityHeadingFour}[1]{#1}
+  \newcommand{\AccessibilityBody}[1]{#1}
+  \newcommand{\AccessibilitySolutionBlock}[1]{#1}
+}{%
+  \newcommand{\AccessibilityHeadingOne}[1]{\tagstructbegin{tag=H1}\tagmcbegin{tag=H1}#1\tagmcend\tagstructend}
+  \newcommand{\AccessibilityHeadingTwo}[1]{\tagstructbegin{tag=H2}\tagmcbegin{tag=H2}#1\tagmcend\tagstructend}
+  \newcommand{\AccessibilityHeadingThree}[1]{\tagstructbegin{tag=H3}\tagmcbegin{tag=H3}#1\tagmcend\tagstructend}
+  \newcommand{\AccessibilityHeadingFour}[1]{\tagstructbegin{tag=H4}\tagmcbegin{tag=H4}#1\tagmcend\tagstructend}
+  \newcommand{\AccessibilityBody}[1]{\tagstructbegin{tag=P}\tagmcbegin{tag=P}#1\tagmcend\tagstructend}
+  \newcommand{\AccessibilitySolutionBlock}[1]{\tagstructbegin{tag=Div}\tagmcbegin{tag=Div}#1\tagmcend\tagstructend}
+}
+
+% Provide the SM* aliases globally so content files can use them consistently.
+\providecommand{\SMHeadingOne}[1]{\AccessibilityHeadingOne{#1}}
+\providecommand{\SMHeadingTwo}[1]{\AccessibilityHeadingTwo{#1}}
+\providecommand{\SMHeadingThree}[1]{\AccessibilityHeadingThree{#1}}
+\providecommand{\SMHeadingFour}[1]{\AccessibilityHeadingFour{#1}}
+
+% Enforce high-contrast text colors (black, red, blue) for common course color names.
+\newcommand{\AccessibilityEnforceContrastPalette}{%
+  \colorlet{answerColor}{blue}%
+  \colorlet{solutionColor}{blue}%
+  \colorlet{solansColor}{blue}%
+  \colorlet{blueish}{blue}%
+  \colorlet{redish}{red}%
+  \colorlet{readerColor}{black}%
+}
+
+% Apply Contrast logic and Metadata Automation hooks seamlessly at runtime
+\AtBeginDocument{\AccessibilityEnforceContrastPalette}
+\AtBeginDocument{\AccessibilityApplyDocumentMetadata}
+
+% High-contrast text helper for labels that intersect graph lines.
+\newcommand{\AccessibilityLabelHalo}[1]{\begingroup\setlength{\fboxsep}{0.6pt}\colorbox{white}{\textcolor{black}{\strut #1}}\endgroup}
+\providecommand{\SMLabelHalo}[1]{\AccessibilityLabelHalo{#1}}
+
+% Provide alt-text wrappers globally when accsupp exists.
+\@ifundefined{BeginAccSupp}{%
+  \providecommand{\SMAltTextStart}[1]{}
+  \providecommand{\SMAltTextEnd}{}
+  \providecommand{\SMHideFromAT}[1]{#1}
+}{%
+  \providecommand{\SMAltTextStart}[1]{\BeginAccSupp{method=pdfstringdef,unicode,ActualText={#1}}}
+  \providecommand{\SMAltTextEnd}{\EndAccSupp{}}
+  \providecommand{\SMHideFromAT}[1]{\BeginAccSupp{method=pdfstringdef,unicode,ActualText={}}#1\EndAccSupp{}}
+}
+\providecommand{\SMSROnlyText}[1]{%
+\begingroup%
+\setbox0=\hbox{\SMAltTextStart{#1}\textcolor{black}{\fontsize{1pt}{1pt}\selectfont #1}\SMAltTextEnd{}}%
+\ht0=0pt\dp0=0pt\wd0=0pt\box0%
+\endgroup%
+}
+
+\newcommand{\SetPDFMetadata}[4]{%
+  \@ifpackageloaded{hyperref}{%
+    \hypersetup{
+      pdfauthor={#1},
+      pdftitle={#2},
+      pdfsubject={#3},
+      pdfkeywords={#4}
+    }
+  }{}%
+}
+
+\newcommand{\SetDocumentLang}[1]{%
+  \@ifpackageloaded{tagpdf}{\tagpdfsetup{tabsorder=structure, lang=#1}}{}%
+}
+\newcommand{\LearningObjective}[1]{\SMHeadingThree{Learning Objective}\par #1}
+\newcommand{\WorksheetTitle}[1]{\SMHeadingOne{#1}}
+
+% Restore original @ catcode
+\AccessibilityRestoreAtCatcode
