@@ -1,0 +1,114 @@
+# EECS 16A — Designing Information Devices and Systems I
+#
+# Reference profile. Copy this file to onboard another course; nothing in the
+# Python package is 16A-specific.
+
+name: eecs16a
+
+course:
+  number: "EECS 16A"
+  name: "Designing Information Devices and Systems I"
+  university: "UC Berkeley"
+  short_university: "UCB"
+  semester: "Spring 2026"
+  language: en-US
+
+corpus:
+  # Relative to this file. Override on the CLI with --corpus.
+  root: "../../questionBank"
+
+  include:
+    - "questionBank/**/*.tex"
+    - "sp26/**/*.tex"
+    - "exams/**/*.tex"
+
+  exclude:
+    # Frozen per-semester snapshots: ~17k of the 17.6k .tex files are archived
+    # copies. Converting them rewrites material nobody reads and multiplies the
+    # alt-text authoring cost by the number of semesters.
+    - "**/*_questionBank/**"
+    - "**/generatedTests*/**"
+    - "**/candidateQuestions/**"
+    # Vendored upstream packages, not course material.
+    - "**/circuitikz.sty"
+    - "**/kbordermatrix.sty"
+    - "**/algpseudocodex.sty"
+
+  scopes:
+    sp26: ["sp26/**/*.tex"]
+    bank: ["questionBank/**/*.tex"]
+    exams: ["exams/**/*.tex"]
+    # The approved conversion scope: live material plus the exam archive.
+    live:
+      - "questionBank/**/*.tex"
+      - "sp26/**/*.tex"
+      - "exams/**/*.tex"
+
+# How this course's home-grown macros map onto tagged heading levels.
+# Level 1 = document title (Title + H1), 2 = question, 3 = part, 4 = solution.
+headings:
+  macros:
+    title: 1          # \def\title{Homework 9} in every body.tex
+    qns: 2            # \qns{Noisy Images}       -> Question N
+    q: 2              # \q{10}{Title}            -> Question N, with points
+    qitem: 3          # \qitem = \qpart\item     -> Part (a)
+    sol: 4            # \sol{...}                -> Solution
+    solans: 4
+    ans: 4
+  autonumbered:
+    # Heading text is synthesised because the macro numbers itself.
+    qns: "Question {n}"
+    q: "Question {n}"
+    qitem: "Part ({alpha})"
+    sol: "Solution"
+    solans: "Solution"
+    ans: "Answer"
+
+figures:
+  alt_max_chars: 200
+  max_inline_data_points: 12
+  max_series: 2
+  max_graph_edges: 6
+
+  figure_environments:
+    - tikzpicture
+    - circuitikz
+    - axis
+    - pgfpicture
+
+  # Decorative by human decision only. Never inferred from a filename:
+  # lefthalfpic.jpg / righthalfpic.jpg look decorative and are load-bearing
+  # panorama halves in the image-stitching question.
+  artifact_allowlist:
+    - "figures/Berkeley_banner_1.jpg"
+    - "figures/Berkeley_banner_2.jpg"
+    - "figures/stacked_pieces.jpg"
+
+colors:
+  min_contrast_normal: 4.5
+  min_contrast_large: 3.0
+  background: "#FFFFFF"
+  # Course defaults that fail WCAG AA on white, with conforming replacements.
+  replace:
+    #  rgb(0.2,0.6,0.9)  = #3399E6, ~2.6:1  -> fails
+    solutionColor: "#0645AD"
+    solansColor: "#0645AD"
+    answerColor: "#0645AD"
+    #  pure red = #FF0000, 4.0:1 -> fails. The previous tool's "contrast fix"
+    #  set this to `red`, which is the failing value.
+    redish: "#C00000"
+    #  rgb(0.7,0.1,0.7) = #B31AB3, borderline; pin it to a conforming purple.
+    blueish: "#6A1B9A"
+
+engine:
+  name: pdflatex
+  # `tagging=on` and `pdfstandard=ua-*` require this LaTeX format or newer.
+  # Below it the tool falls back to testphase modules and warns loudly.
+  min_format_date: "2025-06-01"
+  pdf_standard: "ua-1"
+  pdf_version: "2.0"
+  legacy_testphase: [phase-III, math, table, graphic, firstaid]
+  min_runs: 3
+  timeout_seconds: 300
+
+catalog_dir: "a11y"

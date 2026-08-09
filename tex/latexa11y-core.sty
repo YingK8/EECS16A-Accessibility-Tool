@@ -1,0 +1,529 @@
+%% latexa11y-core.sty
+%% Part of latexa11y — https://github.com/YingK8/EECS16A-Accessibility-Tool
+%% SPDX-License-Identifier: MIT
+%%
+%% Accessibility primitives for tagged PDF output: strict alt text, tagged
+%% headings with bookmarks, accessible tables, and a WCAG-conforming palette.
+%%
+%% ---------------------------------------------------------------------------
+%% THE CENTRAL MECHANISM: AltOnly
+%% ---------------------------------------------------------------------------
+%% The requirement is "wrap an arbitrary region so assistive technology reads
+%% ONLY a supplied alt string, never the region's real contents". Three
+%% mechanisms could plausibly do that; only one actually works.
+%%
+%%   /ActualText   Spec-correct ("a replacement, not a description",
+%%                 ISO 32000-1 14.9.4) and implementation-broken. Measured
+%%                 support (ho-tex/accsupp#2): Acrobat rejects long strings and
+%%                 returns random substrings; Chrome truncates at 16383 chars and
+%%                 strips newlines; Firefox, MuPDF < 1.27, PDF-XChange and
+%%                 SumatraPDF ignore it entirely. Marked-content ActualText also
+%%                 CANNOT NEST, so it cannot wrap a region containing any other
+%%                 tagged construct. Rejected.
+%%
+%%   /Alt alone    A description, not a replacement. Reliable on a Figure whose
+%%                 content has no text kids -- but on its own it does not stop a
+%%                 reader descending into tagged content inside the region.
+%%
+%%   Artifact      Content marked as an artifact is by definition not real
+%%                 content: it is absent from the structure tree and every
+%%                 reader skips it unconditionally. This is the only 100%
+%%                 reliable suppression primitive in PDF.
+%%
+%% AltOnly therefore combines the last two, which is exactly the construction
+%% tagpdf itself uses for TikZ pictures (see tagpdfdocu-patches.sty): open one
+%% Figure structure element carrying /Alt, open a single marked-content leaf,
+%% then SUSPEND TAGGING for the body. Suspension stops structure creation and
+%% paragraph counting, so nothing inside can register itself in the tag tree.
+%% The reader reaches the /Alt and nothing else.
+%%
+%% Page breaks are the one real limit: a marked-content sequence cannot cross a
+%% page boundary. The unstarred environment therefore places its body in an
+%% unbreakable box, which guarantees a single well-formed MC leaf. Use the
+%% starred form only for regions that must break, and read the warning it emits.
+
+\NeedsTeXFormat{LaTeX2e}[2020-10-01]
+\ProvidesExplPackage{latexa11y-core}{2026-08-08}{0.1.0}
+  {Strict alt text, tagged headings and accessible tables}
+
+\RequirePackage{xcolor}
+
+%% ---------------------------------------------------------------------------
+%% 0. Graceful degradation
+%% ---------------------------------------------------------------------------
+%% tagpdf-base defines no-op stubs for all of these, and the kernel defines
+%% SuspendTagging/ResumeTagging as no-ops until tagging is activated. The
+%% providecommands below only matter on a kernel older than we support: they
+%% keep a document compiling (untagged) rather than erroring out.
+
+\providecommand \tagstructbegin [1] {}
+\providecommand \tagstructend       {}
+\providecommand \tagmcbegin    [1] {}
+\providecommand \tagmcend           {}
+\providecommand \tagpdfsetup   [1] {}
+\providecommand \SuspendTagging[1] {}
+\providecommand \ResumeTagging [1] {}
+
+\bool_new:N \l__access_tagging_bool
+\bool_new:N \g__access_strict_bool
+\bool_gset_true:N \g__access_strict_bool
+
+%% Is tagging actually switched on right now? Asked at use time, not load time,
+%% because \DocumentMetadata activates it after this package is read.
+\cs_new_protected:Npn \__access_if_tagging:TF #1#2
+  {
+    \cs_if_exist:NTF \tag_if_active:TF
+      { \tag_if_active:TF {#1} {#2} }
+      {#2}
+  }
+
+%% ---------------------------------------------------------------------------
+%% 1. Messages
+%% ---------------------------------------------------------------------------
+
+\msg_new:nnnn { latexa11y } { alt-empty }
+  { Empty~alt~text~for~a~#1. }
+  {
+    A~Figure~structure~element~with~an~empty~/Alt~is~a~PDF/UA-1~failure~
+    (Matterhorn~13-004),~not~an~exemption.~If~this~graphic~is~decorative,~use~
+    the~Decorative~environment~instead,~which~marks~it~as~an~artifact.
+  }
+
+\msg_new:nnnn { latexa11y } { alt-placeholder }
+  { Unfilled~alt-text~placeholder:~'#1'. }
+  {
+    A~placeholder~would~ship~into~the~PDF~as~real~/Alt~text.~A~screen~reader~
+    would~announce~it~verbatim,~and~-- worse -- the~document~would~PASS~a~naive~
+    "every~Figure~has~/Alt"~check~and~veraPDF,~producing~a~silent~false~
+    conformance~claim.~Fill~in~the~description~before~building.
+  }
+
+\msg_new:nnnn { latexa11y } { alt-is-filename }
+  { Alt~text~looks~like~a~file~name:~'#1'. }
+  {
+    Announcing~"vehicle~setup~dot~pdf"~tells~a~student~nothing.~Describe~what~
+    the~graphic~shows.~Note~that~latex-lab~uses~the~file~name~as~its~DEFAULT~
+    alt~text,~so~this~check~also~catches~figures~you~forgot~to~describe.
+  }
+
+\msg_new:nnnn { latexa11y } { alt-has-markup }
+  { Alt~text~contains~LaTeX~markup:~'#1'. }
+  {
+    /Alt~is~a~plain~PDF~string,~expanded~once~and~hex-encoded.~A~screen~reader~
+    announces~$\frac{1}{2}$~as~"dollar~backslash~f-r-a-c~one~two~dollar".~
+    Write~plain~words:~"one~half".
+  }
+
+\msg_new:nnnn { latexa11y } { altonly-broken }
+  { AltOnly~region~is~taller~than~the~text~block. }
+  {
+    A~marked-content~sequence~cannot~cross~a~page~boundary,~so~an~AltOnly~body~
+    must~fit~on~one~page.~Split~the~region,~or~use~the~starred~form~
+    \string\begin{AltOnly*}~and~verify~the~resulting~tag~tree.
+  }
+
+\msg_new:nnnn { latexa11y } { heading-level }
+  { Heading~level~#1~follows~level~#2,~skipping~a~level. }
+  {
+    Skipped~heading~levels~are~a~machine-testable~PDF/UA~failure~
+    (Matterhorn~14-003)~and~break~outline~navigation.~Insert~the~missing~level~
+    or~renumber.
+  }
+
+%% ---------------------------------------------------------------------------
+%% 2. Alt-text validation
+%% ---------------------------------------------------------------------------
+%% Runs on every alt string before it can reach the PDF. This is the guard that
+%% the previous generation of this tooling lacked.
+
+\tl_new:N \l__access_alt_tl
+
+\cs_new_protected:Npn \__access_validate_alt:nn #1#2
+  {
+    \tl_set:Nn \l__access_alt_tl {#1}
+    \tl_if_blank:nTF {#1}
+      { \msg_error:nnn { latexa11y } { alt-empty } {#2} }
+      {
+        \__access_alt_check_placeholder:n {#1}
+        \__access_alt_check_filename:n    {#1}
+        \__access_alt_check_markup:n      {#1}
+      }
+  }
+\cs_generate_variant:Nn \__access_validate_alt:nn { Vn }
+
+\clist_new:N \g__access_placeholder_clist
+\clist_gset:Nn \g__access_placeholder_clist
+  { <<ALT: , TODO , TO~DO , FIXME , XXX , ??? , DESCRIBE~ME , PLACEHOLDER }
+
+\cs_new_protected:Npn \__access_alt_check_placeholder:n #1
+  {
+    \clist_map_inline:Nn \g__access_placeholder_clist
+      {
+        \tl_if_in:nnT {#1} {##1}
+          { \msg_error:nnn { latexa11y } { alt-placeholder } {#1} }
+      }
+  }
+
+\cs_new_protected:Npn \__access_alt_check_filename:n #1
+  {
+    \clist_map_inline:nn { .png , .jpg , .jpeg , .pdf , .eps , .svg , .PNG , .JPG }
+      {
+        \tl_if_in:nnT {#1} {##1}
+          { \msg_warning:nnn { latexa11y } { alt-is-filename } {#1} }
+      }
+  }
+
+\cs_new_protected:Npn \__access_alt_check_markup:n #1
+  {
+    \tl_if_in:nnT {#1} { $ }
+      { \msg_warning:nnn { latexa11y } { alt-has-markup } {#1} }
+    %% The needle must be an actual backslash character, so \c_backslash_str is
+    %% e-expanded first; \str_if_in:nn would otherwise look for the literal
+    %% eleven characters "\c_backslash_str".
+    \exp_args:Nne \str_if_in:nnT {#1} { \c_backslash_str }
+      { \msg_warning:nnn { latexa11y } { alt-has-markup } {#1} }
+  }
+
+%% ---------------------------------------------------------------------------
+%% 3. AltOnly -- the strict "speak only this" region
+%% ---------------------------------------------------------------------------
+
+\box_new:N \l__access_altonly_box
+
+%% Unstarred: body goes in an unbreakable box, so the marked-content leaf is
+%% guaranteed well formed. Starred: body may break; one MC leaf per page ends up
+%% under the same Figure element, which is legal but worth verifying.
+%% ORDER IS LOAD-BEARING. The Figure element and the tagging suspension must be
+%% opened INSIDE the box, before any body content is typeset. Capturing the body
+%% into a box first and only then opening the Figure looks equivalent and is
+%% not: the body is typeset during box construction, while tagging is still
+%% live, so a TikZ node's text opens its own `text` marked-content sequence.
+%% That sequence then sits nested inside the Figure and IS announced -- the
+%% suppression silently fails while the /Alt still looks correct.
+\NewDocumentEnvironment { AltOnly } { s m }
+  {
+    \__access_validate_alt:nn {#2} { AltOnly~region }
+    \IfBooleanTF {#1}
+      { \__access_altonly_open:n {#2} }
+      {
+        \par
+        \vbox_set:Nw \l__access_altonly_box
+        \__access_altonly_open:n {#2}
+      }
+  }
+  {
+    \IfBooleanTF {#1}
+      { \__access_altonly_close: }
+      {
+        \__access_altonly_close:
+        \vbox_set_end:
+        \dim_compare:nNnT { \box_ht:N \l__access_altonly_box } > { \textheight }
+          { \msg_warning:nn { latexa11y } { altonly-broken } }
+        \box_use_drop:N \l__access_altonly_box
+      }
+  }
+
+\cs_new_protected:Npn \__access_altonly_open:n #1
+  {
+    \leavevmode
+    %% Paragraph tagging must be off for the whole region. Suspension stops the
+    %% para module from OPENING a text-unit inside the region, but content that
+    %% starts a paragraph while suspended still leaves TeX's paragraph state
+    %% changed; the next \par then tries to close a structure that was never
+    %% opened, and tagpdf reports "there is no open structure on the stack" for
+    %% the rest of the document.
+    \tagpdfparaOff
+    %% If we are inside running text an MC sequence is already open, and marked
+    %% content cannot nest. Close it, stash it, and reopen it on the way out --
+    %% the same push/pop pair tagpdf uses for its own artifact groups.
+    \tag_mc_end_push:
+    \tagstructbegin { tag=Figure , alt={#1} }
+    \tagmcbegin { }
+    %% Everything from here to the matching resume is invisible to the tag
+    %% tree: no structure elements, no paragraph counting, nothing for a
+    %% screen reader to descend into. The /Alt above is all that remains.
+    \SuspendTagging { latexa11y/AltOnly }
+  }
+\cs_generate_variant:Nn \__access_altonly_open:n { V }
+
+\cs_new_protected:Npn \__access_altonly_close:
+  {
+    \ResumeTagging { latexa11y/AltOnly }
+    \tagmcend
+    \tagstructend
+    \tag_mc_begin_pop:n { }
+    \tagpdfparaOn
+  }
+
+%% Inline command form, for wrapping a single graphic without a display block.
+\NewDocumentCommand \altonly { m +m }
+  {
+    \__access_validate_alt:nn {#1} { \string\altonly }
+    \mbox
+      {
+        \__access_altonly_open:n {#1}
+        #2
+        \__access_altonly_close:
+      }
+  }
+
+%% ---------------------------------------------------------------------------
+%% 4. Decorative -- speaks nothing at all
+%% ---------------------------------------------------------------------------
+%% PDF/UA exempts decorative content only via the artifact mechanism. An empty
+%% /Alt on a Figure is a failure; an artifact is a conformant exemption.
+
+%% tagpdf provides a dedicated helper for exactly this: it opens an artifact
+%% marked-content sequence AND suspends tagging, so the region needs no
+%% enclosing structure element. Opening a bare \tagmcbegin{artifact} in vertical
+%% mode instead fails with "there is no open structure on the stack".
+%% The argument is the PDF artifact SUBTYPE, not a free label. tagpdf accepts
+%% only pagination[/header|/footer], layout, page, background and notype.
+%% "Layout" is the spec's category for purely cosmetic design elements, which is
+%% what a decorative rule or a course banner is.
+\cs_new_protected:Npn \__access_artifact_begin:
+  {
+    \cs_if_exist_use:NTF \tag_mc_artifact_group_begin:n
+      { { layout } }
+      { \tagmcbegin { artifact } \SuspendTagging { latexa11y/Decorative } }
+  }
+\cs_new_protected:Npn \__access_artifact_end:
+  {
+    \cs_if_exist_use:NTF \tag_mc_artifact_group_end:
+      { }
+      { \ResumeTagging { latexa11y/Decorative } \tagmcend }
+  }
+
+\NewDocumentEnvironment { Decorative } { }
+  { \leavevmode \tagpdfparaOff \__access_artifact_begin: }
+  { \__access_artifact_end: \tagpdfparaOn }
+
+\NewDocumentCommand \decorative { +m }
+  { \mbox { \begin{Decorative} #1 \end{Decorative} } }
+
+%% ---------------------------------------------------------------------------
+%% 5. FigureBlock -- short /Alt plus a visible long description (tier T2)
+%% ---------------------------------------------------------------------------
+%% /Alt is atomic: a screen-reader user cannot pause inside it, re-read one
+%% sentence, or navigate a list or table within it. So a figure needing more
+%% than a sentence gets a SHORT /Alt plus a real, visible description in the
+%% body -- which is also what W3C WAI recommends ("long descriptions benefit
+%% many people and should be made available to everyone") and what NCAM
+%% requires for chart data ("presented as tables, not as narrative").
+
+\tl_new:N \l__access_figure_alt_tl
+
+\keys_define:nn { latexa11y / figure }
+  {
+    alt   .tl_set:N  = \l__access_figure_alt_tl ,
+    alt   .initial:n = { } ,
+  }
+
+\NewDocumentEnvironment { FigureBlock } { O{} }
+  {
+    \group_begin:
+    \keys_set:nn { latexa11y / figure } {#1}
+    \__access_validate_alt:Vn \l__access_figure_alt_tl { FigureBlock }
+    \__access_altonly_open:V \l__access_figure_alt_tl
+  }
+  {
+    \__access_altonly_close:
+    \group_end:
+  }
+
+%% The long description is ordinary tagged prose placed immediately after the
+%% figure, so it is the next thing in reading order -- no "see below" needed.
+%% Deliberately NOT tagged as Caption: a Caption element must be a child of the
+%% Figure or Table it belongs to, and this text sits after the figure at
+%% document level, so `Caption` there is an invalid parent-child relation that
+%% tagpdf reports and PDF/UA checkers flag. Plain prose is also the semantically
+%% honest choice -- this is body text, visible to everyone, and the paragraph
+%% module tags it as a P element on its own.
+\NewDocumentCommand \FigureDescription { +m }
+  {
+    \par
+    \begingroup
+      \small
+      \textbf { Figure~description. }~#1
+    \par
+    \endgroup
+  }
+
+%% ---------------------------------------------------------------------------
+%% 6. Tables
+%% ---------------------------------------------------------------------------
+%% Fail-safe default: every table is a LAYOUT table until an author opts in.
+%% A layout grid announced as "table with 21 columns" traps a screen-reader user
+%% in a structure that carries no meaning, which is worse than no tagging. The
+%% DataTable wrapper opts a genuine data table in, and resets the (sticky)
+%% latex-lab table keys on exit -- forgetting that reset is the single biggest
+%% footgun in latex-lab-table.
+
+%% `table/tagging` accepts true|on|false|off|presentation. There is no
+%% `structure` value; `true` is the structural (real Table/TR/TH/TD) mode.
+\NewDocumentEnvironment { DataTable } { O{} }
+  {
+    \tagpdfsetup { table/tagging=true , #1 }
+  }
+  {
+    \tagpdfsetup
+      { table/tagging=presentation , table/header-rows={} , table/header-columns={} }
+  }
+
+\NewDocumentEnvironment { LayoutTable } { }
+  { \tagpdfsetup { table/tagging=presentation } }
+  { }
+
+%% ---------------------------------------------------------------------------
+%% 7. Headings and bookmarks
+%% ---------------------------------------------------------------------------
+%% Tagging and bookmarks are different PDF object graphs: nothing in tagpdf ever
+%% writes /Outlines. PDF/UA does not require an outline, but WCAG 2.1 AA does
+%% for multi-page documents (SC 2.4.5, technique PDF2), so we emit both.
+%%
+%% Bookmark text is a PDF string, not typeset material, so math and font
+%% switches must be stripped. \accessheading takes an optional plain-text form for
+%% exactly that; latexa11y's Python side generates it automatically.
+
+\int_new:N \g__access_last_level_int
+\int_gzero:N \g__access_last_level_int
+\int_new:N  \g__access_bookmark_int
+
+\cs_new_protected:Npn \__access_check_level:n #1
+  {
+    \int_compare:nNnT {#1} > { \g__access_last_level_int + 1 }
+      {
+        \int_compare:nNnT { \g__access_last_level_int } > { 0 }
+          { \msg_warning:nnee { latexa11y } { heading-level }
+              { \int_to_arabic:n {#1} }
+              { \int_to_arabic:n { \g__access_last_level_int } } }
+      }
+    \int_gset:Nn \g__access_last_level_int {#1}
+  }
+
+%% #1 optional plain-text form for the bookmark, #2 level (1-6), #3 heading text.
+%% The optional argument cannot default to #3 (xparse defaults cannot reference
+%% other arguments), so the fallback is applied explicitly.
+\NewDocumentCommand \accessheading { o m +m }
+  {
+    \par
+    \__access_check_level:n {#2}
+    \int_gincr:N \g__access_bookmark_int
+    \IfNoValueTF {#1}
+      { \__access_bookmark:nn {#2} {#3} }
+      { \__access_bookmark:nn {#2} {#1} }
+    %% Paragraph tagging must be off across the heading. With it on, the para
+    %% module opens its own text-unit/text structure inside our H element, which
+    %% produces both an invalid Parent-Child relation (H1 -> text-unit) and a
+    %% nested marked-content sequence -- tagpdf reports "nested marked content
+    %% found" and the structure stack never recovers.
+    \tagpdfparaOff
+    \tagstructbegin { tag=H#2 }
+    \tagmcbegin { tag=H#2 }
+    #3
+    \tagmcend
+    \tagstructend
+    \par
+    \tagpdfparaOn
+  }
+
+\cs_new_protected:Npn \__access_bookmark:nn #1#2
+  {
+    \cs_if_exist:NTF \bookmark
+      {
+        \bookmark [ level=#1 , dest=a11y.bm.\int_use:N \g__access_bookmark_int ]
+          { \__access_pdfstring:n {#2} }
+      }
+      {
+        \cs_if_exist:NT \pdfbookmark
+          { \pdfbookmark [#1] { \__access_pdfstring:n {#2} }
+              { a11y.bm.\int_use:N \g__access_bookmark_int } }
+      }
+  }
+
+%% Convert typeset material to a PDF string.
+%%
+%% A bookmark title is a PDF string, not typeset material: font switches, colour
+%% commands and counters do not "render" there. Passing heading text through
+%% unchanged produces outlines like "a11ySolutionSolution" (the \color argument
+%% arriving as literal text) and "Question " (a counter that never expanded).
+%%
+%% l3text's \text_purify:n exists for exactly this: it expands what should
+%% expand and discards formatting. Commands it does not know are declared below.
+\cs_if_exist:NTF \text_purify:n
+  { \cs_new:Npn \__access_pdfstring:n #1 { \text_purify:n {#1} } }
+  { \cs_new:Npn \__access_pdfstring:n #1 { #1 } }
+
+\cs_if_exist:NT \text_declare_purify_equivalent:Nn
+  {
+    \text_declare_purify_equivalent:Nn \color        { }
+    \text_declare_purify_equivalent:Nn \colorlet     { }
+    \text_declare_purify_equivalent:Nn \textcolor    { \use_ii:nn }
+    \text_declare_purify_equivalent:Nn \bfseries     { }
+    \text_declare_purify_equivalent:Nn \normalfont   { }
+    \text_declare_purify_equivalent:Nn \normalsize   { }
+    \text_declare_purify_equivalent:Nn \large        { }
+    \text_declare_purify_equivalent:Nn \Large        { }
+    \text_declare_purify_equivalent:Nn \LARGE        { }
+    \text_declare_purify_equivalent:Nn \small        { }
+  }
+
+%% ---------------------------------------------------------------------------
+%% 8. Metadata and language
+%% ---------------------------------------------------------------------------
+
+\NewDocumentCommand \accesstitle { m }
+  {
+    \tl_gset:Nn \g__access_title_tl {#1}
+    \cs_if_exist:NT \hypersetup { \hypersetup { pdftitle={#1} } }
+    \cs_if_exist:NT \AddToDocumentProperties
+      { \AddToDocumentProperties [document] { title } {#1} }
+  }
+\tl_new:N \g__access_title_tl
+
+%% ---------------------------------------------------------------------------
+%% 9. Colour
+%% ---------------------------------------------------------------------------
+%% Contrast is enforced at the SOURCE level by the Python linter, which can
+%% compute WCAG relative luminance from \definecolor. This package only provides
+%% conforming defaults; it deliberately does not silently recolour a document.
+
+\definecolor { a11ySolution } { HTML } { 0645AD } % 8.6:1 on white
+\definecolor { a11yAnswer }   { HTML } { 0645AD }
+\definecolor { a11yWarning }  { HTML } { C00000 } % 5.9:1; plain red is 4.0:1
+\definecolor { a11yAccent }   { HTML } { 6A1B9A }
+
+\NewDocumentCommand \accesssafepalette { }
+  {
+    \@ifundefined { color@solutionColor } { } { \colorlet { solutionColor } { a11ySolution } }
+    \@ifundefined { color@solansColor }   { } { \colorlet { solansColor }   { a11ySolution } }
+    \@ifundefined { color@answerColor }   { } { \colorlet { answerColor }   { a11yAnswer } }
+    \@ifundefined { color@blueish }       { } { \colorlet { blueish }       { a11yAccent } }
+    \@ifundefined { color@redish }        { } { \colorlet { redish }        { a11yWarning } }
+  }
+
+%% ---------------------------------------------------------------------------
+%% 10. Package options
+%% ---------------------------------------------------------------------------
+
+\keys_define:nn { latexa11y }
+  {
+    strict     .bool_gset:N = \g__access_strict_bool ,
+    strict     .initial:n   = true ,
+    safepalette .code:n     = { \AtBeginDocument { \accesssafepalette } } ,
+  }
+
+\NewDocumentCommand \accesssetup { m } { \keys_set:nn { latexa11y } {#1} }
+
+%% In non-strict mode an unfilled placeholder degrades to a warning. This exists
+%% for mid-migration builds only; never ship a document built this way.
+\AtBeginDocument
+  {
+    \bool_if:NF \g__access_strict_bool
+      {
+        \msg_redirect_name:nnn { latexa11y } { alt-placeholder } { warning }
+        \msg_redirect_name:nnn { latexa11y } { alt-empty }       { warning }
+      }
+  }
+
+\endinput

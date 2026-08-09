@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "latexa11y"
+version = "0.1.0"
+description = "Convert LaTeX instructional materials into tagged, ADA Title II / PDF/UA-conforming PDFs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "UC Berkeley EECS 16A course staff" }]
+keywords = ["latex", "accessibility", "pdf-ua", "wcag", "ada", "tagpdf", "alt-text"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Text Processing :: Markup :: LaTeX",
+]
+
+# Deliberately light. Everything heavier is an extra, and every code path that
+# needs an extra degrades with an actionable message rather than an ImportError.
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+pdf = ["pikepdf>=8.0"]
+tui = ["textual>=0.60", "PyMuPDF>=1.24"]
+tex = ["pylatexenc>=2.10"]
+dev = ["pytest>=7.4", "pytest-cov>=4.1"]
+all = [
+    "pikepdf>=8.0",
+    "textual>=0.60",
+    "PyMuPDF>=1.24",
+    "pylatexenc>=2.10",
+    "pytest>=7.4",
+]
+
+[project.scripts]
+latexa11y = "latexa11y.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/YingK8/EECS16A-Accessibility-Tool"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+latexa11y = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning"]

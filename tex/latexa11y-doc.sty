@@ -1,0 +1,209 @@
+%% latexa11y-doc.sty
+%% Shared document machinery for assignments, exams and worksheets:
+%% course identity, the tagged title block, and the question/part/solution
+%% structure that produces the heading hierarchy.
+%%
+%% HEADING MODEL
+%%   level 1  document title      "Homework 13"            Title + H1
+%%   level 2  question            "Question 1. Noisy ..."  H2
+%%   level 3  part                "Part (a)"               H3
+%%   level 4  solution / answer   "Solution"               H4
+%%
+%% Questions and parts are numbered with counters rather than built as list
+%% environments. A list would add L/LI/Lbl/LBody structure around every heading
+%% for no semantic gain, complicate the parent-child rules, and bury the H2 two
+%% levels deep -- while the visual result ("1. Title") is identical.
+
+\NeedsTeXFormat{LaTeX2e}[2020-10-01]
+\ProvidesExplPackage{latexa11y-doc}{2026-08-08}{0.1.0}
+  {Tagged assignment/exam/worksheet structure}
+
+\RequirePackage{latexa11y-core}
+
+%% ---------------------------------------------------------------------------
+%% Solution visibility
+%% ---------------------------------------------------------------------------
+%% Replaces the corpus convention of duplicating a whole driver file
+%% (prob9.tex / sol9.tex differing only in whether \sol is a no-op) with class
+%% options on a single source.
+
+\bool_new:N \g__access_show_solutions_bool
+\bool_new:N \g__access_show_answers_bool
+\bool_new:N \g__access_show_guidance_bool
+\bool_new:N \g__access_reserve_space_bool
+\bool_gset_true:N \g__access_reserve_space_bool
+
+\NewDocumentCommand \accessshowsolutions { } { \bool_gset_true:N \g__access_show_solutions_bool }
+\NewDocumentCommand \accessshowanswers   { } { \bool_gset_true:N \g__access_show_answers_bool }
+\NewDocumentCommand \accessshowguidance  { } { \bool_gset_true:N \g__access_show_guidance_bool }
+\NewDocumentCommand \accessnoreserve     { } { \bool_gset_false:N \g__access_reserve_space_bool }
+
+%% ---------------------------------------------------------------------------
+%% Course identity
+%% ---------------------------------------------------------------------------
+
+\tl_new:N \g__access_coursenumber_tl
+\tl_new:N \g__access_coursename_tl
+\tl_new:N \g__access_semester_tl
+\tl_new:N \g__access_university_tl
+\tl_new:N \g__access_doctitle_tl
+
+\NewDocumentCommand \coursenumber { m } { \tl_gset:Nn \g__access_coursenumber_tl {#1} }
+\NewDocumentCommand \coursename   { m } { \tl_gset:Nn \g__access_coursename_tl   {#1} }
+\NewDocumentCommand \semester     { m } { \tl_gset:Nn \g__access_semester_tl     {#1} }
+\NewDocumentCommand \university   { m } { \tl_gset:Nn \g__access_university_tl   {#1} }
+
+%% \title is redefined rather than reused: the corpus calls it with no argument
+%% (\def\title{Homework 9}), and the tagged title block needs the string both to
+%% typeset and to place in the PDF metadata.
+\RenewDocumentCommand \title { m }
+  {
+    \tl_gset:Nn \g__access_doctitle_tl {#1}
+    \accesstitle {#1}
+  }
+
+%% ---------------------------------------------------------------------------
+%% Title block  (level 1)
+%% ---------------------------------------------------------------------------
+%% The rules are decorative and carry no meaning, so they are artifacts. In the
+%% legacy ee16.sty they were bare \hrule commands that became untagged content.
+
+\RenewDocumentCommand \maketitle { }
+  {
+    \begin{Decorative}
+      \noindent\rule{\linewidth}{3pt}
+    \end{Decorative}
+    \par\nobreak\vspace{0.4em}
+    \noindent
+    {
+      \normalsize\bfseries
+      \tl_use:N \g__access_coursenumber_tl
+      \tl_if_empty:NF \g__access_coursename_tl { \ \textnormal{\tl_use:N \g__access_coursename_tl} }
+      \hfill
+      \tl_use:N \g__access_semester_tl
+      \par
+    }
+    \vspace{0.3em}
+    \accessheading[\g__access_doctitle_tl]{1}{ \LARGE \tl_use:N \g__access_doctitle_tl }
+    \nobreak
+    \begin{Decorative}
+      \noindent\rule{\linewidth}{3pt}
+    \end{Decorative}
+    \par\vspace{0.8em}
+  }
+
+%% ---------------------------------------------------------------------------
+%% Questions (level 2) and parts (level 3)
+%% ---------------------------------------------------------------------------
+
+\newcounter{accessquestion}
+\newcounter{accesspart}[accessquestion]
+\RenewDocumentCommand \theaccessquestion { } { \arabic{accessquestion} }
+\RenewDocumentCommand \theaccesspart     { } { \alph{accesspart} }
+
+\tl_new:N \g__access_points_tl
+
+%% \question[points]{title}
+\NewDocumentCommand \question { o m }
+  {
+    \stepcounter{accessquestion}
+    \setcounter{accesspart}{0}
+    \IfNoValueTF {#1}
+      { \tl_gclear:N \g__access_points_tl }
+      { \tl_gset:Nn \g__access_points_tl {#1} }
+    %% The bookmark gets a plain-text form: bookmark strings are PDF strings,
+    %% so math and font switches in a question title would garble the outline.
+    \accessheading
+      [ Question~\int_use:N \c@accessquestion ]
+      {2}
+      {
+        \large\bfseries
+        Question~\theaccessquestion.\ #2
+        \tl_if_empty:NF \g__access_points_tl
+          { \ \normalfont\normalsize (\tl_use:N \g__access_points_tl\ points) }
+      }
+  }
+
+%% \questionpart[points] -- the part heading. Not \part (an article sectioning
+%% command) and not \qpart (markup.sty uses that as an autograder marker).
+\NewDocumentCommand \questionpart { o }
+  {
+    \stepcounter{accesspart}
+    \accessheading
+      [ Part~(\int_to_alph:n { \value{accesspart} }) ]
+      {3}
+      {
+        \bfseries
+        Part~(\theaccesspart)
+        \IfNoValueF {#1} { \ \normalfont\normalsize (#1~points) }
+      }
+  }
+
+%% ---------------------------------------------------------------------------
+%% Solutions, answers, guidance (level 4)
+%% ---------------------------------------------------------------------------
+
+\NewDocumentEnvironment { solution } { +b }
+  {
+    \bool_if:NTF \g__access_show_solutions_bool
+      {
+        \accessheading[Solution]{4}{ \bfseries\color{a11ySolution} Solution }
+        \begingroup\color{a11ySolution} #1 \par\endgroup
+      }
+      { \__access_reserve_space: }
+  }
+  { }
+
+\NewDocumentEnvironment { answer } { +b }
+  {
+    \bool_if:NTF \g__access_show_answers_bool
+      {
+        \accessheading[Answer]{4}{ \bfseries\color{a11yAnswer} Answer }
+        \begingroup\color{a11yAnswer} #1 \par\endgroup
+      }
+      { \__access_reserve_space: }
+  }
+  { }
+
+\NewDocumentEnvironment { guidance } { +b }
+  {
+    \bool_if:NT \g__access_show_guidance_bool
+      {
+        \accessheading[Guidance for staff]{4}{ \bfseries\color{a11yAccent} Guidance~for~staff }
+        \begingroup\color{a11yAccent} #1 \par\endgroup
+      }
+  }
+  { }
+
+%% Blank working space in the student version. Reserved space is decorative --
+%% it must not be announced, and it must not be an empty tagged paragraph.
+\dim_new:N \g__access_reserve_dim
+\dim_gset:Nn \g__access_reserve_dim { 5\baselineskip }
+\NewDocumentCommand \accessreserve { m } { \dim_gset:Nn \g__access_reserve_dim {#1} }
+
+\cs_new_protected:Npn \__access_reserve_space:
+  {
+    \bool_if:NT \g__access_reserve_space_bool
+      { \begin{Decorative} \vspace*{\g__access_reserve_dim} \end{Decorative} }
+  }
+
+%% ---------------------------------------------------------------------------
+%% Answer regions
+%% ---------------------------------------------------------------------------
+%% Replaces \framebox(470,42){} -- a picture-mode box that carries no semantics
+%% at all -- and \uline{\hfill} fill-in rules, neither of which a screen reader
+%% can report as "here is where you write your answer".
+
+\NewDocumentCommand \answerbox { O{5\baselineskip} }
+  {
+    \par\noindent
+    \begin{AltOnly}{Blank answer box for your written response.}
+      \fbox{ \parbox[c][#1][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{} }
+    \end{AltOnly}
+    \par
+  }
+
+\NewDocumentCommand \answerblank { O{4cm} }
+  { \altonly{Blank space for your answer}{\rule{#1}{0.4pt}} }
+
+\endinput

@@ -1,0 +1,84 @@
+% Golden fixture: exercises every latexa11y-core primitive under real tagging.
+% Compiled by tests/test_latex_golden.py and asserted at the PDF structure level.
+\DocumentMetadata{
+  lang        = en-US,
+  pdfversion  = 2.0,
+  testphase   = {phase-III,math,table,graphic,firstaid},
+}
+\documentclass[11pt]{article}
+
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{bookmark}
+\usepackage{latexa11y-core}
+
+\accesssetup{strict=true}
+
+\begin{document}
+
+\accesstitle{Golden Fixture}
+
+\accessheading{1}{Homework 13}
+
+Ordinary paragraph text that must remain readable and tagged as a P element.
+
+\accessheading{2}{Question 1: Noisy Images}
+
+\accessheading{3}{Part (a)}
+
+A short paragraph inside a part.
+
+% --- the strict alt-only region: a TikZ picture that must speak ONLY its alt --
+\begin{AltOnly}{Two capacitors, C1 and C2, each connected from its own top node
+to ground, with switch S1 joining the two top nodes.}
+\begin{tikzpicture}
+  \draw (0,0) -- (2,0) -- (2,2) -- (0,2) -- cycle;
+  \node at (1,1) {THIS TEXT MUST NOT BE SPOKEN};
+\end{tikzpicture}
+\end{AltOnly}
+
+% --- a decorative rule: must be an artifact, spoken not at all ---------------
+\begin{Decorative}
+\rule{\linewidth}{2pt}
+\end{Decorative}
+
+% --- inline form ------------------------------------------------------------
+Here is an inline graphic: \altonly{A red square used as a bullet}{%
+  \tikz\draw[fill=red] (0,0) rectangle (0.6em,0.6em);}
+
+% --- long-description tier --------------------------------------------------
+\begin{FigureBlock}[alt={Scatter plot of b versus a with four data points and a
+straight fit line b = 0.95a + 1.}]
+\begin{tikzpicture}
+  \draw[->] (0,0) -- (3,0) node[right]{a};
+  \draw[->] (0,0) -- (0,3) node[above]{b};
+\end{tikzpicture}
+\end{FigureBlock}
+\FigureDescription{Horizontal axis a from 0 to 9 with integer ticks; vertical
+axis b from 0 to 9. Measured points: 2 and 2; 4 and 6; 6 and 7; 8 and 8.}
+
+\accessheading{4}{Solution}
+
+The answer follows from the least-squares normal equations.
+
+% --- tables -----------------------------------------------------------------
+\begin{DataTable}[table/header-rows={1}]
+\begin{tabular}{|l|r|}
+\hline
+Quantity & Value \\
+\hline
+Resistance & 10 \\
+Current & 2 \\
+\hline
+\end{tabular}
+\end{DataTable}
+
+\begin{LayoutTable}
+\begin{tabular}{cc}
+left column & right column \\
+\end{tabular}
+\end{LayoutTable}
+
+\end{document}

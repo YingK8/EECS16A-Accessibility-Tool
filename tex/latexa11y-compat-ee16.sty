@@ -1,0 +1,126 @@
+%% latexa11y-compat-ee16.sty
+%% Compatibility shim: the legacy EECS 16A macro vocabulary, re-expressed in
+%% terms of tagged primitives, so existing question files keep compiling.
+%%
+%% WHAT IT COVERS
+%%   \qns{title}      question heading            -> H2
+%%   \q{pts}{title}   question heading + points   -> H2
+%%   \qitem           part heading                -> H3
+%%   \sol{...}        solution block              -> H4
+%%   \ans{...}        answer block                -> H4
+%%   \solans{...}     solution/answer block       -> H4
+%%   qunlist          question container          -> transparent
+%%   \fig, \twofig    epsf inclusion              -> \includegraphics
+%%   \fillin          rule-based blank            -> labelled answer blank
+%%
+%% WHAT STILL NEEDS A MIGRATION EDIT (the tool does these; see MIGRATION.md)
+%%   * `\newcommand{\qitem}{\qpart\item}` in every body.tex must be deleted:
+%%     \newcommand raises an error on an already-defined command, and \qitem is
+%%     defined here.
+%%   * `\renewcommand{\labelenumi}{(\alph{enumi})}` blocks become dead once
+%%     parts are headings rather than list items.
+%%   * `\def\title{Homework 9}` is rewritten to `\title{Homework 9}`. The shim
+%%     also recovers the argument-less form at \begin{document} (see below), so
+%%     a file that slips through still produces a correct title.
+
+\NeedsTeXFormat{LaTeX2e}[2020-10-01]
+\ProvidesExplPackage{latexa11y-compat-ee16}{2026-08-08}{0.1.0}
+  {Legacy EECS 16A macro compatibility}
+
+\RequirePackage{latexa11y-doc}
+
+%% ---------------------------------------------------------------------------
+%% Questions and parts
+%% ---------------------------------------------------------------------------
+
+\ProvideDocumentCommand \qns { m } { \question {#1} }
+\ProvideDocumentCommand \q   { m m } { \question [#1] {#2} }
+
+%% markup.sty defines \qpart purely as an autograder position marker, and
+%% body.tex files build \qitem from it. Keep the name harmless.
+\ProvideDocumentCommand \qpart { } { }
+
+%% \qitem must work both inside a legacy `enumerate` wrapper and on its own.
+%% Legacy part lists look like:
+%%     \begin{enumerate} \qitem text \qitem text \end{enumerate}
+%% Emitting only a heading there would leave the list with no \item, which is a
+%% hard LaTeX error ("perhaps a missing \item"). So inside a list we still open
+%% an item -- with an empty label, because the H3 that follows already announces
+%% "Part (a)" and a list label would make a screen reader say it twice.
+\ProvideDocumentCommand \qitem { }
+  {
+    \int_compare:nNnT { \use:c { @listdepth } } > { 0 } { \item [ ] }
+    \questionpart
+  }
+
+%% ---------------------------------------------------------------------------
+%% Solution / answer blocks
+%% ---------------------------------------------------------------------------
+%% The legacy versions are commands taking one argument; the modern ones are
+%% environments. Both spellings stay available.
+
+\ProvideDocumentCommand \sol    { +m } { \begin{solution} #1 \end{solution} }
+\ProvideDocumentCommand \solans { +m } { \begin{solution} #1 \end{solution} }
+\ProvideDocumentCommand \ans    { +m } { \begin{answer}   #1 \end{answer} }
+
+%% ---------------------------------------------------------------------------
+%% Containers
+%% ---------------------------------------------------------------------------
+%% `qunlist` was a hand-built `list` with a custom label. A raw `list` gets no
+%% L/LI/Lbl/LBody structure from the block module, so it produced an untagged
+%% container. Questions now number themselves, so the container is transparent.
+
+\ProvideDocumentEnvironment { qunlist } { } { \par } { \par }
+
+%% ---------------------------------------------------------------------------
+%% Legacy figure inclusion
+%% ---------------------------------------------------------------------------
+%% \fig and \twofig used the epsf package, whose \epsffile predates graphicx and
+%% is invisible to the tagging code -- those images produce no Figure element
+%% and no /Alt at all. Routing them through \includegraphics makes them
+%% describable; the alt text itself is supplied by the migration tool.
+
+\ProvideDocumentCommand \fig { O{} m }
+  { \altonly {#1} { \includegraphics{#2} } }
+
+\ProvideDocumentCommand \twofig { O{} O{} m m }
+  {
+    \par\noindent
+    \altonly {#1} { \includegraphics[width=0.48\linewidth]{#3} }
+    \hfill
+    \altonly {#2} { \includegraphics[width=0.48\linewidth]{#4} }
+    \par
+  }
+
+%% ---------------------------------------------------------------------------
+%% Fill-in blanks
+%% ---------------------------------------------------------------------------
+
+\ProvideDocumentCommand \fillin { O{4cm} } { \answerblank [#1] }
+\ProvideDocumentCommand \doublehrule { }
+  { \begin{Decorative} \hrule \vskip 0.02in \hrule \end{Decorative} }
+
+%% ---------------------------------------------------------------------------
+%% Argument-less \title recovery
+%% ---------------------------------------------------------------------------
+%% Every legacy body.tex writes `\def\title{Homework 9}`, which overwrites the
+%% one-argument \title defined in latexa11y-doc. Rather than fail with an empty
+%% document title -- a PDF/UA metadata failure (Matterhorn 06-003) that is easy
+%% to miss -- detect the argument-less form and adopt its expansion.
+
+\AddToHook { begindocument }
+  {
+    \tl_if_empty:NT \g__access_doctitle_tl
+      {
+        \cs_if_exist:NT \title
+          {
+            \str_if_eq:eeT { \cs_argument_spec:N \title } { }
+              {
+                \tl_gset:Nx \g__access_doctitle_tl { \title }
+                \exp_args:NV \accesstitle \g__access_doctitle_tl
+              }
+          }
+      }
+  }
+
+\endinput
