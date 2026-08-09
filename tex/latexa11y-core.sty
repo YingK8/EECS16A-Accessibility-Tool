@@ -204,35 +204,36 @@
   {
     \__access_validate_alt:nn {#2} { AltOnly~region }
     \IfBooleanTF {#1}
-      { \__access_altonly_open:n {#2} }
+      { \par \tagpdfparaOff \__access_altonly_open:n {#2} }
       {
         \par
+        \tagpdfparaOff
         \vbox_set:Nw \l__access_altonly_box
         \__access_altonly_open:n {#2}
       }
   }
   {
     \IfBooleanTF {#1}
-      { \__access_altonly_close: }
+      { \__access_altonly_close: \tagpdfparaOn }
       {
         \__access_altonly_close:
         \vbox_set_end:
         \dim_compare:nNnT { \box_ht:N \l__access_altonly_box } > { \textheight }
           { \msg_warning:nn { latexa11y } { altonly-broken } }
         \box_use_drop:N \l__access_altonly_box
+        \tagpdfparaOn
       }
   }
 
 \cs_new_protected:Npn \__access_altonly_open:n #1
   {
     \leavevmode
-    %% Paragraph tagging must be off for the whole region. Suspension stops the
-    %% para module from OPENING a text-unit inside the region, but content that
-    %% starts a paragraph while suspended still leaves TeX's paragraph state
-    %% changed; the next \par then tries to close a structure that was never
-    %% opened, and tagpdf reports "there is no open structure on the stack" for
-    %% the rest of the document.
-    \tagpdfparaOff
+    %% Paragraph tagging is toggled by the CALLER, not here, and it must bracket
+    %% the whole region -- box construction AND placement. Toggling it inside
+    %% means a body containing `center` (or anything else built on trivlist)
+    %% opens its paragraph hook with tagging off and closes it with tagging on,
+    %% and tagpdf aborts with "the number of automatic begin and end text para
+    %% hooks differ".
     %% If we are inside running text an MC sequence is already open, and marked
     %% content cannot nest. Close it, stash it, and reopen it on the way out --
     %% the same push/pop pair tagpdf uses for its own artifact groups.
@@ -252,7 +253,6 @@
     \tagmcend
     \tagstructend
     \tag_mc_begin_pop:n { }
-    \tagpdfparaOn
   }
 
 %% Inline command form, for wrapping a single graphic without a display block.
@@ -319,15 +319,24 @@
     alt   .initial:n = { } ,
   }
 
+%% Boxed like the unstarred AltOnly, for the same reason: a figure body almost
+%% always contains `center`, and an unboxed region leaves its paragraph hooks
+%% straddling the tagging toggle.
 \NewDocumentEnvironment { FigureBlock } { O{} }
   {
     \group_begin:
     \keys_set:nn { latexa11y / figure } {#1}
     \__access_validate_alt:Vn \l__access_figure_alt_tl { FigureBlock }
+    \par
+    \tagpdfparaOff
+    \vbox_set:Nw \l__access_altonly_box
     \__access_altonly_open:V \l__access_figure_alt_tl
   }
   {
     \__access_altonly_close:
+    \vbox_set_end:
+    \box_use_drop:N \l__access_altonly_box
+    \tagpdfparaOn
     \group_end:
   }
 
@@ -426,6 +435,36 @@
     \par
     \tagpdfparaOn
   }
+
+%% Inline variant: no \par, so it can be used inside a list item or mid-line.
+%% \qns expands inside an \item, where a heading that issued \par would split
+%% the item and change the layout.
+\NewDocumentCommand \accessheadinginline { o m +m }
+  {
+    \__access_check_level:n {#2}
+    \int_gincr:N \g__access_bookmark_int
+    \IfNoValueTF {#1}
+      { \__access_bookmark:nn {#2} {#3} }
+      { \__access_bookmark:nn {#2} {#1} }
+    \tag_mc_end_push:
+    \tagstructbegin { tag=H#2 }
+    \tagmcbegin { tag=H#2 }
+    #3
+    \tagmcend
+    \tagstructend
+    \tag_mc_begin_pop:n { }
+  }
+
+%% Bookmark without a tag or visible text. Used where a navigable entry is
+%% wanted but there is no text of our own to wrap -- a list-generated part
+%% label, for instance -- and inventing visible text would change the page.
+\NewDocumentCommand \accessbookmarkonly { m +m }
+  {
+    \int_gincr:N \g__access_bookmark_int
+    \__access_bookmark:nn {#1} {#2}
+  }
+
+\cs_new:Npn \__access_plain:n #1 { \__access_pdfstring:n {#1} }
 
 \cs_new_protected:Npn \__access_bookmark:nn #1#2
   {

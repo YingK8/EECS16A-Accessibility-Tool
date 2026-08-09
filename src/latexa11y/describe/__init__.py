@@ -24,7 +24,18 @@ _EDGE = re.compile(
     r"\s*\(\s*([\w\- ]+)\s*\)"
 )
 _LOOP = re.compile(r"edge\s*\[[^\]]*loop[^\]]*\]\s*node\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}")
-_NODE_TEXT = re.compile(r"\\node\s*(?:\[[^\]]*\])?\s*(?:\([^)]*\))?\s*(?:at\s*\([^)]*\))?\s*\{([^{}]+)\}")
+#: Locates the START of a node's text group. The group itself is read with a
+#: brace matcher, never with `\{([^{}]+)\}`: the single most common label in this
+#: corpus is `{$V_{in}$}`, whose nested braces defeat that pattern entirely.
+#: Both spellings are matched -- `\node[...] {text}` and the path form
+#: `-- node[above] {text} --`, which has no backslash and is just as common.
+_NODE_START = re.compile(
+    r"(?:\\node|(?<![A-Za-z\\])node)\s*"
+    r"(?:\[[^\]]*\]\s*)?"
+    r"(?:\([^)]*\)\s*)?"
+    r"(?:at\s*\([^)]*\)\s*)?"
+    r"(?::[^{]*)?"
+)
 
 
 def describe_reference(reference: FigureRef, source: TexSource | None = None) -> Skeleton:
@@ -91,6 +102,28 @@ def _note_embedded_images(
     return skeleton
 
 
+def _node_labels(body: str) -> list[str]:
+    """Text of every node in a picture, with balanced-brace extraction."""
+    scanner = TexSource(body)
+    labels: list[str] = []
+    seen: set[str] = set()
+    position = 0
+    while True:
+        match = _NODE_START.search(scanner.masked, position)
+        if match is None:
+            break
+        group = scanner.match_group(match.end())
+        if group is None:
+            position = match.end() + 1
+            continue
+        text = latex_to_text(body[group.inner])
+        if text and text not in seen:
+            seen.add(text)
+            labels.append(text)
+        position = group.end
+    return labels
+
+
 def _describe_tikz(source: TexSource, start: int, end: int) -> Skeleton:
     """Generic TikZ: state machines get real structure, others get node text."""
     body = source.normalised(start, end)
@@ -127,11 +160,7 @@ def _describe_tikz(source: TexSource, start: int, end: int) -> Skeleton:
             skeleton.needs.append("no transitions could be read; list them by hand")
         return skeleton
 
-    labels = [
-        latex_to_text(match.group(1))
-        for match in _NODE_TEXT.finditer(body)
-        if latex_to_text(match.group(1))
-    ]
+    labels = _node_labels(body)
     if labels:
         skeleton.summary = "Diagram"
         skeleton.details.append("Labels appearing in the drawing: " + ", ".join(labels[:20]) + ".")

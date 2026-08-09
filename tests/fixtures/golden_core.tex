@@ -31,12 +31,19 @@ Ordinary paragraph text that must remain readable and tagged as a P element.
 A short paragraph inside a part.
 
 % --- the strict alt-only region: a TikZ picture that must speak ONLY its alt --
+% The `center` wrapper is deliberate. It is how essentially every real figure in
+% the corpus is written, and it is built on trivlist -- which straddles the
+% paragraph-tagging toggle and aborted the build with "the number of automatic
+% begin and end text para hooks differ" until the toggle was moved to bracket
+% the whole box.
 \begin{AltOnly}{Two capacitors, C1 and C2, each connected from its own top node
 to ground, with switch S1 joining the two top nodes.}
+\begin{center}
 \begin{tikzpicture}
   \draw (0,0) -- (2,0) -- (2,2) -- (0,2) -- cycle;
   \node at (1,1) {THIS TEXT MUST NOT BE SPOKEN};
 \end{tikzpicture}
+\end{center}
 \end{AltOnly}
 
 % --- a decorative rule: must be an artifact, spoken not at all ---------------
@@ -51,10 +58,12 @@ Here is an inline graphic: \altonly{A red square used as a bullet}{%
 % --- long-description tier --------------------------------------------------
 \begin{FigureBlock}[alt={Scatter plot of b versus a with four data points and a
 straight fit line b = 0.95a + 1.}]
+\begin{center}
 \begin{tikzpicture}
   \draw[->] (0,0) -- (3,0) node[right]{a};
   \draw[->] (0,0) -- (0,3) node[above]{b};
 \end{tikzpicture}
+\end{center}
 \end{FigureBlock}
 \FigureDescription{Horizontal axis a from 0 to 9 with integer ticks; vertical
 axis b from 0 to 9. Measured points: 2 and 2; 4 and 6; 6 and 7; 8 and 8.}

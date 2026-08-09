@@ -207,3 +207,59 @@ Not yet built, in recommended order:
    `markup.sty` writes `\jobname.annotations` and will collide.
 4. **Textual TUI** over the same APIs the CLI uses.
 5. **`migrate` command** for the preamble and `.sty` rewrites in `MIGRATION.md`.
+
+---
+
+## 7. Visual fidelity of the ee16 retrofit
+
+A retrofit is only usable if the printed page does not change. Measured on the
+real `sp26/hw/9` (13 pages), comparing rasterised pages at 150 dpi and counting
+pixels differing by more than 96/255:
+
+| Comparison | Difference |
+|---|---|
+| untagged original vs **tagging alone** (no latexa11y) | 2.596% |
+| untagged original vs **full retrofit** | 2.594% |
+| **tagging alone vs full retrofit** | **0.002%** |
+
+So `latexa11y-ee16` is visually free: it changes 0.002% of pixels. The 2.6% is
+the cost of enabling LaTeX's tagging at all — pagination shifts slightly on some
+pages — and is unavoidable on any route to a tagged PDF.
+
+That result depends on one workaround, found by bisection:
+
+**Interword-space injection breaks the page.** Activating tagging also enables
+tagpdf's `activate/spaces`, which injects real space glyphs. On this corpus that
+reflows text in the running header and footer and inside `\emph` groups: glyphs
+pile on top of each other and the header is unreadable. Measured: 484 of 3585
+adjacent word pairs overlap with injection on, 0 of 3537 with it off.
+
+It is **not** caused by anything in this package —
+`\DocumentMetadata{testphase={tagpdf}}` alone reproduces it, and
+`\DocumentMetadata` with no testphase does not. `latexa11y-ee16` therefore sets
+`\tagpdfsetup{activate/spaces=false}`. The trade-off is that extracted word
+boundaries rely on pdfTeX's positioning rather than explicit space glyphs;
+extraction still resolves words correctly here, and a legible page matters more.
+
+### Method notes for whoever repeats this
+
+* Compare **pixels, not extracted text**. Enabling ToUnicode changes how text
+  extracts — `office` becomes `ofﬁce`, math slots become real Unicode — while
+  the page is identical. Text diffing reports those as changes; they are not.
+* Compare **word boxes for overlap**, not word strings. The corrupted header
+  still extracted as `['Last','Updated:','2026-08-08','21:28']`; only the
+  positions revealed that the glyphs were stacked.
+* Build both PDFs **in the same minute**. ee16's header prints `\timestamp`, so
+  otherwise every page differs.
+* Rebuild the baseline. The `sol9.pdf` committed in the repo is a stale artifact
+  and does not match current source.
+* Use **three pdflatex runs**. tagpdf resolves structure-tree MCIDs via the
+  `.aux`; after one run the tree says `/MCID 1` everywhere.
+
+### Correction to an earlier finding
+
+The research pass reported `\font\dunhb=cmdunh10` as an outright PDF/UA blocker
+requiring font replacement. That is wrong as stated. `\pdfgentounicode=1` plus
+`\input glyphtounicode` makes pdfTeX emit a ToUnicode CMap for the font, and the
+text then extracts as real words — verified. The course keeps its typography and
+the document becomes conformant, so no font substitution is needed.

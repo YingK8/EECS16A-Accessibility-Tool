@@ -197,13 +197,16 @@
 \NewDocumentCommand \answerbox { O{5\baselineskip} }
   {
     \par\noindent
-    \begin{AltOnly}{Blank answer box for your written response.}
+    %% `~` is a space. This file is read under expl3 syntax, where ordinary
+    %% spaces are IGNORED -- a literal string written normally reaches the PDF
+    %% as "Blankanswerboxforyourwrittenresponse."
+    \begin{AltOnly}{Blank~answer~box~for~your~written~response.}
       \fbox{ \parbox[c][#1][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{} }
     \end{AltOnly}
     \par
   }
 
 \NewDocumentCommand \answerblank { O{4cm} }
-  { \altonly{Blank space for your answer}{\rule{#1}{0.4pt}} }
+  { \altonly{Blank~space~for~your~answer}{\rule{#1}{0.4pt}} }
 
 \endinput

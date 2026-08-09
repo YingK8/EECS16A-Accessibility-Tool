@@ -1,0 +1,212 @@
+%% latexa11y-ee16.sty
+%% Accessibility retrofit for the existing EECS 16A macro set.
+%%
+%% ---------------------------------------------------------------------------
+%% DESIGN: PATCH, DO NOT REIMPLEMENT
+%% ---------------------------------------------------------------------------
+%% This package loads the course's real ee16.sty and wraps a handful of its
+%% macros. It deliberately does NOT reimplement them.
+%%
+%% The reason is visual fidelity. Every dimension, font, rule thickness and skip
+%% still comes from ee16.sty itself, so the typeset result is identical by
+%% construction rather than by careful copying -- and it stays identical when
+%% the course edits ee16.sty. Authors keep writing \qns, \qitem and \sol exactly
+%% as they always have; nothing about the source needs to change.
+%%
+%% What the patches add is invisible on the page and decisive off it: a heading
+%% structure (H1-H4), PDF bookmarks, document metadata, and Unicode-mapped text.
+%%
+%% USAGE -- add two lines to a driver file, change nothing else:
+%%
+%%     \DocumentMetadata{lang=en-US, pdfversion=2.0,
+%%                       testphase={phase-III,math,table,graphic,firstaid}}
+%%     \documentclass[11pt]{article}
+%%     \usepackage{../../../timestamp}
+%%     \usepackage{../../../ee16}
+%%     \usepackage{../../../markup}
+%%     \usepackage{../../sp26}
+%%     \usepackage{latexa11y-ee16}     % <- after ee16 and markup
+%%
+%% \DocumentMetadata MUST be the first line of the file, before \documentclass.
+
+\NeedsTeXFormat{LaTeX2e}[2020-10-01]
+\ProvidesExplPackage{latexa11y-ee16}{2026-08-08}{0.1.0}
+  {Accessibility retrofit for the EECS 16A macro set}
+
+\RequirePackage{latexa11y-core}
+
+%% ---------------------------------------------------------------------------
+%% 0. Interword-space injection -- OFF, for visual fidelity
+%% ---------------------------------------------------------------------------
+%% Activating tagging also switches on tagpdf's `activate/spaces`, which injects
+%% real space glyphs into the text so that extraction and copy-paste find word
+%% boundaries. On this corpus that injection reflows text set in the running
+%% header and footer and inside \emph groups: glyphs pile up on top of one
+%% another and the header becomes unreadable.
+%%
+%% Measured on sp26/hw/9 (13 pages): with injection on, 484 of 3585 adjacent
+%% word pairs overlap; with it off, 0 of 3537. The document is otherwise
+%% unchanged. Bisecting showed this is not caused by anything in this package --
+%% \DocumentMetadata{testphase={tagpdf}} alone reproduces it, and
+%% \DocumentMetadata without any testphase does not.
+%%
+%% The trade-off is real: without injected spaces, word separation in extracted
+%% text relies on pdfTeX's own positioning rather than explicit space glyphs.
+%% In practice extraction still finds words correctly here, and a legible page
+%% matters more than marginally more robust copy-paste. Re-enable with
+%% \tagpdfsetup{activate/spaces} after loading this package if your document
+%% does not show the problem -- and check the header before you ship it.
+\AddToHook { begindocument }
+  { \tagpdfsetup { activate/spaces = false } }
+
+%% ---------------------------------------------------------------------------
+%% 1. Unicode-mapped text
+%% ---------------------------------------------------------------------------
+%% ee16.sty selects cmdunh10 with the \font primitive for the title block and
+%% section headings. Left alone, that text has no ToUnicode CMap: it cannot be
+%% extracted, searched or spoken, which fails PDF/UA regardless of tagging.
+%%
+%% It does NOT follow that the font must be replaced. pdfTeX will generate a
+%% ToUnicode CMap for a Type 1 font when glyph-name mapping is switched on,
+%% which keeps the course's typography exactly as it is and makes the text
+%% readable. Verified: cmdunh10 emits /ToUnicode and extracts as real words.
+\ifdefined\pdfgentounicode
+  \pdfgentounicode=1
+  \InputIfFileExists{glyphtounicode.tex}{}{\input{glyphtounicode}}
+\fi
+
+%% ---------------------------------------------------------------------------
+%% 2. Heading hooks
+%% ---------------------------------------------------------------------------
+%% \accessheadinginline is used rather than \accessheading because \qns expands
+%% inside a list item: a heading that issued \par would break the item apart and
+%% change the layout.
+
+\bool_new:N \g__access_ee_patched_bool
+
+%% ---------------------------------------------------------------------------
+%% 3. Title -> H1
+%% ---------------------------------------------------------------------------
+%% Every body.tex writes `\def\title{Homework 9}`, so \title is an
+%% argument-less macro whose expansion is the document title. ee16.sty's
+%% \@maketitle typesets it as `{\dunhb \hfill \dunhbb \title \par}`.
+%%
+%% Patching that one group leaves the layout untouched -- same fonts, same
+%% \hfill, same \par -- while wrapping the title text in an H1 and registering
+%% the top-level bookmark. The document metadata is taken from the same string.
+
+%% The title cannot be read at \begin{document}: body.tex writes
+%% `\def\title{Homework 9}` AFTER \begin{document}, so at hook time \title is
+%% still the kernel's one-argument version and probing it consumes the following
+%% brace group ("Argument of \title has an extra }"). It is captured inside
+%% \@maketitle instead, which runs after the \def.
+%% Letters-only name on purpose: this is called from the \ExplSyntaxOff block
+%% below, where `_` is a subscript character. An expl3 internal name used there
+%% parses as \_ followed by a bare subscript, and TeX demands math mode
+%% ("Missing $ inserted") at \maketitle.
+\NewDocumentCommand \accessrecordtitle { }
+  { \exp_args:Ne \accesstitle { \title } }
+
+%% \@maketitle is restated below. Every dimension, font and skip is copied
+%% verbatim from ee16.sty; the ONLY change is that the title text is wrapped in
+%% an H1. It is restated rather than patched because \title is also used in the
+%% running footer, so wrapping \title itself would put a heading in the footer.
+%%
+%% If ee16.sty's title block is ever redesigned, update this block to match.
+\ExplSyntaxOff
+\AtBeginDocument{%
+  \@ifundefined{@maketitle}{}{%
+    \gdef\@maketitle{\newpage
+      \accessrecordtitle
+      \hrule height6pt \vskip .7em
+      \makebox[1.3in][l]{\dunhb \coursenumber}
+      {\dunhb \class \hfill \ }
+      \vskip-0.1in
+      \makebox[1.3in][l]{\dunhb \semester}
+      {\dunhb \hfill \dunhbb \accessheadinginline{1}{\title} \par}
+      \vskip 0.6em
+      \hrule height6pt
+      \par
+      \vskip .5em}%
+  }%
+}
+\ExplSyntaxOn
+
+%% ---------------------------------------------------------------------------
+%% 4. Questions and parts
+%% ---------------------------------------------------------------------------
+%% ee16.sty defines:
+%%     \def\q#1#2{{\bf\item (#1 pts.)\quad #2}}
+%%     \def\qns#1{{\bf\item #1}}
+%% The replacements below are byte-for-byte the same apart from the heading
+%% wrapper around the visible text, so the bold item, the points and the \quad
+%% all render exactly as before.
+
+%% Everything from here down is plain LaTeX2e rather than expl3. These are the
+%% macros a TA is most likely to read when they want to know what changed, and
+%% they read most clearly next to the ee16.sty definitions they replace. It also
+%% avoids the parameter-doubling that nesting \RenewDocumentCommand inside an
+%% expl3 mapping requires -- getting that wrong silently truncated every
+%% solution body and cost four pages of a thirteen-page assignment.
+
+\newcounter{accessqcount}
+\newcounter{accesspartcount}
+
+\ExplSyntaxOff
+
+%% ee16.sty defines these as
+%%     \def\q#1#2{{\bf\item (#1 pts.)\quad #2}}
+%%     \def\qns#1{{\bf\item #1}}
+%% The replacements are identical apart from the heading wrapper around the
+%% visible text, so the bold item, the points and the \quad render as before.
+\AtBeginDocument{%
+  \@ifundefined{qns}{}{%
+    \renewcommand{\qns}[1]{{\bf\item \accessquestionhead{#1}}}%
+  }%
+  \@ifundefined{q}{}{%
+    \renewcommand{\q}[2]{{\bf\item (#1 pts.)\quad \accessquestionhead{#2}}}%
+  }%
+}
+
+\newcommand{\accessquestionhead}[1]{%
+  \stepcounter{accessqcount}%
+  \setcounter{accesspartcount}{0}%
+  \accessheadinginline[Question \theaccessqcount]{2}{#1}%
+}
+
+%% \qitem is built by each body.tex as `\newcommand{\qitem}{\qpart\item}`, where
+%% \qpart is markup.sty's autograder position marker. Patching \qpart rather
+%% than \qitem means the \item that follows is untouched, so list labels,
+%% indentation and spacing are unchanged.
+\AtBeginDocument{%
+  \@ifundefined{qpart}{}{%
+    \let\accessorigqpart\qpart
+    \renewcommand{\qpart}{%
+      \accessorigqpart
+      \stepcounter{accesspartcount}%
+      \accessbookmarkonly{3}{Part (\alph{accesspartcount})}%
+    }%
+  }%
+}
+
+%% \sol, \ans and \solans are defined in the driver file, after all packages,
+%% so they are patched at \begin{document}. The colour and the "Solution: "
+%% label are the driver's own; only the bookmark is added. The argument stays
+%% short, exactly as \newcommand{\sol}[1] declared it.
+\newcommand{\accesspatchsolution}[2]{%
+  \expandafter\let\csname accessorig#1\expandafter\endcsname\csname #1\endcsname
+  \expandafter\renewcommand\csname #1\endcsname[1]{%
+    \accessbookmarkonly{4}{#2}%
+    \csname accessorig#1\endcsname{##1}%
+  }%
+}
+
+\AtBeginDocument{%
+  \@ifundefined{sol}{}{\accesspatchsolution{sol}{Solution}}%
+  \@ifundefined{ans}{}{\accesspatchsolution{ans}{Answer}}%
+  \@ifundefined{solans}{}{\accesspatchsolution{solans}{Solution}}%
+}
+
+\ExplSyntaxOn
+
+\endinput
