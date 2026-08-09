@@ -178,13 +178,32 @@
 %% \qpart is markup.sty's autograder position marker. Patching \qpart rather
 %% than \qitem means the \item that follows is untouched, so list labels,
 %% indentation and spacing are unchanged.
+%%
+%% The patch must be applied INSIDE qunlist, not at \begin{document}. markup.sty
+%% redefines \qunlist to do `\newcommand\qpart{\SEP{new_part}}` in its own begin
+%% code, which silently discards any earlier patch -- the symptom is a bookmark
+%% tree with no "Part (a)" entries, solutions hanging directly off the question.
+%% The `env/.../begin` hook runs after an environment's begin code, so this wins.
+%% \qpart cannot be patched directly: markup.sty creates it with \newcommand
+%% inside qunlist's begin code, so it does not exist at \begin{document} and any
+%% patch applied there is discarded when the environment starts.
+%%
+%% \SEP is the hook that does work. markup.sty defines it at top level and calls
+%% \SEP{new_part} at exactly the point a part begins -- that is its whole
+%% purpose, marking positions for the autograder. Wrapping it gives us the part
+%% boundary without depending on environment-hook ordering.
+\newcommand{\accessseppart}{}
 \AtBeginDocument{%
-  \@ifundefined{qpart}{}{%
-    \let\accessorigqpart\qpart
-    \renewcommand{\qpart}{%
-      \accessorigqpart
-      \stepcounter{accesspartcount}%
-      \accessbookmarkonly{3}{Part (\alph{accesspartcount})}%
+  \@ifundefined{SEP}{}{%
+    \let\accessorigsep\SEP
+    \renewcommand{\SEP}[1]{%
+      \accessorigsep{#1}%
+      \edef\accessseparg{\detokenize{#1}}%
+      \edef\accessseppart{\detokenize{new_part}}%
+      \ifx\accessseparg\accessseppart
+        \stepcounter{accesspartcount}%
+        \accessbookmarkonly{3}{Part (\alph{accesspartcount})}%
+      \fi
     }%
   }%
 }

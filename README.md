@@ -24,28 +24,47 @@ package is course-specific: a course is onboarded by writing a YAML profile.
 
 ## Quick start
 
+**→ Full step-by-step instructions, including which directory to run each
+command from and what you should see: [`docs/QUICKSTART.md`](docs/QUICKSTART.md).**
+
+Install once, from this repository:
+
 ```bash
-pip install -e '.[all]'
+cd "/Users/meli/Desktop/Kevin/UCB/EECS 16A/EECS16A-Accessibility-Tool"
+python3 -m pip install -e '.[all]'
+```
 
+Then, from **any** directory:
+
+```bash
 # 0. Will this toolchain actually produce a conforming PDF? Run this first.
-latexa11y -p eecs16a doctor
+latexa11y doctor
 
-# 1. Find every figure and derive description skeletons.
-latexa11y -p eecs16a scan live
+# 1. Build the demonstration PDFs and open them to see the bookmark tree.
+./examples/build.sh && open examples/build
 
-# 2. A human or an agent fills in the worklogs in <corpus>/a11y/alt/*.md
+# 2. Find every figure in your corpus and write the Markdown worklogs.
+#    Writes only to <corpus>/a11y/alt/ -- never to your .tex files.
+latexa11y -p eecs16a scan bank
+
+# 3. A person or an agent fills in the worklogs and marks entries approved.
 latexa11y -p eecs16a agent next-task --limit 5
 
-# 3. Write approved descriptions into the sources (dry run by default).
-latexa11y -p eecs16a apply live --show-diff
-latexa11y -p eecs16a apply live --write
+# 4. Write approved descriptions into the sources (dry run by default).
+latexa11y -p eecs16a apply bank --show-diff
+latexa11y -p eecs16a apply bank --write
 
-# 4. Validate.
-latexa11y -p eecs16a check live
-latexa11y -p eecs16a check live --pdf build/hw09.pdf --log build/hw09.log
+# 5. Validate.
+latexa11y -p eecs16a check bank
+latexa11y -p eecs16a check bank --pdf out.pdf --log out.log
 ```
 
 Exit codes: `0` clean, `1` findings, `2` could not run.
+
+To make one of your own assignments accessible, add **two lines** to its driver
+file — `\DocumentMetadata{...}` as the very first line, and
+`\usepackage{latexa11y-ee16}` after `ee16` and `markup`. Nothing else changes:
+not the body, not the macros, not the layout. See QUICKSTART §5.
 
 ---
 

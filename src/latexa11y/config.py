@@ -37,6 +37,42 @@ __all__ = [
     "builtin_profile_dir",
 ]
 
+# Defaults live at module level, not as class attributes. These dataclasses use
+# `slots=True`, where a class attribute is a slot descriptor rather than the
+# default value -- so `EnginePolicy.legacy_testphase` returns a
+# `member_descriptor` and any fallback written as `value or EnginePolicy.field`
+# silently yields something un-iterable. That crashed `latexa11y doctor` for
+# anyone who ran it without a profile, which is the very first thing a new user
+# does.
+DEFAULT_TESTPHASE: tuple[str, ...] = (
+    "phase-III",
+    "math",
+    "table",
+    "graphic",
+    "firstaid",
+)
+DEFAULT_LATEXMK_ARGS: tuple[str, ...] = ("-interaction=nonstopmode", "-file-line-error")
+DEFAULT_FIGURE_ENVIRONMENTS: tuple[str, ...] = (
+    "tikzpicture",
+    "circuitikz",
+    "axis",
+    "pgfpicture",
+)
+DEFAULT_BANNED_OPENERS: tuple[str, ...] = (
+    "image of",
+    "picture of",
+    "photo of",
+    "photograph of",
+    "figure showing",
+    "figure of",
+    "this figure",
+    "this diagram",
+    "diagram showing",
+    "a diagram of",
+    "graphic of",
+    "screenshot of",
+)
+
 #: Files that are never source material regardless of profile.
 _ALWAYS_EXCLUDE = (
     "**/__latexindent_temp*.tex",
@@ -162,27 +198,9 @@ class FigurePolicy:
     #: is load-bearing panorama content in an image-stitching question.
     artifact_allowlist: tuple[str, ...] = ()
     #: Environments treated as a single describable figure.
-    figure_environments: tuple[str, ...] = (
-        "tikzpicture",
-        "circuitikz",
-        "axis",
-        "pgfpicture",
-    )
+    figure_environments: tuple[str, ...] = DEFAULT_FIGURE_ENVIRONMENTS
     #: Phrases that must never open an alt string.
-    banned_openers: tuple[str, ...] = (
-        "image of",
-        "picture of",
-        "photo of",
-        "photograph of",
-        "figure showing",
-        "figure of",
-        "this figure",
-        "this diagram",
-        "diagram showing",
-        "a diagram of",
-        "graphic of",
-        "screenshot of",
-    )
+    banned_openers: tuple[str, ...] = DEFAULT_BANNED_OPENERS
 
 
 @dataclass(slots=True)
@@ -206,14 +224,8 @@ class EnginePolicy:
     pdf_standard: str = "ua-1"
     pdf_version: str = "2.0"
     #: testphase modules used on older toolchains, in declaration order.
-    legacy_testphase: tuple[str, ...] = (
-        "phase-III",
-        "math",
-        "table",
-        "graphic",
-        "firstaid",
-    )
-    latexmk_args: tuple[str, ...] = ("-interaction=nonstopmode", "-file-line-error")
+    legacy_testphase: tuple[str, ...] = DEFAULT_TESTPHASE
+    latexmk_args: tuple[str, ...] = DEFAULT_LATEXMK_ARGS
     min_runs: int = 3
     timeout_seconds: int = 300
 
@@ -340,11 +352,11 @@ def load_profile(
             figure_environments=_as_tuple(
                 figures_data.get("figure_environments"), "figures.figure_environments"
             )
-            or FigurePolicy.figure_environments,
+            or DEFAULT_FIGURE_ENVIRONMENTS,
             banned_openers=_as_tuple(
                 figures_data.get("banned_openers"), "figures.banned_openers"
             )
-            or FigurePolicy.banned_openers,
+            or DEFAULT_BANNED_OPENERS,
         ),
         colors=ColorPolicy(
             min_contrast_normal=float(colors_data.get("min_contrast_normal", 4.5)),
@@ -363,9 +375,9 @@ def load_profile(
             legacy_testphase=_as_tuple(
                 engine_data.get("legacy_testphase"), "engine.legacy_testphase"
             )
-            or EnginePolicy.legacy_testphase,
+            or DEFAULT_TESTPHASE,
             latexmk_args=_as_tuple(engine_data.get("latexmk_args"), "engine.latexmk_args")
-            or EnginePolicy.latexmk_args,
+            or DEFAULT_LATEXMK_ARGS,
             min_runs=int(engine_data.get("min_runs", 3)),
             timeout_seconds=int(engine_data.get("timeout_seconds", 300)),
         ),
