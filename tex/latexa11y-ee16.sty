@@ -116,17 +116,30 @@
 \ExplSyntaxOff
 \AtBeginDocument{%
   \@ifundefined{@maketitle}{}{%
+    %% The masthead as a whole becomes the H1, and paragraph tagging is off
+    %% across the block. ee16 puts the title on the same line as the semester,
+    %% and the \vskip between masthead lines forces an implicit \par, so a
+    %% paragraph is already open by the time the title is set -- and a heading
+    %% inside a paragraph is invalid PDF. One marked-content sequence per LINE,
+    %% because a sequence cannot span that implicit \par. The bookmark is given
+    %% the title on its own, so the outline still reads "Homework 9".
     \gdef\@maketitle{\newpage
       \accessrecordtitle
-      \hrule height6pt \vskip .7em
-      \makebox[1.3in][l]{\dunhb \coursenumber}
-      {\dunhb \class \hfill \ }
+      \accessbookmarkonly{1}{\title}%
+      \tagpdfparaOff
+      \begin{Decorative}\hrule height6pt\end{Decorative} \vskip .7em
+      \tagstructbegin{tag=P}\tagmcbegin{tag=P}%
+      \makebox[1.3in][l]{\dunhb \coursenumber}{\dunhb \class \hfill \ }%
+      \tagmcend\tagstructend
       \vskip-0.1in
-      \makebox[1.3in][l]{\dunhb \semester}
-      {\dunhb \hfill \dunhbb \accessheadinginline{1}{\title} \par}
-      \vskip 0.6em
-      \hrule height6pt
+      \tagstructbegin{tag=H1}\tagmcbegin{tag=H1}%
+      \makebox[1.3in][l]{\dunhb \semester}{\dunhb \hfill \dunhbb \title}%
+      \tagmcend\tagstructend
       \par
+      \vskip 0.6em
+      \begin{Decorative}\hrule height6pt\end{Decorative}
+      \par
+      \tagpdfparaOn
       \vskip .5em}%
   }%
 }
@@ -159,12 +172,25 @@
 %%     \def\qns#1{{\bf\item #1}}
 %% The replacements are identical apart from the heading wrapper around the
 %% visible text, so the bold item, the points and the \quad render as before.
+%% The \tagpdfparaOff ... \par ... \tagpdfparaOn wrapper is load-bearing, and it
+%% does not change the page.
+%%
+%% Paragraph tagging has to be off across the heading or the H2 lands inside a
+%% P, which PDF forbids. But switching it off part-way through a list item skips
+%% the paragraph's BEGIN hook while its END hook still fires, and tagpdf aborts
+%% with "the number of automatic begin and end text para hooks differ" -- then
+%% cascades into "there is no open structure on the stack" for the rest of the
+%% document. Switching off BEFORE \item and closing with \par before switching
+%% back on means neither hook fires, so they balance.
+%%
+%% Every question in the corpus is followed by a blank line, so the \par is
+%% already there and TeX ignores the second one.
 \AtBeginDocument{%
   \@ifundefined{qns}{}{%
-    \renewcommand{\qns}[1]{{\bf\item \accessquestionhead{#1}}}%
+    \renewcommand{\qns}[1]{\tagpdfparaOff{\bf\item \accessquestionhead{#1}}\par\tagpdfparaOn}%
   }%
   \@ifundefined{q}{}{%
-    \renewcommand{\q}[2]{{\bf\item (#1 pts.)\quad \accessquestionhead{#2}}}%
+    \renewcommand{\q}[2]{\tagpdfparaOff{\bf\item (#1 pts.)\quad \accessquestionhead{#2}}\par\tagpdfparaOn}%
   }%
 }
 
