@@ -248,8 +248,26 @@ def test_legacy_argumentless_title_is_recovered(legacy_structure):
     assert legacy_structure.title == "Homework 9"
 
 
-def test_legacy_produces_the_full_heading_hierarchy(legacy_structure):
-    assert legacy_structure.heading_levels == [1, 2, 3, 4, 3, 4, 2, 3, 4, 2, 3, 4]
+def test_legacy_produces_heading_tags_for_block_level_headings(legacy_structure):
+    """H1 for the masthead, H2 per question -- and deliberately no H3/H4.
+
+    Parts and solutions are inline in an EECS 16A document: "(a)" is a list
+    label and "Solution:" opens the same paragraph as the solution text. PDF
+    forbids a heading inside a paragraph, so tagging them would trade a valid
+    document for two nominal heading levels, and forcing them onto their own
+    paragraphs would insert a \\parskip and move the page. They appear in the
+    bookmark tree instead -- see the next test.
+    """
+    assert legacy_structure.heading_levels == [1, 2, 2, 2]
+
+
+def test_legacy_bookmark_tree_keeps_all_four_levels(legacy_structure):
+    levels = [level for level, _ in legacy_structure.outline]
+    assert levels[0] == 1
+    assert set(levels) == {1, 2, 3, 4}
+    titles = [title for _, title in legacy_structure.outline]
+    assert titles[0] == "Homework 9"
+    assert "Part (a)" in titles and "Solution" in titles
 
 
 def test_legacy_bookmarks_are_clean_pdf_strings(legacy_structure):

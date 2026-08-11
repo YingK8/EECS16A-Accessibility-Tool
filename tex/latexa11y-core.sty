@@ -439,6 +439,12 @@
 %% Inline variant: no \par, so it can be used inside a list item or mid-line.
 %% \qns expands inside an \item, where a heading that issued \par would split
 %% the item and change the layout.
+%% Paragraph tagging is switched off across the heading. Without that, the para
+%% module opens its own text-unit inside our H element and tagpdf reports
+%% `Parent-Child 'H2' --> 'text-unit'` -- and, worse, the heading ends up inside
+%% a P, which PDF forbids outright (`Parent-Child 'P' --> 'H2'`). With para
+%% tagging off the H attaches directly to whatever encloses it (an LBody, say),
+%% which is the valid structure.
 \NewDocumentCommand \accessheadinginline { o m +m }
   {
     \__access_check_level:n {#2}
@@ -446,6 +452,7 @@
     \IfNoValueTF {#1}
       { \__access_bookmark:nn {#2} {#3} }
       { \__access_bookmark:nn {#2} {#1} }
+    \tagpdfparaOff
     \tag_mc_end_push:
     \tagstructbegin { tag=H#2 }
     \tagmcbegin { tag=H#2 }
@@ -453,6 +460,7 @@
     \tagmcend
     \tagstructend
     \tag_mc_begin_pop:n { }
+    \tagpdfparaOn
   }
 
 %% Bookmark without a tag or visible text. Used where a navigable entry is

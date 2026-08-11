@@ -1,15 +1,12 @@
-% Demonstration homework, built from real EECS 16A material.
+% Demonstration homework, written exactly the way an EECS 16A body.tex is
+% written: qunlist, \qns, \qitem, \sol. Nothing here is latexa11y-specific
+% except the AltOnly wrapper around each figure, which is what supplies the
+% description a screen reader reads.
 %
-% Build both variants from this ONE source. The class option is NOT written
-% here, so build.sh can supply it:
+% Build both variants from this ONE source; the class option is not written
+% here so examples/build.sh can supply it:
 %   pdflatex "\PassOptionsToClass{sol}{latexa11y-assignment}\input{demo-homework}"
 %   pdflatex "\PassOptionsToClass{prob}{latexa11y-assignment}\input{demo-homework}"
-% Hard-coding [sol] below would make `prob` a no-op, because both options would
-% be processed and whichever \DeclareOption runs last wins.
-%
-% Open the result in a PDF reader and look at the bookmark/navigation pane:
-% Homework 9 > Question 1 > Part (a) > Solution. Then run a screen reader over
-% the figures: each is announced by its description, never by its contents.
 
 \DocumentMetadata{
   lang       = en-US,
@@ -23,22 +20,25 @@
 \pgfplotsset{compat=1.16}
 \usepackage[american]{circuitikz}
 
-\coursenumber{EECS 16A}
-\coursename{Designing Information Devices and Systems I}
-\semester{Spring 2026}
-\university{UC Berkeley}
+\setcoursenumber{EECS 16A}
+\setcoursename{Designing Information Devices and Systems I}
+\setsemester{Spring 2026}
 
 \begin{document}
 
-\title{Homework 9}
+\def\title{Homework 9}
 \maketitle
 
-\noindent
-This homework is due Friday, April 3, 2026, at 23:59. Self-grades are due
-Monday, April 6, 2026, at 23:59.
+\vspace{0.5em}
+{\Large{\textbf{This homework is due Friday, April 3, 2026, at 23:59.}}}
 
-% ----------------------------------------------------------------------------
-\question{Capacitor Charge Sharing}
+\textbf{Submission Format} \\
+Your homework submission should consist of a single PDF file that contains all
+of your answers.
+
+\begin{qunlist}
+
+\qns{Capacitor Charge Sharing}
 
 Two capacitors are connected through a switch. Before $t=0$ the switch $S_1$ is
 open, capacitor $C_1$ is charged to $V_1(0) = 5$\,V, and $C_2$ is uncharged.
@@ -59,33 +59,29 @@ C2 carries voltage V2, both positive at the top.}
 \end{center}
 \end{AltOnly}
 
-\questionpart[5]
+\begin{enumerate}
+
+\qitem
 Express the total charge stored on both capacitors immediately before the
 switch closes.
 
-\begin{solution}
-Only $C_1$ is charged, so $Q_{\text{total}} = C_1 V_1(0)$.
-\end{solution}
+\sol{Only $C_1$ is charged, so $Q_{\text{total}} = C_1 V_1(0)$.}
 
-\questionpart[5]
+\qitem
 Find the steady-state voltage across both capacitors after the switch closes.
 
-\begin{solution}
-Charge is conserved and the two capacitors share a node, so they settle to a
-common voltage
-\[
-  V_\infty = \frac{C_1 V_1(0)}{C_1 + C_2}.
-\]
-\end{solution}
+\sol{Charge is conserved and the two capacitors share a node, so they settle to
+a common voltage $V_\infty = \frac{C_1 V_1(0)}{C_1 + C_2}$.}
 
-% ----------------------------------------------------------------------------
-\question{Least Squares Fit}
+\end{enumerate}
+
+\newpage
+
+\qns{Least Squares Fit}
 
 The table below records four measurements. A best-fit line has already been
 drawn through them.
 
-% Short /Alt plus a visible long description and a real data table: the tier
-% for a figure whose data cannot fit in one spoken sentence.
 \begin{FigureBlock}[alt={Scatter plot of b against a on axes running 0 to 9,
 with four measured points and a straight best-fit line.}]
 \begin{center}
@@ -100,8 +96,7 @@ with four measured points and a straight best-fit line.}]
 \end{FigureBlock}
 \FigureDescription{Horizontal axis $a$ runs from 0 to 9 with integer ticks;
 vertical axis $b$ runs from 0 to 9 with integer ticks. The fitted line is
-$b = 0.95a + 1$, passing through 1 at $a=0$ and 9.55 at $a=9$. It lies above
-the first measured point and below the third.}
+$b = 0.95a + 1$, passing through 1 at $a=0$ and 9.55 at $a=9$.}
 
 \begin{DataTable}[table/header-rows={1}]
 \begin{center}
@@ -118,26 +113,33 @@ $a$ & $b$ \\
 \end{center}
 \end{DataTable}
 
-\questionpart[10]
+\begin{enumerate}
+
+\qitem
 Set up the normal equations for the least-squares fit and solve for the slope
 and intercept.
 
-\begin{solution}
-With $\mathbf{A}$ the matrix whose rows are $[a_i \;\; 1]$ and $\vec{b}$ the
-vector of measurements, the normal equations are
+\sol{With $\mathbf{A}$ the matrix whose rows are $[a_i \;\; 1]$ and $\vec{b}$
+the vector of measurements, the normal equations are
 $\mathbf{A}^{\!\top}\mathbf{A}\,\vec{x} = \mathbf{A}^{\!\top}\vec{b}$, giving a
-slope of $0.95$ and an intercept of $1$.
-\end{solution}
+slope of $0.95$ and an intercept of $1$.}
 
-% ----------------------------------------------------------------------------
-\question{Written Response}
+\end{enumerate}
 
-\questionpart
+\q{10}{A Question Worth Points}
+
+\begin{enumerate}
+
+\qitem
 State, in one sentence, why the residuals of a least-squares fit must be
 orthogonal to the column space of $\mathbf{A}$.
 
 % A tagged answer region, announced as such. The corpus used
 % \framebox(470,42){} here, which is picture-mode and carries no semantics.
 \answerbox[4\baselineskip]
+
+\end{enumerate}
+
+\end{qunlist}
 
 \end{document}

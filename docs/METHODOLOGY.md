@@ -263,3 +263,53 @@ requiring font replacement. That is wrong as stated. `\pdfgentounicode=1` plus
 `\input glyphtounicode` makes pdfTeX emit a ToUnicode CMap for the font, and the
 text then extracts as real words — verified. The course keeps its typography and
 the document becomes conformant, so no font substitution is needed.
+
+---
+
+## 8. Refactoring the classes onto the house style
+
+The standalone classes were originally my own design and shared nothing with an
+EECS 16A document but the bookmark tree. They now reproduce ee16.sty's
+specification: the 6.5in x 9in text block set by raw dimension assignment (not
+`geometry`, which recomputes it from margins), Times/mathptmx body text, the
+cmdunh10 masthead between two 6pt rules, `qunlist` supplying `1.` as a list
+label, `(a)`/`i.`/`A.` part labels, the running header and copyright footer, and
+an inline blue `Solution:`. Authors keep writing `\qns`, `\q`, `\qitem`, `\sol`
+and `qunlist`.
+
+### Why parts and solutions carry bookmarks but not heading tags
+
+**PDF forbids a heading inside a paragraph.** In an EECS 16A document `(a)` is a
+list label and `Solution:` opens the same paragraph as the solution text, so
+both are inline. Tagging them produced `Parent-Child 'P' --> 'H4'`; giving them
+their own paragraph would insert a `\parskip` and move the page, which is the
+one thing this refactor exists to prevent.
+
+So the tag tree carries H1 (masthead) and H2 (each question), and the bookmark
+tree carries all four levels. Navigation is unaffected — the outline still reads
+Homework > Question > Part > Solution — and the document stays valid.
+
+The masthead as a whole is the H1, not just the title text: ee16 puts the title
+on the same line as the semester, and the `\vskip` between masthead lines forces
+an implicit `\par`, so a paragraph is already open by the time the title is set.
+The bookmark is given the title alone, so the outline still reads "Homework 9".
+
+### The paragraph-hook rule, stated properly
+
+Three separate bugs in this work came from the same mistake, so it is worth
+stating as a rule: **`\tagpdfparaOff`/`\tagpdfparaOn` must bracket whole
+paragraph units.**
+
+Switch it off part-way through a paragraph and the BEGIN hook has already fired
+while the END hook still fires — or, at the start of a list item, the BEGIN hook
+is skipped while the END hook is not. Either way tagpdf aborts with "the number
+of automatic begin and end text para hooks differ". The fix in `\qns`/`\q` is to
+switch off *before* `\item` and close with `\par` *before* switching back on, so
+neither hook fires and they balance. The trailing `\par` costs nothing because
+every question in the corpus is already followed by a blank line.
+
+### Interword spaces, again
+
+`latexa11y-doc.sty` needed the same `\tagpdfsetup{activate/spaces=false}` as the
+ee16 retrofit. Without it the running header, the footer and the `\Large` due-
+date line rendered as stacked, overlapping glyphs.

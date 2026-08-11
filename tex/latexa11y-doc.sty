@@ -1,212 +1,361 @@
 %% latexa11y-doc.sty
-%% Shared document machinery for assignments, exams and worksheets:
-%% course identity, the tagged title block, and the question/part/solution
-%% structure that produces the heading hierarchy.
+%% Shared document machinery for assignments, exams and worksheets.
 %%
-%% HEADING MODEL
-%%   level 1  document title      "Homework 13"            Title + H1
-%%   level 2  question            "Question 1. Noisy ..."  H2
-%%   level 3  part                "Part (a)"               H3
-%%   level 4  solution / answer   "Solution"               H4
+%% ---------------------------------------------------------------------------
+%% THIS FILE REPRODUCES THE EECS 16A HOUSE STYLE
+%% ---------------------------------------------------------------------------
+%% Every dimension, font, rule and skip below is copied from the course's
+%% ee16.sty, and the author-facing macros keep their existing names and
+%% behaviour: \qns, \q, \qitem, \sol, \ans and qunlist all work exactly as they
+%% always have. A document written for ee16.sty typesets the same here.
 %%
-%% Questions and parts are numbered with counters rather than built as list
-%% environments. A list would add L/LI/Lbl/LBody structure around every heading
-%% for no semantic gain, complicate the parent-child rules, and bury the H2 two
-%% levels deep -- while the visual result ("1. Title") is identical.
+%% What is added is invisible on the page: a heading structure (H1-H4), PDF
+%% bookmarks, document metadata, artifacts for decorative rules, and
+%% Unicode-mapped text.
+%%
+%% Unlike latexa11y-ee16.sty, which patches the real ee16.sty, this file is
+%% SELF-CONTAINED: no ee16.sty, no markup.sty, no timestamp.sty required. Use it
+%% for a new course, or for a document that should not depend on the legacy
+%% style files. Use latexa11y-ee16.sty instead when ee16.sty is present, because
+%% patching the real file guarantees fidelity automatically.
+%%
+%% Written in plain LaTeX2e rather than expl3 so that it reads alongside the
+%% ee16.sty definitions it mirrors.
+%%
+%% THE ONE DELIBERATE VISUAL DEVIATION is the solution/answer colour. ee16
+%% documents use `blue` (8.59:1, conforming) in homework drivers but
+%% solutionColor = rgb(0.2,0.6,0.9) in discussion worksheets, which measures
+%% 3.07:1 against the 4.5:1 that WCAG 2.1 SC 1.4.3 requires. This file uses a
+%% conforming blue everywhere. Pass [housecolors] to get the originals back.
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
-\ProvidesExplPackage{latexa11y-doc}{2026-08-08}{0.1.0}
-  {Tagged assignment/exam/worksheet structure}
+\ProvidesPackage{latexa11y-doc}[2026-08-11 v0.2.0 EECS 16A house style, tagged]
 
 \RequirePackage{latexa11y-core}
 
-%% ---------------------------------------------------------------------------
-%% Solution visibility
-%% ---------------------------------------------------------------------------
-%% Replaces the corpus convention of duplicating a whole driver file
-%% (prob9.tex / sol9.tex differing only in whether \sol is a no-op) with class
-%% options on a single source.
-
-\bool_new:N \g__access_show_solutions_bool
-\bool_new:N \g__access_show_answers_bool
-\bool_new:N \g__access_show_guidance_bool
-\bool_new:N \g__access_reserve_space_bool
-\bool_gset_true:N \g__access_reserve_space_bool
-
-\NewDocumentCommand \accessshowsolutions { } { \bool_gset_true:N \g__access_show_solutions_bool }
-\NewDocumentCommand \accessshowanswers   { } { \bool_gset_true:N \g__access_show_answers_bool }
-\NewDocumentCommand \accessshowguidance  { } { \bool_gset_true:N \g__access_show_guidance_bool }
-\NewDocumentCommand \accessnoreserve     { } { \bool_gset_false:N \g__access_reserve_space_bool }
+%% Interword-space injection OFF -- same reason as latexa11y-ee16.sty.
+%% Activating tagging also enables tagpdf's `activate/spaces`, which injects
+%% real space glyphs. With the Times/Dunhill setup used here that reflows text
+%% in the running header and footer and inside \emph and \Large groups until the
+%% glyphs stack on top of each other and the header is unreadable. Not caused by
+%% this package: \DocumentMetadata{testphase={tagpdf}} alone reproduces it.
+%% Re-enable with \tagpdfsetup{activate/spaces} if your document is unaffected,
+%% and check the header before shipping.
+\AddToHook{begindocument}{\tagpdfsetup{activate/spaces=false}}
 
 %% ---------------------------------------------------------------------------
-%% Course identity
+%% 0. Options
 %% ---------------------------------------------------------------------------
 
-\tl_new:N \g__access_coursenumber_tl
-\tl_new:N \g__access_coursename_tl
-\tl_new:N \g__access_semester_tl
-\tl_new:N \g__access_university_tl
-\tl_new:N \g__access_doctitle_tl
-
-\NewDocumentCommand \coursenumber { m } { \tl_gset:Nn \g__access_coursenumber_tl {#1} }
-\NewDocumentCommand \coursename   { m } { \tl_gset:Nn \g__access_coursename_tl   {#1} }
-\NewDocumentCommand \semester     { m } { \tl_gset:Nn \g__access_semester_tl     {#1} }
-\NewDocumentCommand \university   { m } { \tl_gset:Nn \g__access_university_tl   {#1} }
-
-%% \title is redefined rather than reused: the corpus calls it with no argument
-%% (\def\title{Homework 9}), and the tagged title block needs the string both to
-%% typeset and to place in the PDF metadata.
-\RenewDocumentCommand \title { m }
-  {
-    \tl_gset:Nn \g__access_doctitle_tl {#1}
-    \accesstitle {#1}
-  }
+\newif\ifaccess@housecolors \access@housecolorsfalse
+\DeclareOption{housecolors}{\access@housecolorstrue}
+\DeclareOption*{}
+\ProcessOptions\relax
 
 %% ---------------------------------------------------------------------------
-%% Title block  (level 1)
-%% ---------------------------------------------------------------------------
-%% The rules are decorative and carry no meaning, so they are artifacts. In the
-%% legacy ee16.sty they were bare \hrule commands that became untagged content.
-
-\RenewDocumentCommand \maketitle { }
-  {
-    \begin{Decorative}
-      \noindent\rule{\linewidth}{3pt}
-    \end{Decorative}
-    \par\nobreak\vspace{0.4em}
-    \noindent
-    {
-      \normalsize\bfseries
-      \tl_use:N \g__access_coursenumber_tl
-      \tl_if_empty:NF \g__access_coursename_tl { \ \textnormal{\tl_use:N \g__access_coursename_tl} }
-      \hfill
-      \tl_use:N \g__access_semester_tl
-      \par
-    }
-    \vspace{0.3em}
-    \accessheading[\g__access_doctitle_tl]{1}{ \LARGE \tl_use:N \g__access_doctitle_tl }
-    \nobreak
-    \begin{Decorative}
-      \noindent\rule{\linewidth}{3pt}
-    \end{Decorative}
-    \par\vspace{0.8em}
-  }
-
-%% ---------------------------------------------------------------------------
-%% Questions (level 2) and parts (level 3)
+%% 1. Packages  (ee16.sty line 297 onwards)
 %% ---------------------------------------------------------------------------
 
-\newcounter{accessquestion}
-\newcounter{accesspart}[accessquestion]
-\RenewDocumentCommand \theaccessquestion { } { \arabic{accessquestion} }
-\RenewDocumentCommand \theaccesspart     { } { \alph{accesspart} }
+\RequirePackage{times,mathptmx}
+\RequirePackage[T1]{fontenc}
+\RequirePackage{amsmath,amssymb,amsfonts,textcomp,graphicx,url}
+\RequirePackage{xcolor}
 
-\tl_new:N \g__access_points_tl
-
-%% \question[points]{title}
-\NewDocumentCommand \question { o m }
-  {
-    \stepcounter{accessquestion}
-    \setcounter{accesspart}{0}
-    \IfNoValueTF {#1}
-      { \tl_gclear:N \g__access_points_tl }
-      { \tl_gset:Nn \g__access_points_tl {#1} }
-    %% The bookmark gets a plain-text form: bookmark strings are PDF strings,
-    %% so math and font switches in a question title would garble the outline.
-    \accessheading
-      [ Question~\int_use:N \c@accessquestion ]
-      {2}
-      {
-        \large\bfseries
-        Question~\theaccessquestion.\ #2
-        \tl_if_empty:NF \g__access_points_tl
-          { \ \normalfont\normalsize (\tl_use:N \g__access_points_tl\ points) }
-      }
-  }
-
-%% \questionpart[points] -- the part heading. Not \part (an article sectioning
-%% command) and not \qpart (markup.sty uses that as an autograder marker).
-\NewDocumentCommand \questionpart { o }
-  {
-    \stepcounter{accesspart}
-    \accessheading
-      [ Part~(\int_to_alph:n { \value{accesspart} }) ]
-      {3}
-      {
-        \bfseries
-        Part~(\theaccesspart)
-        \IfNoValueF {#1} { \ \normalfont\normalsize (#1~points) }
-      }
-  }
+%% ee16.sty selects the title fonts with the \font primitive, which produces
+%% text with no ToUnicode CMap: unextractable, unsearchable, unspeakable.
+%% Switching on glyph-name mapping makes pdfTeX emit one, so the course keeps
+%% its typography AND the text is readable. Verified: cmdunh10 then extracts as
+%% real words. This is why no font substitution is needed.
+\ifdefined\pdfgentounicode
+  \pdfgentounicode=1
+  \InputIfFileExists{glyphtounicode.tex}{}{}
+\fi
 
 %% ---------------------------------------------------------------------------
-%% Solutions, answers, guidance (level 4)
+%% 2. Page geometry  (ee16.sty lines 77-90, verbatim)
 %% ---------------------------------------------------------------------------
+%% Raw dimension assignment, deliberately NOT the geometry package: geometry
+%% recomputes the text block from margins and would silently produce a
+%% different one.
 
-\NewDocumentEnvironment { solution } { +b }
-  {
-    \bool_if:NTF \g__access_show_solutions_bool
-      {
-        \accessheading[Solution]{4}{ \bfseries\color{a11ySolution} Solution }
-        \begingroup\color{a11ySolution} #1 \par\endgroup
-      }
-      { \__access_reserve_space: }
-  }
-  { }
+\textheight=9in
+\textwidth=6.5in
+\addtolength{\voffset}{-1in}   %%% Required when using pdflatex on Mac
+\oddsidemargin=0in
+\evensidemargin=-0.25in
+\parindent=0pt
+\parskip=5pt
+\itemsep=-1pt
+\floatsep 9pt plus 2pt minus 3pt
+\intextsep 9pt plus 2pt minus 3pt
+\textfloatsep=9pt plus 2pt minus 3pt
+\renewcommand{\baselinestretch}{1.0}
 
-\NewDocumentEnvironment { answer } { +b }
-  {
-    \bool_if:NTF \g__access_show_answers_bool
-      {
-        \accessheading[Answer]{4}{ \bfseries\color{a11yAnswer} Answer }
-        \begingroup\color{a11yAnswer} #1 \par\endgroup
-      }
-      { \__access_reserve_space: }
-  }
-  { }
-
-\NewDocumentEnvironment { guidance } { +b }
-  {
-    \bool_if:NT \g__access_show_guidance_bool
-      {
-        \accessheading[Guidance for staff]{4}{ \bfseries\color{a11yAccent} Guidance~for~staff }
-        \begingroup\color{a11yAccent} #1 \par\endgroup
-      }
-  }
-  { }
-
-%% Blank working space in the student version. Reserved space is decorative --
-%% it must not be announced, and it must not be an empty tagged paragraph.
-\dim_new:N \g__access_reserve_dim
-\dim_gset:Nn \g__access_reserve_dim { 5\baselineskip }
-\NewDocumentCommand \accessreserve { m } { \dim_gset:Nn \g__access_reserve_dim {#1} }
-
-\cs_new_protected:Npn \__access_reserve_space:
-  {
-    \bool_if:NT \g__access_reserve_space_bool
-      { \begin{Decorative} \vspace*{\g__access_reserve_dim} \end{Decorative} }
-  }
+%% Display fonts for the masthead (ee16.sty lines 91-95, verbatim).
+\font\dunhd=cmdunh10 scaled \magstep5
+\font\dunhc=cmdunh10 scaled \magstep4
+\font\dunhbb=cmdunh10 scaled \magstep3
+\font\dunhb=cmdunh10 scaled \magstep2
+\font\dunha=cmdunh10 scaled \magstep2
 
 %% ---------------------------------------------------------------------------
-%% Answer regions
+%% 3. Course identity
 %% ---------------------------------------------------------------------------
-%% Replaces \framebox(470,42){} -- a picture-mode box that carries no semantics
-%% at all -- and \uline{\hfill} fill-in rules, neither of which a screen reader
-%% can report as "here is where you write your answer".
+%% ee16.sty hard-codes these with \def and the semester file overrides them.
+%% Here they are settable, which is what makes the file course-agnostic.
 
-\NewDocumentCommand \answerbox { O{5\baselineskip} }
-  {
-    \par\noindent
-    %% `~` is a space. This file is read under expl3 syntax, where ordinary
-    %% spaces are IGNORED -- a literal string written normally reaches the PDF
-    %% as "Blankanswerboxforyourwrittenresponse."
-    \begin{AltOnly}{Blank~answer~box~for~your~written~response.}
-      \fbox{ \parbox[c][#1][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{} }
-    \end{AltOnly}
-    \par
-  }
+\def\coursenumber{COURSE}
+\def\class{}
+\def\semester{}
+\def\university{}
+\def\accessdoctitle{}
 
-\NewDocumentCommand \answerblank { O{4cm} }
-  { \altonly{Blank~space~for~your~answer}{\rule{#1}{0.4pt}} }
+\newcommand{\setcoursenumber}[1]{\def\coursenumber{#1}}
+\newcommand{\setcoursename}[1]{\def\class{#1}}
+\newcommand{\setsemester}[1]{\def\semester{#1}}
+\newcommand{\setuniversity}[1]{\def\university{#1}}
+%% Aliases matching the ee16 spelling, so either form works.
+\newcommand{\coursename}[1]{\def\class{#1}}
+
+%% body.tex files write `\def\title{Homework 9}` -- an argument-less macro. Both
+%% that form and \title{...} must work, so \title is left alone and the title
+%% block reads whatever \title expands to at \maketitle time.
+\providecommand{\title}{}
+
+%% timestamp.sty is a separate package in the course tree; without it the
+%% running header would fail. Fall back to the build date.
+\providecommand{\timestamp}{\today}
+
+%% ---------------------------------------------------------------------------
+%% 4. Running header and footer  (ee16.sty \ps@myheadings, verbatim)
+%% ---------------------------------------------------------------------------
+
+\def\oddfoottext{\begin{footnotesize}UCB \coursenumber, \semester, \title, All
+Rights Reserved. This may not be publicly shared without explicit
+permission.\hfill\qquad\thepage\end{footnotesize}}
+\def\evenfoottext{\begin{footnotesize}\thepage \hfill\qquad UCB \coursenumber, \semester, \title, All
+Rights Reserved. This may not be publicly shared without explicit permission.\end{footnotesize}}
+\def\oddheadtext{\begin{footnotesize} Last Updated: \timestamp
+\hfill\qquad\thepage\end{footnotesize}}
+
+\def\ps@myheadings{\let\@mkboth\@gobbletwo
+\def\@oddfoot{\oddfoottext}%
+\def\@evenfoot{\evenfoottext}%
+\def\@evenhead{\oddheadtext}\def\@oddhead{\oddheadtext}}
+
+\pagestyle{myheadings}
+
+%% ---------------------------------------------------------------------------
+%% 5. Title block  (ee16.sty \maketitle / \@maketitle)
+%% ---------------------------------------------------------------------------
+%% Identical to ee16's, with exactly two additions, both invisible:
+%%   * the title text is wrapped in an H1 and registers the top bookmark;
+%%   * the two 6pt rules become artifacts, so a screen reader skips them
+%%     instead of meeting untagged content.
+
+\def\maketitle{%
+ \begingroup
+ \newpage
+ \global\@topnum\z@ \@maketitle
+ \thispagestyle{myheadings}
+ \endgroup
+ \setcounter{footnote}{0}
+ \let\maketitle\relax
+ \let\@maketitle\relax}
+
+%% The masthead as a whole is the H1, rather than just the title text.
+%%
+%% ee16's layout puts the title on the same line as the semester, and the
+%% \vskip between the two masthead lines forces an implicit \par -- so at the
+%% moment the title is typeset a paragraph is already open, and a heading inside
+%% a paragraph is invalid PDF (`Parent-Child 'P' --> 'H1'`). Giving the title its
+%% own paragraph would insert a \parskip and move the page.
+%%
+%% So paragraph tagging is suspended across the whole block and the masthead
+%% becomes a single H1 element. The bookmark still reads just "Homework 9",
+%% because \accessbookmarkonly is given the title on its own.
+\def\@maketitle{\newpage
+\accessrecordtitle
+\accessbookmarkonly{1}{\title}%
+\tagpdfparaOff
+\begin{Decorative}\hrule height6pt\end{Decorative} \vskip .7em
+%% One marked-content sequence per masthead LINE. The \vskip between the two
+%% lines forces an implicit \par, and a sequence cannot span that: doing so
+%% leaves the structure stack open and the rest of the document untagged.
+\tagstructbegin{tag=P}\tagmcbegin{tag=P}%
+\makebox[1.3in][l]{\dunhb \coursenumber}{\dunhb \class \hfill \ }%
+\tagmcend\tagstructend
+\vskip-0.1in
+\tagstructbegin{tag=H1}\tagmcbegin{tag=H1}%
+\makebox[1.3in][l]{\dunhb \semester}{\dunhb \hfill \dunhbb \title}%
+\tagmcend\tagstructend
+\par
+\vskip 0.6em
+\begin{Decorative}\hrule height6pt\end{Decorative}
+ \par
+\tagpdfparaOn
+ \vskip .5em}
+
+%% Records the title in the PDF metadata (Matterhorn 06-003). Called from
+%% \@maketitle rather than \begin{document} because body.tex writes
+%% `\def\title{...}` AFTER \begin{document}: probing \title earlier would
+%% consume the following brace group.
+\newcommand{\accessrecordtitle}{\expandafter\accesstitle\expandafter{\title}}
+
+%% ---------------------------------------------------------------------------
+%% 6. Questions  (ee16.sty lines 68-69, 321-325, verbatim)
+%% ---------------------------------------------------------------------------
+%% The question NUMBER comes from the list label, not from the macro. There is
+%% no "Question 1." prefix anywhere in an EECS 16A document, so the tagged
+%% version must not invent one; the heading wraps the question's own title.
+
+\newcounter{sparectr}
+\newenvironment{qunlist}{\begin{list}{{\bf\arabic{sparectr}.}}%
+                                     {\usecounter{sparectr}
+                                      \setlength{\leftmargin}{0pt}}}%
+                        {\end{list}}
+
+\newcounter{accessqcount}
+\newcounter{accesspartcount}
+
+\newcommand{\accessquestionhead}[1]{%
+  \stepcounter{accessqcount}%
+  \setcounter{accesspartcount}{0}%
+  \accessheadinginline[Question \theaccessqcount]{2}{#1}%
+}
+
+%% The \par is load-bearing, and it does not change the page.
+%%
+%% Paragraph tagging has to be off across the heading, or the H2 lands inside a
+%% P (invalid PDF). But switching it off part-way through a list item skips the
+%% paragraph's BEGIN hook while its END hook still fires, and tagpdf aborts with
+%% "the number of automatic begin and end text para hooks differ". Turning it
+%% off before \item and closing the paragraph with \par before turning it back
+%% on means neither hook fires, so they balance.
+%%
+%% Every question in the corpus is followed by a blank line, so the \par is
+%% already there and a second one is ignored by TeX.
+\def\q#1#2{\tagpdfparaOff{\bf\item (#1 pts.)\quad \accessquestionhead{#2}}\par\tagpdfparaOn}
+\def\qns#1{\tagpdfparaOff{\bf\item \accessquestionhead{#1}}\par\tagpdfparaOn}
+
+%% ---------------------------------------------------------------------------
+%% 7. Parts
+%% ---------------------------------------------------------------------------
+%% Parts are ordinary enumerate items with the label formats every body.tex
+%% sets. \qitem adds a level-3 bookmark; it prints nothing of its own, because
+%% the list label already shows "(a)".
+
+\renewcommand{\labelenumi}{(\alph{enumi})}
+\renewcommand{\theenumi}{(\alph{enumi})}
+\renewcommand{\labelenumii}{\roman{enumii}.}
+\renewcommand{\theenumii}{\roman{enumii}.}
+\renewcommand{\labelenumiii}{\Alph{enumiii}.}
+\renewcommand{\theenumiii}{\Alph{enumiii}.}
+
+\newcommand{\qitem}{%
+  \item
+  \stepcounter{accesspartcount}%
+  \accessbookmarkonly{3}{Part (\alph{accesspartcount})}%
+}
+
+%% ---------------------------------------------------------------------------
+%% 8. Solutions, answers, guidance
+%% ---------------------------------------------------------------------------
+%% Rendered inline, exactly as the course's driver files do:
+%%     \newcommand{\sol}[1]{{\color{blue} \textbf{Solution: } #1}}
+%% Not a block heading -- that would change the page.
+
+\newif\ifaccess@showsol   \access@showsolfalse
+\newif\ifaccess@showans   \access@showansfalse
+\newif\ifaccess@showguid  \access@showguidfalse
+\newif\ifaccess@reserve   \access@reservetrue
+
+\newcommand{\accessshowsolutions}{\access@showsoltrue}
+\newcommand{\accessshowanswers}{\access@showanstrue}
+\newcommand{\accessshowguidance}{\access@showguidtrue}
+\newcommand{\accessnoreserve}{\access@reservefalse}
+
+\ifaccess@housecolors
+  \definecolor{accessSolutionText}{named}{blue}
+  \definecolor{accessAnswerText}{rgb}{0.2,0.2,0.9}
+\else
+  \colorlet{accessSolutionText}{a11ySolution}
+  \colorlet{accessAnswerText}{a11yAnswer}
+\fi
+
+\newlength{\accessreservelen}
+\setlength{\accessreservelen}{5\baselineskip}
+\newcommand{\accessreserve}[1]{\setlength{\accessreservelen}{#1}}
+
+%% Blank working space in the student version. It is decorative: it must not be
+%% announced, and must not become an empty tagged paragraph.
+\newcommand{\access@reservespace}{%
+  \ifaccess@reserve
+    \begin{Decorative}\vspace*{\accessreservelen}\end{Decorative}%
+  \fi
+}
+
+%% Solutions get a level-4 BOOKMARK but no H4 tag, and that is deliberate.
+%%
+%% "Solution: " is inline: it opens the same paragraph that carries the solution
+%% text, exactly as `\newcommand{\sol}[1]{{\color{blue}\textbf{Solution: }#1}}`
+%% always has. PDF does not permit a heading inside a paragraph -- tagpdf
+%% reports `Parent-Child 'P' --> 'H4'` -- so tagging it would trade a valid
+%% document for a nominal extra heading level. Forcing it into its own paragraph
+%% instead would insert a \parskip and change the page, which is the one thing
+%% this refactor exists to avoid.
+%%
+%% The navigation the reader actually uses is unaffected: the bookmark tree
+%% still reads Homework > Question > Part > Solution. Block-level headings (the
+%% title and each question) do carry real H1 and H2 tags.
+\newcommand{\sol}[1]{%
+  \ifaccess@showsol
+    \accessbookmarkonly{4}{Solution}%
+    {\color{accessSolutionText}\textbf{Solution: }#1}%
+  \else
+    \access@reservespace
+  \fi
+}
+\newcommand{\solans}[1]{\sol{#1}}
+\newcommand{\ans}[1]{%
+  \ifaccess@showans
+    \accessbookmarkonly{4}{Answer}%
+    {\color{accessAnswerText}\textbf{Answer: }#1}%
+  \else
+    \access@reservespace
+  \fi
+}
+\newcommand{\guidance}[1]{%
+  \ifaccess@showguid
+    \accessbookmarkonly{4}{Guidance}%
+    {\color{a11yAccent}\textbf{Guidance: }#1}%
+  \fi
+}
+
+%% ee16.sty also provides these.
+\newcommand{\answer}{\smallskip\textbf{Answer:} }
+\newcommand{\answerp}[1]{\smallskip\textbf{Answer:} (#1 pts.)}
+
+%% ---------------------------------------------------------------------------
+%% 9. Answer regions
+%% ---------------------------------------------------------------------------
+%% Replaces \framebox(470,42){} -- a picture-mode box carrying no semantics --
+%% and \uline{\hfill} fill-in rules, neither of which a screen reader can report
+%% as "here is where you write your answer".
+
+\newcommand{\answerbox}[1][5\baselineskip]{%
+  \par\noindent
+  \begin{AltOnly}{Blank answer box for your written response.}%
+    \fbox{\parbox[c][#1][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{}}%
+  \end{AltOnly}%
+  \par
+}
+\newcommand{\answerblank}[1][4cm]{%
+  \altonly{Blank space for your answer}{\rule{#1}{0.4pt}}%
+}
+\newcommand{\fillin}[1]{\answerblank[#1]}
+\newcommand{\doublehrule}{%
+  \begin{Decorative}\hrule \vskip 0.02in \hrule\end{Decorative}%
+}
 
 \endinput
