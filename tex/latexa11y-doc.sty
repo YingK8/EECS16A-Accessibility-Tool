@@ -343,10 +343,19 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
 %% and \uline{\hfill} fill-in rules, neither of which a screen reader can report
 %% as "here is where you write your answer".
 
+%% \framebox with an explicit width and a strut, NOT \fbox{\parbox{...}{}}.
+%%
+%% An empty \parbox body collapses the box: `\fbox{\parbox[c][4\baselineskip][c]
+%% {\dimexpr\linewidth-2\fboxsep-2\fboxrule}{}}` draws a frame only 6.8pt wide
+%% -- 2\fboxsep + 2\fboxrule and nothing else -- which appears on the page as a
+%% thin tall rectangle at the left margin. Reproducible in a plain article
+%% class, so it is nothing to do with the tagging. Giving the box a \strut, or
+%% setting the width on \framebox directly as here, both fix it; this form also
+%% drops the width arithmetic, since \framebox sizes the OUTER box.
 \newcommand{\answerbox}[1][5\baselineskip]{%
   \par\noindent
   \begin{AltOnly}{Blank answer box for your written response.}%
-    \fbox{\parbox[c][#1][c]{\dimexpr\linewidth-2\fboxsep-2\fboxrule}{}}%
+    \framebox[\linewidth]{\rule{0pt}{#1}}%
   \end{AltOnly}%
   \par
 }
