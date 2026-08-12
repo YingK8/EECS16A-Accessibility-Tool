@@ -48,6 +48,24 @@
 
 \RequirePackage{xcolor}
 
+%% Bookmarks need a mechanism, and not every document has one.
+%%
+%% Tagging never writes /Outlines -- the structure tree and the bookmark tree
+%% are separate object graphs -- so bookmarks come from hyperref's \pdfbookmark
+%% or the bookmark package. The EECS 16A homework drivers happen to load
+%% hyperref; the discussion-worksheet preamble does not. Without this line those
+%% worksheets tagged perfectly (258 structure objects) and produced ZERO
+%% bookmarks, with no error and no warning: a silent loss of the navigation this
+%% package exists to provide.
+%%
+%% `bookmark` pulls in hyperref if it is not already loaded, so it is loaded at
+%% the END of the preamble rather than here. Loading it immediately would take
+%% hyperref with no options, and a later `\usepackage[colorlinks=true]{hyperref}`
+%% in the document -- which sp26/dis/03A/body03A.tex really does -- then fails
+%% with "Option clash for package hyperref". Deferring lets the document's own
+%% options win, and makes this a no-op when hyperref is already present.
+\AddToHook{begindocument/before}{\RequirePackage{bookmark}}
+
 %% ---------------------------------------------------------------------------
 %% 0. Graceful degradation
 %% ---------------------------------------------------------------------------
@@ -120,6 +138,16 @@
     A~marked-content~sequence~cannot~cross~a~page~boundary,~so~an~AltOnly~body~
     must~fit~on~one~page.~Split~the~region,~or~use~the~starred~form~
     \string\begin{AltOnly*}~and~verify~the~resulting~tag~tree.
+  }
+
+\msg_new:nnnn { latexa11y } { no-bookmarks }
+  { No~bookmark~mechanism~is~available;~this~PDF~will~have~no~outline. }
+  {
+    Tagging~never~writes~/Outlines,~so~bookmarks~need~hyperref~or~the~bookmark~
+    package.~Neither~is~loaded,~so~every~heading~registered~by~this~package~has~
+    been~silently~discarded.~WCAG~2.1~AA~expects~an~outline~for~multi-page~
+    documents~(SC~2.4.5,~technique~PDF2).~Add~\string\usepackage{bookmark}~to~
+    the~preamble.
   }
 
 \msg_new:nnnn { latexa11y } { heading-level }
@@ -473,6 +501,14 @@
   }
 
 \cs_new:Npn \__access_plain:n #1 { \__access_pdfstring:n {#1} }
+
+%% Fail loudly rather than silently: a document that tags perfectly and has no
+%% outline looks fine in every check except the one a reader actually uses.
+\AtBeginDocument
+  {
+    \cs_if_exist:NF \bookmark
+      { \cs_if_exist:NF \pdfbookmark { \msg_warning:nn { latexa11y } { no-bookmarks } } }
+  }
 
 \cs_new_protected:Npn \__access_bookmark:nn #1#2
   {

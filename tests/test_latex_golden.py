@@ -249,16 +249,22 @@ def test_legacy_argumentless_title_is_recovered(legacy_structure):
 
 
 def test_legacy_produces_heading_tags_for_block_level_headings(legacy_structure):
-    """H1 for the masthead, H2 per question -- and deliberately no H3/H4.
+    """H1 for the masthead, and by default nothing below it.
 
-    Parts and solutions are inline in an EECS 16A document: "(a)" is a list
-    label and "Solution:" opens the same paragraph as the solution text. PDF
-    forbids a heading inside a paragraph, so tagging them would trade a valid
-    document for two nominal heading levels, and forcing them onto their own
-    paragraphs would insert a \\parskip and move the page. They appear in the
-    bookmark tree instead -- see the next test.
+    Everything under the masthead is inline in an EECS 16A document: a question
+    title shares its paragraph with the body text that follows, "(a)" is a list
+    label, and "Solution:" opens the same paragraph as the solution. PDF forbids
+    a heading inside a paragraph, and forcing each onto its own paragraph
+    inserts a \\parskip and moves the page.
+
+    Measured: 74 of 362 \\qns calls in the live question bank (20%) are followed
+    immediately by text, so the forced break is a real reflow, not a no-op.
+
+    The default therefore preserves the page and puts all four levels in the
+    bookmark tree. \\accessquestiontags opts into real H2 tags for courses that
+    prefer the structure -- covered by the next test.
     """
-    assert legacy_structure.heading_levels == [1, 2, 2, 2]
+    assert legacy_structure.heading_levels == [1]
 
 
 def test_legacy_bookmark_tree_keeps_all_four_levels(legacy_structure):
@@ -287,3 +293,31 @@ def test_legacy_qitem_inside_enumerate_does_not_leak_figure_text(legacy):
 
     content = read_page_content(legacy, 0)
     assert "R1" not in content.readable_text()
+
+
+def test_question_tags_option_produces_h2(tmp_path_factory):
+    """\\accessquestiontags turns question titles into real H2 tags.
+
+    The opposite of the default: costs a forced \\par after each question title,
+    buys a heading tag. Both behaviours are exercised so neither can regress.
+    """
+    from latexa11y.check.structure import read_structure
+
+    work = tmp_path_factory.mktemp("qtags")
+    source = LEGACY.read_text(encoding="utf-8").replace(
+        r"\usepackage{latexa11y-compat-ee16}",
+        "\\usepackage{latexa11y-compat-ee16}\n\\accessquestiontags",
+    )
+    name = "qtags.tex"
+    (work / name).write_text(source, encoding="utf-8")
+    for _ in range(3):
+        subprocess.run(
+            ["pdflatex", "-interaction=nonstopmode", "-file-line-error", name],
+            cwd=work,
+            env={"TEXINPUTS": f"{TEXDIR}:", "PATH": __import__("os").environ["PATH"]},
+            capture_output=True,
+            timeout=180,
+            check=False,
+        )
+    structure = read_structure(work / "qtags.pdf")
+    assert structure.heading_levels == [1, 2, 2, 2]

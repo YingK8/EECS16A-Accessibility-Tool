@@ -224,19 +224,48 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
   \accessheadinginline[Question \theaccessqcount]{2}{#1}%
 }
 
-%% The \par is load-bearing, and it does not change the page.
+%% Question headings: a real H2 tag, or a bookmark only?
 %%
-%% Paragraph tagging has to be off across the heading, or the H2 lands inside a
-%% P (invalid PDF). But switching it off part-way through a list item skips the
-%% paragraph's BEGIN hook while its END hook still fires, and tagpdf aborts with
-%% "the number of automatic begin and end text para hooks differ". Turning it
-%% off before \item and closing the paragraph with \par before turning it back
-%% on means neither hook fires, so they balance.
+%% A real H2 costs a forced \par. Paragraph tagging must be off across the
+%% heading or the H2 lands inside a P, which PDF forbids; but switching it off
+%% part-way through a list item skips the paragraph's BEGIN hook while its END
+%% hook still fires, and tagpdf aborts with "the number of automatic begin and
+%% end text para hooks differ". Closing the paragraph with \par while tagging is
+%% still off makes neither hook fire, so they balance.
 %%
-%% Every question in the corpus is followed by a blank line, so the \par is
-%% already there and a second one is ignored by TeX.
-\def\q#1#2{\tagpdfparaOff{\bf\item (#1 pts.)\quad \accessquestionhead{#2}}\par\tagpdfparaOn}
-\def\qns#1{\tagpdfparaOff{\bf\item \accessquestionhead{#1}}\par\tagpdfparaOn}
+%% That \par is free ONLY when the author already left a blank line after the
+%% question title. Measured across the live question bank: 362 \qns calls, of
+%% which 74 (20%) are followed immediately by text. For those, the \par moves
+%% the body onto its own line -- a real, visible reflow.
+%%
+%% So the default preserves the page exactly and registers a level-2 bookmark,
+%% matching how parts and solutions are handled. \accessquestiontags switches to
+%% real H2 tags for courses that would rather have the heading structure and can
+%% accept the reflow (or that always leave a blank line).
+\newif\ifaccess@qtag \access@qtagfalse
+\newcommand{\accessquestiontags}{\access@qtagtrue}
+
+\newcommand{\access@qhead}[1]{%
+  \ifaccess@qtag
+    \accessquestionhead{#1}%
+  \else
+    \stepcounter{accessqcount}%
+    \setcounter{accesspartcount}{0}%
+    \accessbookmarkonly{2}{Question \theaccessqcount}%
+    #1%
+  \fi
+}
+
+\def\q#1#2{%
+  \ifaccess@qtag\tagpdfparaOff\fi
+  {\bf\item (#1 pts.)\quad \access@qhead{#2}}%
+  \ifaccess@qtag\par\tagpdfparaOn\fi
+}
+\def\qns#1{%
+  \ifaccess@qtag\tagpdfparaOff\fi
+  {\bf\item \access@qhead{#1}}%
+  \ifaccess@qtag\par\tagpdfparaOn\fi
+}
 
 %% ---------------------------------------------------------------------------
 %% 7. Parts

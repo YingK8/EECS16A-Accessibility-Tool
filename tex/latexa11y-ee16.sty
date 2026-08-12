@@ -172,25 +172,52 @@
 %%     \def\qns#1{{\bf\item #1}}
 %% The replacements are identical apart from the heading wrapper around the
 %% visible text, so the bold item, the points and the \quad render as before.
-%% The \tagpdfparaOff ... \par ... \tagpdfparaOn wrapper is load-bearing, and it
-%% does not change the page.
+%% Question headings: a real H2 tag, or a bookmark only?
 %%
-%% Paragraph tagging has to be off across the heading or the H2 lands inside a
-%% P, which PDF forbids. But switching it off part-way through a list item skips
-%% the paragraph's BEGIN hook while its END hook still fires, and tagpdf aborts
-%% with "the number of automatic begin and end text para hooks differ" -- then
-%% cascades into "there is no open structure on the stack" for the rest of the
-%% document. Switching off BEFORE \item and closing with \par before switching
-%% back on means neither hook fires, so they balance.
+%% A real H2 costs a forced \par. Paragraph tagging must be off across the
+%% heading or the H2 lands inside a P, which PDF forbids; but switching it off
+%% part-way through a list item skips the paragraph's BEGIN hook while its END
+%% hook still fires, and tagpdf aborts with "the number of automatic begin and
+%% end text para hooks differ", then cascades into "there is no open structure
+%% on the stack" for the rest of the document. Closing the paragraph with \par
+%% while tagging is still off makes neither hook fire, so they balance.
 %%
-%% Every question in the corpus is followed by a blank line, so the \par is
-%% already there and TeX ignores the second one.
+%% That \par is free ONLY when the author already left a blank line after the
+%% question title. Measured across the live question bank: 362 \qns calls, of
+%% which 74 (20%) are followed immediately by text -- sp26/hw/13 has three such
+%% files. For those the \par moves the body onto its own line, a visible reflow.
+%%
+%% So the default preserves the page exactly and registers a level-2 bookmark,
+%% matching how parts and solutions are handled. \accessquestiontags switches to
+%% real H2 tags for courses that prefer the heading structure.
+\newif\ifaccess@qtag \access@qtagfalse
+\newcommand{\accessquestiontags}{\access@qtagtrue}
+
+\newcommand{\accessqhead}[1]{%
+  \ifaccess@qtag
+    \accessquestionhead{#1}%
+  \else
+    \stepcounter{accessqcount}%
+    \setcounter{accesspartcount}{0}%
+    \accessbookmarkonly{2}{Question \theaccessqcount}%
+    #1%
+  \fi
+}
+
 \AtBeginDocument{%
   \@ifundefined{qns}{}{%
-    \renewcommand{\qns}[1]{\tagpdfparaOff{\bf\item \accessquestionhead{#1}}\par\tagpdfparaOn}%
+    \renewcommand{\qns}[1]{%
+      \ifaccess@qtag\tagpdfparaOff\fi
+      {\bf\item \accessqhead{#1}}%
+      \ifaccess@qtag\par\tagpdfparaOn\fi
+    }%
   }%
   \@ifundefined{q}{}{%
-    \renewcommand{\q}[2]{\tagpdfparaOff{\bf\item (#1 pts.)\quad \accessquestionhead{#2}}\par\tagpdfparaOn}%
+    \renewcommand{\q}[2]{%
+      \ifaccess@qtag\tagpdfparaOff\fi
+      {\bf\item (#1 pts.)\quad \accessqhead{#2}}%
+      \ifaccess@qtag\par\tagpdfparaOn\fi
+    }%
   }%
 }
 
