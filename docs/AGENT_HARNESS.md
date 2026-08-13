@@ -106,13 +106,13 @@ from latexa11y.texlex import TexSource, EditBuffer
 source = TexSource.from_path(path)          # comment- and verbatim-aware
 buffer = EditBuffer(path)
 for span in source.environments("circuitikz"):   # live code only
-    buffer.wrap(span.start, span.end, "\\begin{AltOnly}{…}\n", "\n\\end{AltOnly}")
+    buffer.wrap(span.start, span.end, "\\begin{Described}{…}\n", "\n\\end{Described}")
 print(buffer.diff(source.text))             # review before writing
 path.write_bytes(source.encode(buffer.apply(source.text)))
 ```
 
 Why this matters: in this corpus **25–33% of `\includegraphics` call sites sit on
-commented-out lines**. A regex wrapper inserts `\begin{AltOnly}` on a commented
+commented-out lines**. A regex wrapper inserts `\begin{Described}` on a commented
 line, `%` swallows it, and the file no longer compiles. `TexSource.finditer`
 only ever matches live code; `EditBuffer` refuses overlapping edits instead of
 silently clobbering, and records wraps as two insertions so the wrapped content

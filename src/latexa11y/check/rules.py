@@ -498,7 +498,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
             )
         )
 
-    # The AltOnly contract, checked on the artefact rather than trusted.
+    # The Described contract, checked on the artefact rather than trusted.
     for page in range(structure.page_count):
         content = read_page_content(pdf_path, page)
         if content.untagged_text:

@@ -4,7 +4,7 @@ The structure tree says what the tags *are*; the content stream says what text
 each tag actually covers. Both are needed to answer the question this project
 exists to answer: **would a screen reader speak this?**
 
-The motivating case: an ``AltOnly`` region carries a correct ``/Alt`` and looks
+The motivating case: an ``Described`` region carries a correct ``/Alt`` and looks
 perfect in the structure tree, yet still leaks its contents if any tagged
 element opened inside it. That defect is invisible in the LaTeX log, invisible
 in the tag list, and invisible to veraPDF -- it shows up only as a readable

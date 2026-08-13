@@ -27,7 +27,7 @@ from ..errors import LatexA11yError
 from ..scan.figures import FigureRef, scan_file
 from ..texlex import EditBuffer, TexSource
 
-__all__ = ["ApplyPlan", "plan_file", "apply_scope", "escape_alt", "AltTextRejected"]
+__all__ = ["ApplyPlan", "plan_file", "apply_scope", "escape_description", "DescriptionRejected"]
 
 _TEX_SPECIALS = {
     "\\": r"\textbackslash{}",
@@ -41,11 +41,11 @@ _TEX_SPECIALS = {
 }
 
 
-class AltTextRejected(LatexA11yError):
+class DescriptionRejected(LatexA11yError):
     """A description cannot be written into LaTeX as-is."""
 
 
-def escape_alt(text: str) -> str:
+def escape_description(text: str) -> str:
     """Make a description safe to place inside a LaTeX argument.
 
     Braces are escaped rather than rejected. The previous tool refused any
@@ -55,7 +55,7 @@ def escape_alt(text: str) -> str:
     """
     collapsed = " ".join(text.split())
     if not collapsed:
-        raise AltTextRejected("empty description")
+        raise DescriptionRejected("empty description")
     out: list[str] = []
     for char in collapsed:
         if char == "{":
@@ -103,7 +103,7 @@ def plan_file(path: Path, profile: Profile, entries: dict[str, Entry]) -> ApplyP
         if entry is None:
             plan.skipped.append((reference.id, "not in any worklog; run scan first"))
             continue
-        if reference.already_wrapped:
+        if reference.already_described:
             continue  # idempotent: a second run changes nothing
         if entry.disposition == "artifact":
             _wrap_decorative(plan, reference)
@@ -115,35 +115,35 @@ def plan_file(path: Path, profile: Profile, entries: dict[str, Entry]) -> ApplyP
             )
             continue
         try:
-            alt = escape_alt(entry.alt)
-        except AltTextRejected as exc:
+            alt = escape_description(entry.description)
+        except DescriptionRejected as exc:
             plan.skipped.append((reference.id, str(exc)))
             continue
-        _wrap_alt(plan, reference, alt)
+        _wrap_described(plan, reference, alt)
         plan.wrapped += 1
     return plan
 
 
-def _wrap_alt(plan: ApplyPlan, reference: FigureRef, alt: str) -> None:
+def _wrap_described(plan: ApplyPlan, reference: FigureRef, alt: str) -> None:
     if reference.is_raster:
         # Inline form: an \includegraphics usually sits inside running text or a
         # centring group, where a display-level environment would change layout.
         plan.buffer.wrap(
             reference.start,
             reference.end,
-            f"\\altonly{{{alt}}}{{%\n",
+            f"\\described{{{alt}}}{{%\n",
             "}",
             reason="figure alt text",
-            rule="APPLY-ALT-INLINE",
+            rule="APPLY-DESCRIBED-INLINE",
         )
     else:
         plan.buffer.wrap(
             reference.start,
             reference.end,
-            f"\\begin{{AltOnly}}{{{alt}}}\n",
-            "\n\\end{AltOnly}",
+            f"\\begin{{Described}}{{{alt}}}\n",
+            "\n\\end{Described}",
             reason="figure alt text",
-            rule="APPLY-ALT-BLOCK",
+            rule="APPLY-DESCRIBED-BLOCK",
         )
 
 

@@ -201,11 +201,11 @@ def test_edits_apply_right_to_left_without_shifting():
 def test_wrap_never_passes_content_through_python():
     original = "\\includegraphics{a.png}"
     buffer = EditBuffer()
-    buffer.wrap(0, len(original), "\\begin{AltOnly}{alt}\n", "\n\\end{AltOnly}", rule="W")
+    buffer.wrap(0, len(original), "\\begin{Described}{alt}\n", "\n\\end{Described}", rule="W")
     result = buffer.apply(original)
     assert original in result
-    assert result.startswith("\\begin{AltOnly}{alt}\n")
-    assert result.endswith("\n\\end{AltOnly}")
+    assert result.startswith("\\begin{Described}{alt}\n")
+    assert result.endswith("\n\\end{Described}")
 
 
 def test_overlapping_edits_raise_rather_than_clobber():

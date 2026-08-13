@@ -188,7 +188,7 @@ class HeadingMap:
 @dataclass(slots=True)
 class FigurePolicy:
     #: Length above which a figure needs a body-level long description (tier T2).
-    alt_max_chars: int = 200
+    description_max_chars: int = 200
     #: Data-point count above which a data table beats prose.
     max_inline_data_points: int = 12
     max_series: int = 2
@@ -342,7 +342,14 @@ def load_profile(
             },
         ),
         figures=FigurePolicy(
-            alt_max_chars=int(figures_data.get("alt_max_chars", 200)),
+            description_max_chars=int(
+                figures_data.get(
+                    "description_max_chars",
+                    # `alt_max_chars` is the pre-rename spelling; a profile
+                    # written against it keeps working.
+                    figures_data.get("alt_max_chars", 200),
+                )
+            ),
             max_inline_data_points=int(figures_data.get("max_inline_data_points", 12)),
             max_series=int(figures_data.get("max_series", 2)),
             max_graph_edges=int(figures_data.get("max_graph_edges", 6)),

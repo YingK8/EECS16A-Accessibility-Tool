@@ -428,7 +428,7 @@ def agent_next_task(ctx: Context, limit: int, genre: str | None, refresh: bool) 
 
 @agent.command("submit")
 @click.option("--id", "identity", required=True, help="Figure id from next-task.")
-@click.option("--alt", required=True, help="The short description.")
+@click.option("--description", required=True, help="The short description.")
 @click.option("--long", "long_text", default="", help="Optional long description.")
 @click.option("--notes", default="", help="Optional reviewer notes.")
 @click.option("--author", default="agent", help="Who wrote it.")
@@ -442,7 +442,7 @@ def agent_next_task(ctx: Context, limit: int, genre: str | None, refresh: bool) 
 def agent_submit(
     ctx: Context,
     identity: str,
-    alt: str,
+    description: str,
     long_text: str,
     notes: str,
     author: str,
@@ -455,8 +455,8 @@ def agent_submit(
         result = submit(
             ctx.profile,
             identity,
-            alt=alt,
-            long=long_text,
+            description=description,
+            long_description=long_text,
             notes=notes,
             author=author,
             disposition=disposition,

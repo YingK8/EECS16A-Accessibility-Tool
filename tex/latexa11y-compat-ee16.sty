@@ -81,14 +81,14 @@
 %% describable; the alt text itself is supplied by the migration tool.
 
 \ProvideDocumentCommand \fig { O{} m }
-  { \altonly {#1} { \includegraphics{#2} } }
+  { \described {#1} { \includegraphics{#2} } }
 
 \ProvideDocumentCommand \twofig { O{} O{} m m }
   {
     \par\noindent
-    \altonly {#1} { \includegraphics[width=0.48\linewidth]{#3} }
+    \described {#1} { \includegraphics[width=0.48\linewidth]{#3} }
     \hfill
-    \altonly {#2} { \includegraphics[width=0.48\linewidth]{#4} }
+    \described {#2} { \includegraphics[width=0.48\linewidth]{#4} }
     \par
   }
 
@@ -99,6 +99,62 @@
 \ProvideDocumentCommand \fillin { O{4cm} } { \answerblank [#1] }
 \ProvideDocumentCommand \doublehrule { }
   { \begin{Decorative} \hrule \vskip 0.02in \hrule \end{Decorative} }
+
+%% ---------------------------------------------------------------------------
+%% Deprecated spellings of the description API
+%% ---------------------------------------------------------------------------
+%% `AltOnly` presupposed an `AltAlso` that describes a region AND still reads its
+%% contents. No such mode exists or could exist -- alt text always replaces the
+%% region; that is what alt text IS. The qualifier named the category rather than
+%% this member of it, so it carried no information and invented a sibling.
+%% `FigureBlock` likewise implied a `FigureInline`, and named layout rather than
+%% meaning. The current spellings are `Described` and `DescribedFigure`, which
+%% pair with `Decorative` to make the PDF/UA binary visible: a region is either
+%% an artifact or it is described.
+%%
+%% These aliases live here, in the compatibility shim, and deliberately NOT in
+%% latexa11y-core.sty, so the core API has exactly one spelling of each idea.
+%% They warn once each, naming the replacement.
+
+\msg_new:nnn { latexa11y } { deprecated-name }
+  { '#1'~is~deprecated;~use~'#2'~instead. }
+
+%% \tl_to_str:n, not plain expansion: the argument may be a control sequence
+%% (\altonly), and a message argument that expands it would execute the very
+%% deprecated command being reported. Str-ifying prints "\altonly" as characters.
+\cs_new_protected:Npn \__access_compat_warn:nn #1#2
+  {
+    \msg_warning:nnee { latexa11y } { deprecated-name }
+      { \tl_to_str:n {#1} } { \tl_to_str:n {#2} }
+  }
+
+\ProvideDocumentEnvironment { AltOnly } { s m }
+  {
+    \__access_compat_warn:nn { AltOnly } { Described }
+    \IfBooleanTF {#1} { \Described* {#2} } { \Described {#2} }
+  }
+  { \endDescribed }
+
+\ProvideDocumentCommand \altonly { m +m }
+  { \__access_compat_warn:nn { \altonly } { \described }
+    \described {#1} {#2} }
+
+%% The key changed with the environment: `alt` names the PDF dictionary entry the
+%% string lands in, not the thing an author writes. A key is not a control
+%% sequence, so the alias is a one-line `.meta:n` forward rather than a wrapper.
+\keys_define:nn { latexa11y / figure }
+  { alt .meta:n = { description = {#1} } }
+
+\ProvideDocumentEnvironment { FigureBlock } { O{} }
+  {
+    \__access_compat_warn:nn { FigureBlock } { DescribedFigure }
+    \DescribedFigure [#1]
+  }
+  { \endDescribedFigure }
+
+\ProvideDocumentCommand \FigureDescription { +m }
+  { \__access_compat_warn:nn { \FigureDescription } { \LongDescription }
+    \LongDescription [Figure~description] {#1} }
 
 %% ---------------------------------------------------------------------------
 %% Argument-less \title recovery

@@ -6,7 +6,7 @@
 %% headings with bookmarks, accessible tables, and a WCAG-conforming palette.
 %%
 %% ---------------------------------------------------------------------------
-%% THE CENTRAL MECHANISM: AltOnly
+%% THE CENTRAL MECHANISM: Described
 %% ---------------------------------------------------------------------------
 %% The requirement is "wrap an arbitrary region so assistive technology reads
 %% ONLY a supplied alt string, never the region's real contents". Three
@@ -30,7 +30,7 @@
 %%                 reader skips it unconditionally. This is the only 100%
 %%                 reliable suppression primitive in PDF.
 %%
-%% AltOnly therefore combines the last two, which is exactly the construction
+%% Described therefore combines the last two, which is exactly the construction
 %% tagpdf itself uses for TikZ pictures (see tagpdfdocu-patches.sty): open one
 %% Figure structure element carrying /Alt, open a single marked-content leaf,
 %% then SUSPEND TAGGING for the body. Suspension stops structure creation and
@@ -132,12 +132,12 @@
     Write~plain~words:~"one~half".
   }
 
-\msg_new:nnnn { latexa11y } { altonly-broken }
-  { AltOnly~region~is~taller~than~the~text~block. }
+\msg_new:nnnn { latexa11y } { described-broken }
+  { Described~region~is~taller~than~the~text~block. }
   {
-    A~marked-content~sequence~cannot~cross~a~page~boundary,~so~an~AltOnly~body~
+    A~marked-content~sequence~cannot~cross~a~page~boundary,~so~a~Described~body~
     must~fit~on~one~page.~Split~the~region,~or~use~the~starred~form~
-    \string\begin{AltOnly*}~and~verify~the~resulting~tag~tree.
+    \string\begin{Described*}~and~verify~the~resulting~tag~tree.
   }
 
 \msg_new:nnnn { latexa11y } { no-bookmarks }
@@ -213,10 +213,10 @@
   }
 
 %% ---------------------------------------------------------------------------
-%% 3. AltOnly -- the strict "speak only this" region
+%% 3. Described -- the strict "speak only this" region
 %% ---------------------------------------------------------------------------
 
-\box_new:N \l__access_altonly_box
+\box_new:N \l__access_described_box
 
 %% Unstarred: body goes in an unbreakable box, so the marked-content leaf is
 %% guaranteed well formed. Starred: body may break; one MC leaf per page ends up
@@ -228,32 +228,32 @@
 %% live, so a TikZ node's text opens its own `text` marked-content sequence.
 %% That sequence then sits nested inside the Figure and IS announced -- the
 %% suppression silently fails while the /Alt still looks correct.
-\NewDocumentEnvironment { AltOnly } { s m }
+\NewDocumentEnvironment { Described } { s m }
   {
-    \__access_validate_alt:nn {#2} { AltOnly~region }
+    \__access_validate_alt:nn {#2} { Described~region }
     \IfBooleanTF {#1}
-      { \par \tagpdfparaOff \__access_altonly_open:n {#2} }
+      { \par \tagpdfparaOff \__access_described_open:n {#2} }
       {
         \par
         \tagpdfparaOff
-        \vbox_set:Nw \l__access_altonly_box
-        \__access_altonly_open:n {#2}
+        \vbox_set:Nw \l__access_described_box
+        \__access_described_open:n {#2}
       }
   }
   {
     \IfBooleanTF {#1}
-      { \__access_altonly_close: \tagpdfparaOn }
+      { \__access_described_close: \tagpdfparaOn }
       {
-        \__access_altonly_close:
+        \__access_described_close:
         \vbox_set_end:
-        \dim_compare:nNnT { \box_ht:N \l__access_altonly_box } > { \textheight }
-          { \msg_warning:nn { latexa11y } { altonly-broken } }
-        \box_use_drop:N \l__access_altonly_box
+        \dim_compare:nNnT { \box_ht:N \l__access_described_box } > { \textheight }
+          { \msg_warning:nn { latexa11y } { described-broken } }
+        \box_use_drop:N \l__access_described_box
         \tagpdfparaOn
       }
   }
 
-\cs_new_protected:Npn \__access_altonly_open:n #1
+\cs_new_protected:Npn \__access_described_open:n #1
   {
     \leavevmode
     %% Paragraph tagging is toggled by the CALLER, not here, and it must bracket
@@ -271,27 +271,27 @@
     %% Everything from here to the matching resume is invisible to the tag
     %% tree: no structure elements, no paragraph counting, nothing for a
     %% screen reader to descend into. The /Alt above is all that remains.
-    \SuspendTagging { latexa11y/AltOnly }
+    \SuspendTagging { latexa11y/Described }
   }
-\cs_generate_variant:Nn \__access_altonly_open:n { V }
+\cs_generate_variant:Nn \__access_described_open:n { V }
 
-\cs_new_protected:Npn \__access_altonly_close:
+\cs_new_protected:Npn \__access_described_close:
   {
-    \ResumeTagging { latexa11y/AltOnly }
+    \ResumeTagging { latexa11y/Described }
     \tagmcend
     \tagstructend
     \tag_mc_begin_pop:n { }
   }
 
 %% Inline command form, for wrapping a single graphic without a display block.
-\NewDocumentCommand \altonly { m +m }
+\NewDocumentCommand \described { m +m }
   {
-    \__access_validate_alt:nn {#1} { \string\altonly }
+    \__access_validate_alt:nn {#1} { \string\described }
     \mbox
       {
-        \__access_altonly_open:n {#1}
+        \__access_described_open:n {#1}
         #2
-        \__access_altonly_close:
+        \__access_described_close:
       }
   }
 
@@ -330,7 +330,7 @@
   { \mbox { \begin{Decorative} #1 \end{Decorative} } }
 
 %% ---------------------------------------------------------------------------
-%% 5. FigureBlock -- short /Alt plus a visible long description (tier T2)
+%% 5. DescribedFigure -- short /Alt plus a visible long description (tier T2)
 %% ---------------------------------------------------------------------------
 %% /Alt is atomic: a screen-reader user cannot pause inside it, re-read one
 %% sentence, or navigate a list or table within it. So a figure needing more
@@ -339,31 +339,35 @@
 %% many people and should be made available to everyone") and what NCAM
 %% requires for chart data ("presented as tables, not as narrative").
 
-\tl_new:N \l__access_figure_alt_tl
+\tl_new:N \l__access_figure_description_tl
 
+%% The key is `description`, matching the environment name, not `alt`. `alt` is
+%% the name of the PDF dictionary entry this ends up in; it is not the name of
+%% the thing an author writes. Keeping the two distinct is what lets
+%% \LongDescription sit next to it without implying a second /Alt.
 \keys_define:nn { latexa11y / figure }
   {
-    alt   .tl_set:N  = \l__access_figure_alt_tl ,
-    alt   .initial:n = { } ,
+    description .tl_set:N  = \l__access_figure_description_tl ,
+    description .initial:n = { } ,
   }
 
-%% Boxed like the unstarred AltOnly, for the same reason: a figure body almost
+%% Boxed like the unstarred Described, for the same reason: a figure body almost
 %% always contains `center`, and an unboxed region leaves its paragraph hooks
 %% straddling the tagging toggle.
-\NewDocumentEnvironment { FigureBlock } { O{} }
+\NewDocumentEnvironment { DescribedFigure } { O{} }
   {
     \group_begin:
     \keys_set:nn { latexa11y / figure } {#1}
-    \__access_validate_alt:Vn \l__access_figure_alt_tl { FigureBlock }
+    \__access_validate_alt:Vn \l__access_figure_description_tl { DescribedFigure }
     \par
     \tagpdfparaOff
-    \vbox_set:Nw \l__access_altonly_box
-    \__access_altonly_open:V \l__access_figure_alt_tl
+    \vbox_set:Nw \l__access_described_box
+    \__access_described_open:V \l__access_figure_description_tl
   }
   {
-    \__access_altonly_close:
+    \__access_described_close:
     \vbox_set_end:
-    \box_use_drop:N \l__access_altonly_box
+    \box_use_drop:N \l__access_described_box
     \tagpdfparaOn
     \group_end:
   }
@@ -376,12 +380,16 @@
 %% tagpdf reports and PDF/UA checkers flag. Plain prose is also the semantically
 %% honest choice -- this is body text, visible to everyone, and the paragraph
 %% module tags it as a P element on its own.
-\NewDocumentCommand \FigureDescription { +m }
+%% The visible label is an optional argument rather than the hardcoded "Figure
+%% description" it used to be: this command is equally correct after a DataTable,
+%% and announcing a table as a figure is a small lie told in every reading of the
+%% document.
+\NewDocumentCommand \LongDescription { O{Description} +m }
   {
     \par
     \begingroup
       \small
-      \textbf { Figure~description. }~#1
+      \textbf { #1. }~#2
     \par
     \endgroup
   }
@@ -576,7 +584,7 @@
 \definecolor { a11yWarning }  { HTML } { C00000 } % 5.9:1; plain red is 4.0:1
 \definecolor { a11yAccent }   { HTML } { 6A1B9A }
 
-\NewDocumentCommand \accesssafepalette { }
+\NewDocumentCommand \accessconformingcolors { }
   {
     \@ifundefined { color@solutionColor } { } { \colorlet { solutionColor } { a11ySolution } }
     \@ifundefined { color@solansColor }   { } { \colorlet { solansColor }   { a11ySolution } }
@@ -591,9 +599,9 @@
 
 \keys_define:nn { latexa11y }
   {
-    strict     .bool_gset:N = \g__access_strict_bool ,
-    strict     .initial:n   = true ,
-    safepalette .code:n     = { \AtBeginDocument { \accesssafepalette } } ,
+    strict            .bool_gset:N = \g__access_strict_bool ,
+    strict            .initial:n   = true ,
+    conforming-colors .code:n      = { \AtBeginDocument { \accessconformingcolors } } ,
   }
 
 \NewDocumentCommand \accesssetup { m } { \keys_set:nn { latexa11y } {#1} }

@@ -63,7 +63,7 @@
 %% working, and must not present a screen-reader user with silence.
 \newcommand{\workingpage}{%
   \clearpage
-  \altonly{Blank page provided for your working. Nothing on this page is part
+  \described{Blank page provided for your working. Nothing on this page is part
     of the question.}{\strut}%
   \clearpage
 }

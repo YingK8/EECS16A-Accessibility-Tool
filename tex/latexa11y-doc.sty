@@ -383,13 +383,13 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
 %% drops the width arithmetic, since \framebox sizes the OUTER box.
 \newcommand{\answerbox}[1][5\baselineskip]{%
   \par\noindent
-  \begin{AltOnly}{Blank answer box for your written response.}%
+  \begin{Described}{Blank answer box for your written response.}%
     \framebox[\linewidth]{\rule{0pt}{#1}}%
-  \end{AltOnly}%
+  \end{Described}%
   \par
 }
 \newcommand{\answerblank}[1][4cm]{%
-  \altonly{Blank space for your answer}{\rule{#1}{0.4pt}}%
+  \described{Blank space for your answer}{\rule{#1}{0.4pt}}%
 }
 \newcommand{\fillin}[1]{\answerblank[#1]}
 \newcommand{\doublehrule}{%

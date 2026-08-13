@@ -38,7 +38,7 @@ _LABEL = re.compile(r"\\label\s*\{([^{}]*)\}")
 _QUESTION = re.compile(r"\\(?:qns|question|q)\s*(?:\[[^\]]*\])?\s*\{")
 _SOLUTION_ENV = ("solution", "answer", "guidance")
 _SOLUTION_MACRO = re.compile(r"\\(?:sol|ans|solans)\s*\{")
-_ALREADY = re.compile(r"\\begin\s*\{(?:AltOnly|FigureBlock|Decorative)\}")
+_ALREADY = re.compile(r"\\begin\s*\{(?:Described|DescribedFigure|Decorative)\}")
 
 
 @dataclass(slots=True)
@@ -59,7 +59,7 @@ class FigureRef:
     question: str | None = None
     surrounding: str = ""
     inside_solution: bool = False
-    already_wrapped: bool = False
+    already_described: bool = False
     #: Only meaningful for rasters that could not be located on disk.
     missing_image: bool = False
 
@@ -79,7 +79,7 @@ class FigureRef:
             "label": self.label,
             "question": self.question,
             "inside_solution": self.inside_solution,
-            "already_wrapped": self.already_wrapped,
+            "already_described": self.already_described,
             "missing_image": self.missing_image,
         }
 
@@ -245,7 +245,7 @@ def _build(
         question=_enclosing_braced(source, _QUESTION, start),
         surrounding=_surrounding(source, start, end),
         inside_solution=_is_inside_solution(source, start),
-        already_wrapped=bool(_ALREADY.search(preceding)),
+        already_described=bool(_ALREADY.search(preceding)),
     )
 
 

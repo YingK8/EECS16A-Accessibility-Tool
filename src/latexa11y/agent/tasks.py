@@ -29,7 +29,7 @@ from ..catalog.worklog import Entry, read_worklog, write_worklog
 from ..config import Profile
 from ..errors import LatexA11yError
 
-__all__ = ["Task", "Rejection", "next_tasks", "submit", "validate_alt", "AUTHORING_RULES"]
+__all__ = ["Task", "Rejection", "next_tasks", "submit", "validate_description", "AUTHORING_RULES"]
 
 AUTHORING_RULES: tuple[str, ...] = (
     "Write plain words. No LaTeX, no $, no backslashes, no braces.",
@@ -47,7 +47,7 @@ AUTHORING_RULES: tuple[str, ...] = (
     "For a figure a student sees in the problem, never give away the answer. "
     "Problem and solution builds share one source.",
     "Aim for one sentence. If it needs more than about 200 characters, put the "
-    "detail in the `long` field instead.",
+    "detail in the `long` section instead.",
 )
 
 _BANNED_OPENERS = (
@@ -109,15 +109,15 @@ class Task:
             "worklog": self.worklog,
             "rules": list(AUTHORING_RULES),
             "instructions": (
-                "Write a one-sentence description in `alt`. Use `long` only if the "
-                "figure genuinely cannot be conveyed in about 200 characters. "
-                "Submit with: latexa11y agent submit --id <id> --alt '<text>'. "
-                "Your submission is recorded as needs-review; a human approves it."
+                "Write a one-sentence description. Use `long` only if the figure "
+                "genuinely cannot be conveyed in about 200 characters. Submit with: "
+                "latexa11y agent submit --id <id> --description '<text>'. Your "
+                "submission is recorded as needs-review; a human approves it."
             ),
         }
 
 
-def validate_alt(text: str, *, caption: str | None = None) -> list[Rejection]:
+def validate_description(text: str, *, caption: str | None = None) -> list[Rejection]:
     """Check a description against the authoring spec.
 
     Returns the reasons it is unacceptable; an empty list means it passes.
@@ -125,7 +125,7 @@ def validate_alt(text: str, *, caption: str | None = None) -> list[Rejection]:
     problems: list[Rejection] = []
     stripped = " ".join(text.split())
     if not stripped:
-        problems.append(Rejection("ALT-EMPTY", "the description is empty"))
+        problems.append(Rejection("DESCRIPTION-EMPTY", "the description is empty"))
         return problems
 
     lowered = stripped.lower()
@@ -133,7 +133,7 @@ def validate_alt(text: str, *, caption: str | None = None) -> list[Rejection]:
         if lowered.startswith(opener):
             problems.append(
                 Rejection(
-                    "ALT-OPENER",
+                    "DESCRIPTION-OPENER",
                     f"do not open with {opener!r}; a reader already says 'graphic'",
                 )
             )
@@ -141,17 +141,17 @@ def validate_alt(text: str, *, caption: str | None = None) -> list[Rejection]:
     if _MARKUP.search(stripped):
         problems.append(
             Rejection(
-                "ALT-MARKUP",
+                "DESCRIPTION-MARKUP",
                 "contains LaTeX markup; /Alt is a plain string and a reader would "
                 "announce '$\\frac{1}{2}$' as 'dollar backslash f-r-a-c'",
             )
         )
     if _FILENAME.search(stripped):
-        problems.append(Rejection("ALT-FILENAME", "a file name is not a description"))
+        problems.append(Rejection("DESCRIPTION-FILENAME", "a file name is not a description"))
     if caption and " ".join(caption.split()).lower() == lowered:
         problems.append(
             Rejection(
-                "ALT-CAPTION",
+                "DESCRIPTION-CAPTION",
                 "identical to the caption, which is announced separately; the reader "
                 "would hear the same sentence twice",
             )
@@ -159,7 +159,7 @@ def validate_alt(text: str, *, caption: str | None = None) -> list[Rejection]:
     if len(stripped) > 400:
         problems.append(
             Rejection(
-                "ALT-LENGTH",
+                "DESCRIPTION-LENGTH",
                 f"{len(stripped)} characters is too long for an atomic /Alt string; "
                 "move the detail into `long`",
             )
@@ -222,8 +222,8 @@ def submit(
     profile: Profile,
     identity: str,
     *,
-    alt: str,
-    long: str = "",
+    description: str,
+    long_description: str = "",
     notes: str = "",
     author: str = "agent",
     disposition: str | None = None,
@@ -247,7 +247,7 @@ def submit(
 
     worklog = read_worklog(target)
     entry = worklog.entries[identity]
-    problems = validate_alt(alt, caption=entry.caption)
+    problems = validate_description(description, caption=entry.caption)
     if problems:
         return {
             "accepted": False,
@@ -255,8 +255,8 @@ def submit(
             "rejections": [problem.as_dict() for problem in problems],
         }
 
-    entry.alt = " ".join(alt.split())
-    entry.long = long.strip()
+    entry.description = " ".join(description.split())
+    entry.long_description = long_description.strip()
     if notes:
         entry.notes = notes.strip()
     if disposition in ("figure", "artifact"):

@@ -1,7 +1,7 @@
 """End-to-end LaTeX tests: compile the golden fixture and assert on the PDF.
 
 These are the tests that matter most, because the defects they catch are
-invisible everywhere else. The `AltOnly` leak in particular produced a clean
+invisible everywhere else. The `Described` leak in particular produced a clean
 LaTeX log, a correct-looking tag tree, a correct `/Alt`, and zero tagpdf
 warnings -- while still leaking every glyph of the figure to a screen reader.
 Only inspecting the marked-content nesting in the content stream reveals it.
@@ -21,7 +21,7 @@ REPO = Path(__file__).resolve().parent.parent
 FIXTURE = REPO / "tests" / "fixtures" / "golden_core.tex"
 TEXDIR = REPO / "tex"
 
-#: The text drawn inside the AltOnly region. It must never be readable.
+#: The text drawn inside the Described region. It must never be readable.
 FORBIDDEN = "THIS TEXT MUST NOT BE SPOKEN"
 
 pytest.importorskip("pikepdf", reason="PDF assertions need the [pdf] extra")
@@ -100,12 +100,12 @@ def test_tagging_actually_ran(log: str):
 # ---------------------------------------------------------------------- #
 
 
-def test_altonly_region_is_not_readable(content):
-    """The AltOnly body must not appear in anything a reader announces."""
+def test_described_region_is_not_readable(content):
+    """The Described body must not appear in anything a reader announces."""
     assert FORBIDDEN not in content.readable_text()
 
 
-def test_altonly_text_sits_in_a_suppressing_element(content):
+def test_described_text_sits_in_a_suppressing_element(content):
     regions = content.find_text(FORBIDDEN)
     assert regions, "fixture no longer contains the marker text"
     for region in regions:
@@ -115,7 +115,7 @@ def test_altonly_text_sits_in_a_suppressing_element(content):
         )
 
 
-def test_altonly_has_no_nested_readable_element(content):
+def test_described_has_no_nested_readable_element(content):
     """No readable marked content may be nested inside the Figure.
 
     This is the exact defect that made the suppression fail silently: the body

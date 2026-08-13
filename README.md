@@ -13,7 +13,7 @@ package is course-specific: a course is onboarded by writing a YAML profile.
 | | |
 |---|---|
 | **A tagged template layer** | `latexa11y-assignment`, `-exam`, `-worksheet` classes producing a real `H1 → H2 → H3 → H4` hierarchy that appears in PDF bookmark panes and screen readers |
-| **Strict alt text** | `AltOnly` wraps *any* region — text, math, TikZ, tables — so assistive technology reads only the description and never the contents |
+| **Strict alt text** | `Described` wraps *any* region — text, math, TikZ, tables — so assistive technology reads only the description and never the contents |
 | **Deterministic descriptions** | pgfplots axes, circuitikz netlists and state machines are described from source with no model in the loop |
 | **A Markdown worklog** | staff or an AI fill in descriptions; machine sections regenerate, human text never gets overwritten |
 | **A conformance checker** | source lint, build-log analysis and PDF structure assertions, each mapped to a Matterhorn checkpoint or WCAG SC |
@@ -102,15 +102,15 @@ description. Three mechanisms could do that; only one works:
 * **Artifact** — content absent from the structure tree, skipped unconditionally.
   The only fully reliable suppression primitive in PDF.
 
-`AltOnly` combines the last two, which is the construction tagpdf itself uses for
+`Described` combines the last two, which is the construction tagpdf itself uses for
 TikZ: open a `Figure` carrying `/Alt`, open one marked-content leaf, then
 **suspend tagging** for the body.
 
 ```latex
-\begin{AltOnly}{Two capacitors C1 and C2, each from its own top node to
+\begin{Described}{Two capacitors C1 and C2, each from its own top node to
 ground, joined by switch S1.}
   \begin{circuitikz} ... \end{circuitikz}
-\end{AltOnly}
+\end{Described}
 
 \begin{Decorative}\includegraphics{banner.jpg}\end{Decorative}  % speaks nothing
 ```
@@ -119,7 +119,7 @@ ground, joined by switch S1.}
 Boxing the body first looks equivalent and is not: the body is typeset while
 tagging is still live, a TikZ node opens its own `text` sequence, and that
 sequence is announced despite a perfect-looking `/Alt`. The test suite pins this;
-see `tests/test_latex_golden.py::test_altonly_has_no_nested_readable_element`.
+see `tests/test_latex_golden.py::test_described_has_no_nested_readable_element`.
 
 ---
 

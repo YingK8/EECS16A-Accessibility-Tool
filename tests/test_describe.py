@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from latexa11y.apply.figures import AltTextRejected, escape_alt
+from latexa11y.apply.figures import DescriptionRejected, escape_description
 from latexa11y.catalog.worklog import Entry, Worklog, read_worklog, write_worklog
 from latexa11y.describe import describe
 from latexa11y.describe.common import latex_to_text, parse_options, split_top_level
@@ -196,23 +196,23 @@ def test_raster_offers_no_invented_description():
 # ---------------------------------------------------------------------- #
 
 
-def test_escape_alt_handles_braces_rather_than_refusing_them():
+def test_escape_description_handles_braces_rather_than_refusing_them():
     # The previous tool skipped any description containing { or }, which in a
     # linear-algebra course rules out most natural phrasings.
-    assert escape_alt("the set {0, 1}") == r"the set \{0, 1\}"
+    assert escape_description("the set {0, 1}") == r"the set \{0, 1\}"
 
 
-def test_escape_alt_escapes_tex_specials():
-    assert escape_alt("50% of R_1 & C_2") == r"50\% of R\_1 \& C\_2"
+def test_escape_description_escapes_tex_specials():
+    assert escape_description("50% of R_1 & C_2") == r"50\% of R\_1 \& C\_2"
 
 
-def test_escape_alt_rejects_empty():
-    with pytest.raises(AltTextRejected):
-        escape_alt("   ")
+def test_escape_description_rejects_empty():
+    with pytest.raises(DescriptionRejected):
+        escape_description("   ")
 
 
-def test_escape_alt_collapses_whitespace():
-    assert escape_alt("a\n  b\tc") == "a b c"
+def test_escape_description_collapses_whitespace():
+    assert escape_description("a\n  b\tc") == "a b c"
 
 
 # ---------------------------------------------------------------------- #
@@ -239,7 +239,7 @@ def test_worklog_round_trip_preserves_human_fields(tmp_path):
 
     reloaded = read_worklog(worklog.path)
     restored = reloaded.entries[entry.id]
-    assert restored.alt == "Two capacitors joined by a switch."
+    assert restored.description == "Two capacitors joined by a switch."
     assert restored.status == "approved"
     assert restored.is_done
 
@@ -250,5 +250,5 @@ def test_unfilled_worklog_entry_is_not_done(tmp_path):
     worklog.path.write_text(write_worklog(worklog, scope="s"), encoding="utf-8")
     restored = read_worklog(worklog.path).entries[entry.id]
     # The placeholder comment must not be read back as a description.
-    assert restored.alt == ""
+    assert restored.description == ""
     assert not restored.is_done

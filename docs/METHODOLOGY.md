@@ -60,7 +60,7 @@ Measured across the approved scope:
 | sp26 | 33% | — |
 | exams | 25% (192 sites) | 31% (276 sites) |
 
-A regex wrapper inserts `\begin{AltOnly}` on a commented line, where `%` eats it,
+A regex wrapper inserts `\begin{Described}` on a commented line, where `%` eats it,
 leaving a live `\includegraphics` and an unmatched `\end` — a guaranteed compile
 failure. This is almost certainly why the prior work was reverted (`git log`
 shows `reverted old code`, and the corpus contains zero `AccessibleFigure`).
@@ -111,7 +111,7 @@ keep digits — those are strings, not macro names.
 Content inside a suspended region still changes TeX's paragraph state, so the
 next `\par` tried to close a structure that was never opened — `there is no open
 structure on the stack` for the rest of the document. Fixed with
-`\tagpdfparaOff` / `\tagpdfparaOn` around headings, `AltOnly` and `Decorative`.
+`\tagpdfparaOff` / `\tagpdfparaOn` around headings, `Described` and `Decorative`.
 
 ### 3.3 Marked content cannot nest
 
@@ -129,7 +129,7 @@ Found only by parsing the content stream and inspecting marked-content nesting:
 enclosing path at the forbidden glyphs: [('Figure', 6), ('text', 7)]
 ```
 
-A `text` sequence nested inside the Figure. **Cause:** the unstarred `AltOnly`
+A `text` sequence nested inside the Figure. **Cause:** the unstarred `Described`
 captured its body into a box *before* opening the Figure, so the body was
 typeset while tagging was still live and a TikZ node opened its own sequence.
 Fixed by opening the Figure and suspending *inside* the box, before any content.
@@ -137,7 +137,7 @@ Fixed by opening the Figure and suspending *inside* the box, before any content.
 **Lesson, and the reason `check/content.py` exists:** in this domain the
 structure tree tells you what the tags *are*, not what they *cover*. Only the
 content stream answers "would a screen reader speak this?". Pinned by
-`test_altonly_has_no_nested_readable_element`.
+`test_described_has_no_nested_readable_element`.
 
 ### 3.5 tagpdf needs three runs
 

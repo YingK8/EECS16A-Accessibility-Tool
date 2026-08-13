@@ -457,7 +457,7 @@ def probe(profile: Profile) -> ToolchainReport:
                 Status.WARN,
                 "latex-lab-testphase-tikz not installed",
                 (
-                    "TikZ and circuitikz figures will use the AltOnly wrapper instead "
+                    "TikZ and circuitikz figures will use the Described wrapper instead "
                     "of the upstream `alt=` key; this is supported but must be retired "
                     "once the module ships"
                 ),

@@ -1,6 +1,6 @@
 % Demonstration homework, written exactly the way an EECS 16A body.tex is
 % written: qunlist, \qns, \qitem, \sol. Nothing here is latexa11y-specific
-% except the AltOnly wrapper around each figure, which is what supplies the
+% except the Described wrapper around each figure, which is what supplies the
 % description a screen reader reads.
 %
 % Build both variants from this ONE source; the class option is not written
@@ -45,7 +45,7 @@ open, capacitor $C_1$ is charged to $V_1(0) = 5$\,V, and $C_2$ is uncharged.
 
 % The figure speaks ONLY the description below. The labels drawn inside the
 % schematic are never announced.
-\begin{AltOnly}{Two capacitors, C1 and C2, each connected from its own top node
+\begin{Described}{Two capacitors, C1 and C2, each connected from its own top node
 to ground, with switch S1 joining the two top nodes. C1 carries voltage V1 and
 C2 carries voltage V2, both positive at the top.}
 \begin{center}
@@ -57,7 +57,7 @@ C2 carries voltage V2, both positive at the top.}
     node[ground]{};
 \end{circuitikz}
 \end{center}
-\end{AltOnly}
+\end{Described}
 
 \begin{enumerate}
 
@@ -82,7 +82,7 @@ a common voltage $V_\infty = \frac{C_1 V_1(0)}{C_1 + C_2}$.}
 The table below records four measurements. A best-fit line has already been
 drawn through them.
 
-\begin{FigureBlock}[alt={Scatter plot of b against a on axes running 0 to 9,
+\begin{DescribedFigure}[description={Scatter plot of b against a on axes running 0 to 9,
 with four measured points and a straight best-fit line.}]
 \begin{center}
 \begin{tikzpicture}[scale=0.75]
@@ -93,8 +93,8 @@ with four measured points and a straight best-fit line.}]
 \end{axis}
 \end{tikzpicture}
 \end{center}
-\end{FigureBlock}
-\FigureDescription{Horizontal axis $a$ runs from 0 to 9 with integer ticks;
+\end{DescribedFigure}
+\LongDescription{Horizontal axis $a$ runs from 0 to 9 with integer ticks;
 vertical axis $b$ runs from 0 to 9 with integer ticks. The fitted line is
 $b = 0.95a + 1$, passing through 1 at $a=0$ and 9.55 at $a=9$.}
 
