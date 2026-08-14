@@ -381,7 +381,20 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
 %% class, so it is nothing to do with the tagging. Giving the box a \strut, or
 %% setting the width on \framebox directly as here, both fix it; this form also
 %% drops the width arithmetic, since \framebox sizes the OUTER box.
+%% The height may be given either way: \answerbox[1in] or \answerbox{1in}.
+%%
+%% Accepting both is not indulgence. With an optional argument alone,
+%% \answerbox{1in} is legal input that draws a default-height box and then
+%% TYPESETS the literal text "1in" underneath it -- no error, no warning, just a
+%% stray "1in" on the page. Braces are what the legacy vocabulary uses
+%% (\fillin{4cm}), so that is the mistake this command will actually be given,
+%% and silently rendering garbage is the failure mode this package exists to
+%% eliminate.
 \newcommand{\answerbox}[1][5\baselineskip]{%
+  \@ifnextchar\bgroup{\access@answerbox@braced{#1}}{\access@answerbox{#1}}%
+}
+\newcommand{\access@answerbox@braced}[2]{\access@answerbox{#2}}
+\newcommand{\access@answerbox}[1]{%
   \par\noindent
   \begin{Described}{Blank answer box for your written response.}%
     \framebox[\linewidth]{\rule{0pt}{#1}}%
@@ -389,6 +402,10 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
   \par
 }
 \newcommand{\answerblank}[1][4cm]{%
+  \@ifnextchar\bgroup{\access@answerblank@braced{#1}}{\access@answerblank{#1}}%
+}
+\newcommand{\access@answerblank@braced}[2]{\access@answerblank{#2}}
+\newcommand{\access@answerblank}[1]{%
   \described{Blank space for your answer}{\rule{#1}{0.4pt}}%
 }
 \newcommand{\fillin}[1]{\answerblank[#1]}

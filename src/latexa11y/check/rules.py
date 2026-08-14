@@ -233,6 +233,83 @@ def _check_contrast(source: TexSource, profile: Profile, name: str) -> list[Find
                     data={"color": definition.name, "ratio": round(ratio, 2)},
                 )
             )
+
+    findings.extend(_tagging_incompatibilities(source, name))
+    return findings
+
+
+# ---------------------------------------------------------------------- #
+# constructs LaTeX's own tagging cannot handle
+# ---------------------------------------------------------------------- #
+#
+# These are not this package's bugs and not the author's mistakes: they are
+# current limitations of latex-lab that turn a working document into a build
+# FAILURE the moment tagging is switched on. Both were found by building the
+# real corpus and then repeating the build with latexa11y removed entirely --
+# the errors were byte-identical, so tagging alone is responsible.
+#
+# They are worth detecting in source because the alternative is a three-minute
+# compile ending in a wall of "Missing number, treated as zero" pointing at a
+# line that is perfectly valid LaTeX, in a shared question file the person
+# converting an assignment has probably never opened.
+
+#: enumitem's key-value options on a list that latex-lab is also tagging.
+#: Measured on sp26/hw/5: `\begin{enumerate}[label=(\roman*)]` produces one
+#: "Missing number, treated as zero" per \item, and no PDF.
+_ENUMITEM_KEYS = re.compile(
+    r"\\begin\s*\{(?:enumerate|itemize|description)\}\s*\[[^\]]*"
+    r"(?:label|ref|start|resume|itemsep|topsep|leftmargin)\s*="
+)
+
+#: A tabular-family environment nested inside a matrix environment. Measured on
+#: sp26/hw/13: `\begin{bmatrix}\begin{array}{r}` gives "Paragraph ended before
+#: ... was complete", "Misplaced \crcr" and four more, and no PDF.
+_ARRAY_IN_MATRIX = re.compile(
+    r"\\begin\s*\{[bBpvV]?matrix\}(?:(?!\\end\s*\{[bBpvV]?matrix\}).){0,400}?"
+    r"\\begin\s*\{(?:array|tabular)\}",
+    re.DOTALL,
+)
+
+
+def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for match in _ENUMITEM_KEYS.finditer(source.masked):
+        findings.append(
+            Finding(
+                rule="A11Y-SRC-040",
+                severity=Severity.ERROR,
+                message=(
+                    "enumitem options on a list that LaTeX will also tag; this "
+                    "currently fails the build with 'Missing number, treated as zero'"
+                ),
+                file=name,
+                line=source.line_of(match.start()),
+                standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
+                hint=(
+                    "redefine the label with \\renewcommand{\\labelenumi}{...} "
+                    "before the list instead of passing label= to enumitem, or "
+                    "exclude this file until latex-lab supports it"
+                ),
+            )
+        )
+    for match in _ARRAY_IN_MATRIX.finditer(source.masked):
+        findings.append(
+            Finding(
+                rule="A11Y-SRC-041",
+                severity=Severity.ERROR,
+                message=(
+                    "array or tabular nested inside a matrix environment; the "
+                    "table tagging module fails on this with 'Misplaced \\crcr'"
+                ),
+                file=name,
+                line=source.line_of(match.start()),
+                standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
+                hint=(
+                    "the inner array is almost always there for column alignment "
+                    "the matrix already provides; delete it and keep the matrix"
+                ),
+            )
+        )
     return findings
 
 

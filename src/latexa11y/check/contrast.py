@@ -93,7 +93,18 @@ def _channel(value: float) -> float:
 
 
 def srgb_to_luminance(rgb: tuple[float, float, float]) -> float:
-    """WCAG 2.1 relative luminance."""
+    """WCAG 2.1 relative luminance. Components are 0..1, NOT 0..255.
+
+    The scale is checked rather than assumed. Handing this 0..255 values does
+    not raise on its own -- ``_channel`` is a polynomial and happily evaluates
+    anything -- it returns a ratio that is merely wrong: (6, 69, 173) on white
+    reports 16.79:1 instead of 8.53:1. Both "pass" 4.5:1, so the mistake never
+    surfaces as a failure, only as a conformance claim computed from nonsense.
+    """
+    if any(component > 1.0 for component in rgb):
+        raise ValueError(
+            f"sRGB components must be 0..1, got {rgb}; divide 0..255 values by 255"
+        )
     r, g, b = (_channel(component) for component in rgb)
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 

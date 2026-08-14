@@ -295,6 +295,83 @@ def test_legacy_qitem_inside_enumerate_does_not_leak_figure_text(legacy):
     assert "R1" not in content.readable_text()
 
 
+# ---------------------------------------------------------------------- #
+# the deprecated vocabulary
+# ---------------------------------------------------------------------- #
+
+DEPRECATED = REPO / "tests" / "fixtures" / "golden_deprecated.tex"
+
+
+@pytest.fixture(scope="module")
+def deprecated(tmp_path_factory) -> Path:
+    work = tmp_path_factory.mktemp("deprecated")
+    shutil.copy(DEPRECATED, work / DEPRECATED.name)
+    for _ in range(3):
+        subprocess.run(
+            ["pdflatex", "-interaction=nonstopmode", "-file-line-error", DEPRECATED.name],
+            cwd=work,
+            env={"TEXINPUTS": f"{TEXDIR}:", "PATH": __import__("os").environ["PATH"]},
+            capture_output=True,
+            timeout=180,
+            check=False,
+        )
+    pdf = work / "golden_deprecated.pdf"
+    assert pdf.is_file()
+    return pdf
+
+
+def test_deprecated_names_still_build(deprecated: Path):
+    """AltOnly / \\altonly / FigureBlock / \\FigureDescription must not strand anyone.
+
+    The rename was free -- zero corpus files used the old spellings -- but a
+    document written against them mid-migration still has to compile.
+    """
+    log = deprecated.with_suffix(".log").read_text(encoding="utf-8", errors="replace")
+    assert not [ln for ln in log.splitlines() if ln.startswith("./golden_deprecated.tex:")]
+
+
+def test_deprecated_names_say_what_to_use_instead(deprecated: Path):
+    log = deprecated.with_suffix(".log").read_text(encoding="utf-8", errors="replace")
+    # LaTeX wraps a long warning and prefixes each continuation line with
+    # "(latexa11y)", so the message has to be reassembled before matching.
+    flat = " ".join(log.replace("(latexa11y)", " ").split())
+    import re
+
+    for old, new in (
+        ("AltOnly", "Described"),
+        ("\\altonly", "\\described"),
+        ("FigureBlock", "DescribedFigure"),
+        ("\\FigureDescription", "\\LongDescription"),
+    ):
+        # \s* around the quotes: \tl_to_str:n on a control sequence leaves a
+        # trailing space, and the wrap can fall anywhere in the sentence.
+        pattern = (
+            rf"'{re.escape(old)}\s*'\s*is deprecated;\s*use\s*'{re.escape(new)}\s*'"
+        )
+        assert re.search(pattern, flat), (
+            f"no deprecation notice pointing {old} at {new}"
+        )
+
+
+def test_deprecated_wrappers_still_actually_suppress(deprecated: Path):
+    """A shim that warns correctly but leaks the figure would be worse than none."""
+    from latexa11y.check.content import read_page_content
+
+    content = read_page_content(deprecated, 0)
+    readable = content.readable_text()
+    assert "MUST NOT BE SPOKEN" not in readable
+    assert "ALSO MUST NOT BE SPOKEN" not in readable
+
+
+def test_deprecated_wrappers_still_produce_alt(deprecated: Path):
+    from latexa11y.check.structure import read_structure
+
+    figures = read_structure(deprecated).of_tag("Figure")
+    assert len(figures) == 3
+    for figure in figures:
+        assert figure.alt
+
+
 def test_question_tags_option_produces_h2(tmp_path_factory):
     """\\accessquestiontags turns question titles into real H2 tags.
 

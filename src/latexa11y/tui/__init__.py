@@ -83,7 +83,10 @@ class Wizard:
         self.profile = profile
         self.config = config or RunConfig(profile=profile.name)
         self.console = console or Console()
-        self.prompt = prompt or (lambda question: input(question))
+        # The question is printed through the console, never by the prompt, so
+        # that everything the user sees goes through one channel -- which is
+        # what lets a test read the prompts as well as the screens.
+        self.prompt = prompt or (lambda _: input())
         self._assignments: list[Assignment] | None = None
         self.done = False
         self.should_run = False
@@ -159,10 +162,15 @@ class Wizard:
     # the loop
     # ------------------------------------------------------------------ #
 
+    def ask(self, question: str) -> str:
+        """Put a question on screen and read the answer."""
+        self.console.print(question, end="")
+        return self.prompt(question).strip()
+
     def step(self) -> None:
         """Show the summary and handle exactly one command."""
         self.console.print(self.summary())
-        self.dispatch(self.prompt("> ").strip().lower())
+        self.dispatch(self.ask("> ").lower())
 
     def dispatch(self, command: str) -> None:
         actions = {
@@ -206,12 +214,12 @@ class Wizard:
             "  [cyan]p[/] a path relative to the corpus root "
             "(e.g. sp26/hw, or sp26/hw/9)"
         )
-        answer = self.prompt("scope> ").strip()
+        answer = self.ask("scope> ")
         if not answer:
             return
 
         if answer == "p":
-            raw = self.prompt("path> ").strip()
+            raw = self.ask("path> ")
             if not raw:
                 return
             found = self._discover(raw)
@@ -248,7 +256,7 @@ class Wizard:
                 "— no file containing \\begin{document}[/]"
             )
 
-        choice = self.prompt("kind (number, 'a', or blank to cancel)> ").strip().lower()
+        choice = self.ask("kind (number, 'a', or blank to cancel)> ").lower()
         if not choice:
             return
         if choice == "a":
@@ -263,9 +271,7 @@ class Wizard:
         self.console.print(f"\n{len(chosen)} assignment(s):")
         for index, item in enumerate(chosen, 1):
             self.console.print(f"  [cyan]{index:>3}[/] {item.path}")
-        picked = self.prompt(
-            "select (blank = all, or 1,3,5-7)> "
-        ).strip()
+        picked = self.ask("select (blank = all, or 1,3,5-7)> ")
         selection = _parse_selection(picked, len(chosen))
         self.config = self.config.with_assignments(
             chosen[index - 1].path for index in selection
@@ -292,16 +298,19 @@ class Wizard:
         table.add_column("cost", style="yellow")
         for index, toggle in enumerate(STANDARD_TOGGLES, 1):
             on = getattr(standards, toggle.key)
+            # The cost is shown whether the toggle is on or off. It is the price
+            # of turning it ON, so hiding it while it is off hides it exactly
+            # when someone is deciding whether to pay.
             table.add_row(
                 str(index),
                 "[green]✓[/]" if on else "[red]✗[/]",
                 toggle.label,
-                toggle.cost if on else "[dim]—[/]",
+                toggle.cost,
             )
         self.console.print(table)
         self.console.print("[dim]number toggles it, '?N' explains it, blank returns[/]")
 
-        answer = self.prompt("standards> ").strip()
+        answer = self.ask("standards> ")
         while answer:
             explain = answer.startswith("?")
             try:
@@ -322,7 +331,7 @@ class Wizard:
                 standards.toggle(toggle.key)
                 state = "on" if getattr(standards, toggle.key) else "off"
                 self.console.print(f"  {toggle.label}: [bold]{state}[/]")
-            answer = self.prompt("standards> ").strip()
+            answer = self.ask("standards> ")
 
     # ------------------------------------------------------------------ #
     # 3. colours
@@ -353,7 +362,7 @@ class Wizard:
                 else "keep the course originals, even where they fail contrast"
             )
             self.console.print(f" {marker} [cyan]{index}[/] {mode:<12} {note}")
-        answer = self.prompt("colours> ").strip()
+        answer = self.ask("colours> ")
         if not answer:
             return
         try:
@@ -382,7 +391,7 @@ class Wizard:
         for index, mode in enumerate(ALT_MODES, 1):
             marker = "→" if mode == self.config.alt.mode else " "
             self.console.print(f" {marker} [cyan]{index}[/] {mode:<13} {notes[mode]}")
-        answer = self.prompt("descriptions> ").strip()
+        answer = self.ask("descriptions> ")
         if not answer:
             return
         try:
@@ -407,7 +416,7 @@ class Wizard:
                     border_style="yellow",
                 )
             )
-            reply = self.prompt("keep strict mode? [Y/n]> ").strip().lower()
+            reply = self.ask("keep strict mode? [Y/n]> ").lower()
             strict = reply not in ("n", "no")
         self.config.alt = AltChoice(mode=mode, strict=strict)
 
@@ -420,7 +429,7 @@ class Wizard:
         self.console.print()
         self.console.print(f"Current root: [bold]{output.root}[/]")
         self.console.print("  " + "\n  ".join(self._artifact_lines(output)))
-        root = self.prompt(f"output directory [{output.root}]> ").strip()
+        root = self.ask(f"output directory [{output.root}]> ")
         root_path = Path(root) if root else output.root
 
         self.console.print()
@@ -432,7 +441,7 @@ class Wizard:
                 else "edit the corpus .tex directly (requires a clean git worktree)"
             )
             self.console.print(f" {marker} [cyan]{index}[/] {mode:<9} {note}")
-        answer = self.prompt(f"write mode [{output.write_mode}]> ").strip()
+        answer = self.ask(f"write mode [{output.write_mode}]> ")
         mode = output.write_mode
         if answer:
             try:
@@ -527,7 +536,7 @@ class Wizard:
             if self.config.output.in_place
             else f"{self.config.output.root}"
         )
-        reply = self.prompt(f"write to {target}? [y/N]> ").strip().lower()
+        reply = self.ask(f"write to {target}? [y/N]> ").lower()
         if reply not in ("y", "yes"):
             self.console.print("[dim]dry run only; nothing written[/]")
             return

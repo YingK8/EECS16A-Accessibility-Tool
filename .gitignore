@@ -1,8 +1,11 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-build/
-dist/
+# Anchored to the repository root. A bare `build/` matches at ANY depth, which
+# silently excluded src/latexa11y/build/ -- the conversion engine -- from every
+# `git add -A`. The commit looked clean and the package was simply absent.
+/build/
+/dist/
 .pytest_cache/
 .coverage
 htmlcov/
@@ -19,3 +22,8 @@ venv/
 *.annotations
 *.pdf
 !docs/**/*.pdf
+
+# Runner output. `latexa11y run` defaults here; keep converted copies of course
+# material out of the tool repository.
+/a11y-out/
+/examples/build/
