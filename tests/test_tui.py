@@ -104,7 +104,22 @@ def test_an_explicit_path_can_be_used(profile: Profile):
 def test_a_bad_path_reports_and_leaves_the_config_alone(profile: Profile):
     config, _, output = drive(profile, ["1", "p", "sem/nope", "q"])
     assert config.assignments == ()
-    assert "no buildable assignments" in output or "unknown scope" in output
+    assert "No buildable assignments" in output or "unknown scope" in output
+
+
+def test_a_fragments_only_scope_explains_itself(profile: Profile, corpus: Path):
+    """The shared question bank is the easiest scope to pick by accident.
+
+    It sorts first and its files are \\input fragments, not documents. "Nothing
+    here" reads as a broken tool; the message has to say why and what to do.
+    """
+    bank = corpus / "sem" / "bank"
+    bank.mkdir(parents=True)
+    (bank / "q_one.tex").write_text("\\qns{A question}\nNo document here.\n")
+    _, _, output = drive(profile, ["1", "p", "sem/bank", "q"])
+    assert "No buildable assignments" in output
+    assert "begin{document}" in output
+    assert "input fragments" in output
 
 
 # ---------------------------------------------------------------------- #

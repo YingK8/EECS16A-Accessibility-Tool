@@ -234,7 +234,22 @@ class Wizard:
         buildable = [item for item in found if item.buildable]
         skipped = len(found) - len(buildable)
         if not buildable:
-            self.console.print("[yellow]no buildable assignments there[/]")
+            # Almost always the shared question bank, which is the first entry
+            # in the alphabetical list and so the easiest to pick by accident.
+            # Saying only "nothing here" invites the conclusion that the tool is
+            # broken, when the scope is genuinely fragments rather than
+            # documents -- and they get converted anyway, via the assignments
+            # that include them.
+            self.console.print(
+                f"[yellow]No buildable assignments in that scope[/] — "
+                f"{len(found)} director{'y' if len(found) == 1 else 'ies'} scanned, "
+                "none containing a file with \\begin{document}."
+            )
+            self.console.print(
+                "[dim]This is normal for a shared question bank: those files are "
+                "\\input fragments, not documents. Convert the homeworks or "
+                "discussions that include them and the questions come along.[/]"
+            )
             return
 
         grouped = group_by_kind(buildable)
