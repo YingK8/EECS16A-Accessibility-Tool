@@ -390,6 +390,234 @@ def check(
 
 
 # ---------------------------------------------------------------------- #
+# build / run — the conversion pipeline
+# ---------------------------------------------------------------------- #
+
+
+def _load_run_config(
+    ctx: Context,
+    config_path: Path | None,
+    assignments: tuple[str, ...],
+    output: Path | None,
+    write: bool,
+) -> "RunConfig":  # noqa: F821
+    from .run import Output, RunConfig
+
+    config = RunConfig.load(config_path) if config_path else RunConfig(profile=ctx.profile.name)
+    if assignments:
+        config = config.with_assignments(assignments)
+    if output is not None:
+        config.output = Output(
+            root=output,
+            write_mode=config.output.write_mode,
+            keep_pdf=config.output.keep_pdf,
+            keep_logs=config.output.keep_logs,
+            keep_tex=config.output.keep_tex,
+        )
+    config.write = write
+    return config
+
+
+def _report_table(reports: list) -> Table:
+    table = Table(header_style="bold", title_justify="left")
+    table.add_column("assignment", no_wrap=True)
+    table.add_column("", width=2)
+    table.add_column("pages", justify="right")
+    table.add_column("bookmarks", justify="right")
+    table.add_column("figures", justify="right")
+    table.add_column("errors", justify="right")
+    table.add_column("warnings", justify="right")
+    table.add_column("pixel diff", justify="right")
+    for report in reports:
+        diff = (
+            f"{100 * report.pixel_diff:.2f}%"
+            if report.pixel_diff is not None
+            else f"[dim]{escape(report.diff_note or '—')}[/dim]"
+        )
+        table.add_row(
+            report.assignment,
+            "[green]✓[/green]" if report.ok else "[red]✗[/red]",
+            str(report.pages if report.pages is not None else "—"),
+            str(report.bookmarks if report.bookmarks is not None else "—"),
+            str(report.figures if report.figures is not None else "—"),
+            f"[red]{len(report.errors)}[/red]" if report.errors else "0",
+            f"[yellow]{len(report.tagpdf_warnings)}[/yellow]"
+            if report.tagpdf_warnings
+            else "0",
+            diff,
+        )
+    return table
+
+
+@main.command()
+@click.argument("assignments", nargs=-1)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, exists=True),
+    help="Replay a run.yaml written by `latexa11y run`.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Where PDFs, logs, converted sources and worklogs go.",
+)
+@click.option("--write", is_flag=True, help="Actually build (default is a dry run).")
+@click.option(
+    "--in-place",
+    is_flag=True,
+    help="Edit the corpus sources directly. Refuses on a dirty git worktree.",
+)
+@click.option("--question-tags", is_flag=True, help="Emit real H2 tags for question titles.")
+@click.option("--house-colors", is_flag=True, help="Keep the course palette, contrast and all.")
+@click.option(
+    "--placeholders",
+    is_flag=True,
+    help="Mark undescribed figures in the source. Strict mode makes them build-failing.",
+)
+@pass_context
+def build(
+    ctx: Context,
+    assignments: tuple[str, ...],
+    config_path: Path | None,
+    output: Path | None,
+    write: bool,
+    in_place: bool,
+    question_tags: bool,
+    house_colors: bool,
+    placeholders: bool,
+) -> None:
+    """Convert and build assignments. This is what `latexa11y run` runs.
+
+    Every flag here corresponds to a screen in the interactive runner, and both
+    paths end up calling the same engine — so a run can be explored in the TUI,
+    saved, and replayed unchanged in CI.
+    """
+    from .build import build_run, describe_run
+    from .run import AltChoice, ColorChoice, Output
+
+    config = _load_run_config(ctx, config_path, assignments, output, write)
+    if in_place:
+        config.output = Output(
+            root=config.output.root,
+            write_mode="in-place",
+            keep_pdf=config.output.keep_pdf,
+            keep_logs=config.output.keep_logs,
+            keep_tex=config.output.keep_tex,
+        )
+    if question_tags:
+        config.standards.question_tags = True
+    if house_colors:
+        config.colors = ColorChoice(mode="house")
+    if placeholders:
+        config.alt = AltChoice(mode="placeholders", strict=config.alt.strict)
+
+    if not config.assignments:
+        click.echo(
+            "error: nothing to build; name assignments or pass --config", err=True
+        )
+        sys.exit(EXIT_ERROR)
+
+    try:
+        descriptions = describe_run(config, ctx.profile)
+        reports = build_run(config, ctx.profile)
+    except LatexA11yError as exc:
+        if ctx.as_json:
+            ctx.emit({"ok": False, "error": str(exc)})
+        else:
+            click.echo(f"error: {exc}", err=True)
+        sys.exit(EXIT_ERROR)
+
+    failures = [report for report in reports if not report.ok]
+    if ctx.as_json:
+        ctx.emit(
+            {
+                "dry_run": not config.write,
+                "config": config.as_dict(),
+                "descriptions": descriptions,
+                "reports": [report.as_dict() for report in reports],
+                "failed": len(failures),
+            }
+        )
+    else:
+        console = ctx.console
+        if not config.write:
+            console.print("[bold yellow]DRY RUN[/bold yellow] — nothing written\n")
+            console.print("Would inject into each driver:")
+            for line in reports[0].injected if reports else []:
+                console.print(f"  [cyan]{escape(line)}[/cyan]")
+            console.print()
+            for report in reports:
+                console.print(f"  {report.assignment}  ({report.driver})")
+            console.print("\n[dim]re-run with --write to build[/dim]")
+        else:
+            console.print(_report_table(reports))
+            if descriptions.get("scanned"):
+                console.print(
+                    f"\ndescriptions: [bold]{descriptions['unique']}[/bold] figures "
+                    f"across {descriptions['call_sites']} call sites in "
+                    f"{descriptions['files']} files — "
+                    f"[green]{descriptions['described']} done[/green], "
+                    f"[yellow]{descriptions['outstanding']} outstanding[/yellow]"
+                )
+                for path in descriptions.get("worklogs", [])[:5]:
+                    console.print(f"  [dim]{escape(path)}[/dim]")
+            for report in failures:
+                console.print(f"\n[red]{report.assignment} failed[/red]")
+                if report.note:
+                    console.print(f"  {escape(report.note)}")
+                for line in report.errors[:5]:
+                    console.print(f"  [red]{escape(line)}[/red]")
+    sys.exit(EXIT_FINDINGS if failures else EXIT_OK)
+
+
+@main.command("run")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, exists=True),
+    help="Start from a saved run.yaml instead of the defaults.",
+)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Preset the output directory.",
+)
+@pass_context
+def run_command(ctx: Context, config_path: Path | None, output: Path | None) -> None:
+    """Interactive runner: choose scope, standards, colours and output, then build."""
+    from .build import build_run, describe_run
+    from .tui import Wizard
+
+    config = _load_run_config(ctx, config_path, (), output, False)
+    wizard = Wizard(ctx.profile, config, console=Console())
+    config = wizard.loop()
+
+    if not wizard.should_run:
+        ctx.console.print("[dim]nothing built[/dim]")
+        sys.exit(EXIT_OK)
+
+    wizard.save()
+    descriptions = describe_run(config, ctx.profile)
+    reports = build_run(
+        config,
+        ctx.profile,
+        on_start=lambda item: wizard.console.print(f"[dim]building {item.path}…[/dim]"),
+    )
+    wizard.console.print(_report_table(reports))
+    if descriptions.get("scanned"):
+        wizard.console.print(
+            f"\n[bold]{descriptions['outstanding']}[/bold] figures still need a "
+            f"description. Fill them in:"
+        )
+        for path in descriptions.get("worklogs", [])[:8]:
+            wizard.console.print(f"  {escape(path)}")
+    sys.exit(EXIT_FINDINGS if any(not r.ok for r in reports) else EXIT_OK)
+
+
+# ---------------------------------------------------------------------- #
 # agent harness
 # ---------------------------------------------------------------------- #
 

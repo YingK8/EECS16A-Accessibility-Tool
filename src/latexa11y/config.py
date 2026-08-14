@@ -111,6 +111,10 @@ class CorpusScope:
     include: tuple[str, ...] = ("**/*.tex",)
     exclude: tuple[str, ...] = ()
     named: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Path fragment -> human kind, e.g. ``{"hw": "homework", "dis": "discussion"}``.
+    #: Lets the runner offer "all homeworks" without the Python knowing that this
+    #: particular course spells that directory ``hw``.
+    kinds: dict[str, str] = field(default_factory=dict)
 
     def patterns_for(self, scope: str | None) -> tuple[str, ...]:
         """Resolve a named scope (``sp26``, ``exams``) to include patterns."""
@@ -330,6 +334,10 @@ def load_profile(
             named={
                 str(key): _as_tuple(value, f"corpus.scopes.{key}")
                 for key, value in (corpus_data.get("scopes") or {}).items()
+            },
+            kinds={
+                str(key): str(value)
+                for key, value in (corpus_data.get("kinds") or {}).items()
             },
         ),
         headings=HeadingMap(

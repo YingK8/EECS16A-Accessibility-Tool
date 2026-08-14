@@ -75,7 +75,11 @@ class ApplyPlan:
     buffer: EditBuffer
     wrapped: int = 0
     artifacts: int = 0
+    placeholders: int = 0
     skipped: list[tuple[str, str]] = field(default_factory=list)
+    #: (figure id, line) for each placeholder written, so the run can log
+    #: exactly what a person still has to fill in and where it sits.
+    pending: list[tuple[str, int]] = field(default_factory=list)
     original: str = ""
 
     @property
@@ -93,7 +97,20 @@ class ApplyPlan:
         return True
 
 
-def plan_file(path: Path, profile: Profile, entries: dict[str, Entry]) -> ApplyPlan:
+#: Marker written for a figure nobody has described yet. It is deliberately one
+#: of the strings ``latexa11y-core.sty`` refuses to accept as alt text, so a
+#: document still carrying one CANNOT be built in strict mode. See
+#: ``_wrap_placeholder`` for why that inversion is the whole safety argument.
+PLACEHOLDER = "<<TODO:{id}>>"
+
+
+def plan_file(
+    path: Path,
+    profile: Profile,
+    entries: dict[str, Entry],
+    *,
+    placeholders: bool = False,
+) -> ApplyPlan:
     """Compute the edits for one file without touching it."""
     source = TexSource.from_path(path)
     plan = ApplyPlan(path=path, buffer=EditBuffer(path), original=source.text)
@@ -110,6 +127,11 @@ def plan_file(path: Path, profile: Profile, entries: dict[str, Entry]) -> ApplyP
             plan.artifacts += 1
             continue
         if not entry.is_done:
+            if placeholders:
+                _wrap_placeholder(plan, reference)
+                plan.placeholders += 1
+                plan.pending.append((reference.id, reference.line))
+                continue
             plan.skipped.append(
                 (reference.id, f"status is {entry.status!r}; only approved text is written")
             )
@@ -147,6 +169,44 @@ def _wrap_described(plan: ApplyPlan, reference: FigureRef, alt: str) -> None:
         )
 
 
+def _wrap_placeholder(plan: ApplyPlan, reference: FigureRef) -> None:
+    """Mark an undescribed figure visibly, in a way that cannot ship.
+
+    The obvious objection to writing placeholders into source is exactly right,
+    and it is the failure this package was built to prevent: the previous
+    generation of this tooling injected ``<<ALT:f-1a2b3c4d>>`` markers, and an
+    unfilled one shipped into a PDF as a real ``/Alt`` string -- which *passes*
+    a naive "every Figure has /Alt" check and *passes* veraPDF, producing a
+    silent false claim of conformance on material carrying a legal obligation.
+
+    What makes the option safe here is that the guarantee is inverted. The
+    marker is one of the strings ``latexa11y-core.sty`` recognises as a
+    placeholder, and in strict mode -- the default -- that is a hard LaTeX
+    **error**, not a warning. A document with an unfilled placeholder therefore
+    does not build at all. The marker cannot reach a PDF, so it cannot lie about
+    one; the worst case is a build failure naming the file and the figure.
+    """
+    marker = PLACEHOLDER.format(id=reference.id)
+    if reference.is_raster:
+        plan.buffer.wrap(
+            reference.start,
+            reference.end,
+            f"\\described{{{marker}}}{{%\n",
+            "}",
+            reason="undescribed figure marked for a human",
+            rule="APPLY-PLACEHOLDER-INLINE",
+        )
+    else:
+        plan.buffer.wrap(
+            reference.start,
+            reference.end,
+            f"\\begin{{Described}}{{{marker}}}\n",
+            "\n\\end{Described}",
+            reason="undescribed figure marked for a human",
+            rule="APPLY-PLACEHOLDER-BLOCK",
+        )
+
+
 def _wrap_decorative(plan: ApplyPlan, reference: FigureRef) -> None:
     plan.buffer.wrap(
         reference.start,
@@ -164,14 +224,22 @@ def apply_scope(
     entries: dict[str, Entry],
     *,
     dry_run: bool = True,
+    placeholders: bool = False,
+    files: list[Path] | None = None,
 ) -> list[ApplyPlan]:
-    """Plan (and optionally write) edits across a scope."""
+    """Plan (and optionally write) edits across a scope.
+
+    ``files`` overrides the scope glob, for the same reason
+    :func:`~latexa11y.scan.figures.scan_corpus` accepts one: an assignment's
+    figures overwhelmingly are not in its own directory.
+    """
     plans: list[ApplyPlan] = []
-    for path in profile.iter_files(scope):
+    candidates = files if files is not None else profile.iter_files(scope)
+    for path in candidates:
         if path.suffix.lower() != ".tex":
             continue
         try:
-            plan = plan_file(path, profile, entries)
+            plan = plan_file(path, profile, entries, placeholders=placeholders)
         except Exception:  # pragma: no cover - one bad file must not stop a sweep
             continue
         if not plan.changed and not plan.skipped:

@@ -38,11 +38,26 @@ corpus:
     sp26: ["sp26/**/*.tex"]
     bank: ["questionBank/**/*.tex"]
     exams: ["exams/**/*.tex"]
+    # By material type, for "convert all the homeworks" without naming a semester.
+    homeworks: ["*/hw/**/*.tex"]
+    discussions: ["*/dis/**/*.tex"]
+    notes: ["notes*/**/*.tex"]
     # The approved conversion scope: live material plus the exam archive.
     live:
       - "questionBank/**/*.tex"
       - "sp26/**/*.tex"
       - "exams/**/*.tex"
+
+  # Path fragment -> what that material IS. The runner groups its scope picker by
+  # these, so "all homeworks" works without the Python knowing this course spells
+  # that directory `hw`. A course using `problem-sets/` changes one line here.
+  kinds:
+    hw: homework
+    dis: discussion
+    exams: exam
+    notes: note
+    questionBank: bank
+    extraCredit: extra-credit
 
 # How this course's home-grown macros map onto tagged heading levels.
 # Level 1 = document title (Title + H1), 2 = question, 3 = part, 4 = solution.

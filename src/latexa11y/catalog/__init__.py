@@ -48,8 +48,17 @@ class CatalogResult:
         }
 
 
-def worklog_dir(profile: Profile) -> Path:
-    return profile.corpus.root / profile.catalog_dir / "alt"
+def worklog_dir(profile: Profile, output_root: Path | None = None) -> Path:
+    """Where description worklogs live.
+
+    Defaults to ``<corpus>/<catalog_dir>/descriptions``, beside the material
+    being described. ``output_root`` redirects it, which is what lets a run keep
+    every artifact it produces in one place the user chose -- and what lets the
+    corpus stay strictly read-only in mirror mode.
+    """
+    if output_root is not None:
+        return Path(output_root) / "descriptions"
+    return profile.corpus.root / profile.catalog_dir / "descriptions"
 
 
 def _shard_for(reference: FigureRef, root: Path) -> str:
@@ -68,11 +77,21 @@ def _shard_for(reference: FigureRef, root: Path) -> str:
 
 
 def build_catalog(
-    profile: Profile, scope: str | None = None, *, write: bool = True
+    profile: Profile,
+    scope: str | None = None,
+    *,
+    write: bool = True,
+    files: list[Path] | None = None,
+    output_root: Path | None = None,
 ) -> CatalogResult:
-    """Scan a scope and refresh its worklogs."""
+    """Scan a scope and refresh its worklogs.
+
+    ``files`` scans an explicit list instead of a scope glob. That is how an
+    assignment is scanned honestly: its graphics mostly are not in its own
+    directory (see :func:`latexa11y.scan.figures.scan_corpus`).
+    """
     root = profile.corpus.root.resolve()
-    references = scan_corpus(profile, scope)
+    references = scan_corpus(profile, scope, files=files)
 
     by_id: dict[str, list[FigureRef]] = defaultdict(list)
     for reference in references:
@@ -118,7 +137,7 @@ def build_catalog(
         )
         shard_of[identity] = _shard_for(primary, root)
 
-    directory = worklog_dir(profile)
+    directory = worklog_dir(profile, output_root)
     grouped: dict[str, dict[str, Entry]] = defaultdict(dict)
     for identity, entry in entries.items():
         grouped[shard_of[identity]][identity] = entry
@@ -147,14 +166,16 @@ def _is_within(path: Path, root: Path) -> bool:
         return False
 
 
-def load_entries(profile: Profile) -> dict[str, Entry]:
+def load_entries(
+    profile: Profile, output_root: Path | None = None
+) -> dict[str, Entry]:
     """Every description on disk, keyed by content hash.
 
     Read across all worklogs so a description written for one assignment is
     reused wherever the same figure appears -- the payoff of content addressing.
     """
     entries: dict[str, Entry] = {}
-    directory = worklog_dir(profile)
+    directory = worklog_dir(profile, output_root)
     if not directory.is_dir():
         return entries
     for path in sorted(directory.glob("*.md")):

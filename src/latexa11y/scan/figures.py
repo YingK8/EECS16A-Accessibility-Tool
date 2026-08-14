@@ -25,6 +25,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterable
 
 from ..config import Profile
 from ..texlex import EnvSpan, TexSource
@@ -255,10 +256,28 @@ def _nearest_label(source: TexSource, start: int, end: int) -> str | None:
     return match.group(1) if match else None
 
 
-def scan_corpus(profile: Profile, scope: str | None = None) -> list[FigureRef]:
-    """Scan a whole scope. Results keep one entry per *call site*."""
+def scan_corpus(
+    profile: Profile,
+    scope: str | None = None,
+    *,
+    files: Iterable[Path] | None = None,
+) -> list[FigureRef]:
+    """Scan a whole scope. Results keep one entry per *call site*.
+
+    ``files`` overrides the scope glob with an explicit list, which is how an
+    assignment gets scanned correctly. **A directory is not a document here.**
+    An EECS 16A assignment is a thin wrapper that ``\\input``s its questions from
+    the shared bank: ``sp26/dis/01A`` owns two ``.tex`` files containing zero
+    graphics and pulls in thirty-six of them from ``questionBank/``. Measured
+    across sp26, 277 of 362 graphics -- **76.5%** -- are reached by ``\\input``
+    rather than living in the assignment's own folder, so a directory-scoped
+    scan reports a clean sweep having looked at a quarter of the material.
+
+    :func:`latexa11y.build.relative_dependencies` computes the real file set.
+    """
     references: list[FigureRef] = []
-    for path in profile.iter_files(scope):
+    candidates = files if files is not None else profile.iter_files(scope)
+    for path in candidates:
         if path.suffix.lower() != ".tex":
             continue
         try:
