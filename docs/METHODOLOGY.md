@@ -305,11 +305,128 @@ while the END hook still fires — or, at the start of a list item, the BEGIN ho
 is skipped while the END hook is not. Either way tagpdf aborts with "the number
 of automatic begin and end text para hooks differ". The fix in `\qns`/`\q` is to
 switch off *before* `\item` and close with `\par` *before* switching back on, so
-neither hook fires and they balance. The trailing `\par` costs nothing because
-every question in the corpus is already followed by a blank line.
+neither hook fires and they balance.
+
+That `\par` is **not** free, and an earlier version of this document claimed it
+was — "every question in the corpus is already followed by a blank line". It was
+written from reading a handful of files and never measured. Measured: **74 of
+362 `\qns` calls (20%)** are followed immediately by text, so the forced break
+reflows one question in five. Question headings are therefore bookmark-only by
+default, with `\accessquestiontags` to opt into real H2 tags. Both behaviours
+are covered by `tests/test_latex_golden.py`.
 
 ### Interword spaces, again
 
 `latexa11y-doc.sty` needed the same `\tagpdfsetup{activate/spaces=false}` as the
 ee16 retrofit. Without it the running header, the footer and the `\Large` due-
 date line rendered as stacked, overlapping glyphs.
+
+---
+
+## 9. Making conversion a program, and the naming pass
+
+### 9.1 Why the shell script had to go
+
+Conversion lived in `examples/build-corpus.sh`. That script was not a
+convenience wrapper: it was the *definition* of what conversion means — which
+lines get injected, in what order, with which options — expressed as a `sed`
+expression that nothing tested and nothing else could call. Moving it into
+`src/latexa11y/build/` exposed four defects that had been invisible:
+
+| # | Defect | Why it was invisible |
+|---|---|---|
+| 1 | A directory is not a document | The scan looked in the assignment folder. **76.5% of sp26's graphics (277 of 362) are reached by `\input` from the shared bank.** `sp26/dis/01A` owns two `.tex` files with zero graphics and pulls in 36. A directory-scoped scan reported a clean sweep having examined a quarter of the material. |
+| 2 | `TEXINPUTS` order was backwards | kpathsea searches `TEXINPUTS` entries *before* the default (where `.` lives). Listing the corpus ahead of the mirror made `\input{body}` find the ORIGINAL file, so every mirrored edit was silently discarded and the conversion appeared to work. |
+| 3 | Relative paths resolve against the build directory | `sp26/dis/preambleFa23.tex` says `\usepackage{../../fa23}`, which means `sp26/fa23.sty` — two levels up from the *assignment*, not from the preamble. Resolving against the including file pointed at a nonexistent path. This is TeX's rule, not an approximation of it. |
+| 4 | Error detection missed absolute paths | `-file-line-error` writes `<path>:12:`, and the scan matched only `./`. A mirrored build is handed an absolute driver, so a build that died with "Emergency stop" parsed as **zero errors**. |
+
+Defect 4 is the instructive one. Fixing it immediately showed that `sp26/hw/5`
+and `sp26/hw/13` *gain* 8 and 16 errors under conversion — numbers the old
+detector had been reporting as 0. A control build with latexa11y removed
+entirely produced the **identical** 8 and 16, so they come from LaTeX's own
+tagging, not from this package. Two constructs are responsible, and both are now
+detected in source in milliseconds rather than after a three-minute compile:
+
+* **`A11Y-SRC-040`** — enumitem options (`\begin{enumerate}[label=(\roman*)]`)
+  on a list latex-lab is also tagging. One "Missing number, treated as zero" per
+  `\item`, and no PDF. **238 occurrences in 86 files** of the live corpus.
+* **`A11Y-SRC-041`** — `array` or `tabular` nested inside a matrix environment.
+  "Misplaced `\crcr`" and five more. **14 occurrences in 3 files.**
+
+### 9.2 The naming pass
+
+The rule applied was: **a name must not imply a contrast the codebase does not
+draw.** `AltOnly` presupposed an `AltAlso` that describes a region *and* still
+reads its contents. No such mode exists or could exist — alt text always
+replaces the region; that is what alt text is. The qualifier named the category
+rather than this member of it, so it carried no information and invented a
+sibling. `FigureBlock` likewise implied a `FigureInline`, and named layout
+rather than meaning.
+
+| Before | After |
+|---|---|
+| `AltOnly`, `\altonly` | `Described`, `\described` |
+| `FigureBlock[alt=]` | `DescribedFigure[description=]` |
+| `\FigureDescription` | `\LongDescription[label]` |
+| `\accesssafepalette`, key `safepalette` | `\accessconformingcolors`, key `conforming-colors` |
+| `Entry.alt` / `.long` | `.description` / `.long_description` |
+| `ALT-*` rejections | `DESCRIPTION-*` |
+
+Names that **kept** their qualifier, because it is earned: `\accessbookmarkonly`
+genuinely contrasts with `\accessheading` (bookmark alone vs bookmark plus
+structure heading), and `DataTable`/`LayoutTable` are both real. `Decorative`
+and `Described` now read as the two halves of the PDF/UA binary they are — a
+region is either an artifact or it is described — which the old pairing hid.
+
+The rename was done **now because it was free**, and that was measured before
+proposing it: `grep -rl AltOnly` across the corpus returned zero `.tex` files
+and `questionBank/a11y/` did not exist, so there were no worklogs to migrate.
+Every occurrence was inside this repository. The same rename after the first
+real conversion sweep would mean rewriting course sources. Deprecated aliases
+live in `latexa11y-compat-ee16.sty` — not in the core package, so the core API
+has exactly one spelling of each idea — and `tests/fixtures/golden_deprecated.tex`
+builds against the old vocabulary to prove nobody mid-migration is stranded.
+
+### 9.3 Bugs the new tests found
+
+| Bug | Symptom |
+|---|---|
+| `.gitignore`'s bare `build/` | Matches at *any* depth, so `src/latexa11y/build/` — the whole conversion engine — was silently excluded from `git add -A` and never committed. The commit looked clean. Anchored to `/build/`. |
+| `\answerbox` took an optional argument | `\answerbox{1in}` drew a default box and then typeset the literal text "1in" on the page. No error. Braces are what the legacy vocabulary uses (`\fillin{4cm}`), so it is the form the command will actually be given. Both spellings now work. |
+| `srgb_to_luminance` accepted 0..255 | Returned a plausible wrong answer: (6,69,173) on white reported 16.79:1 instead of 8.53:1. Both "pass" 4.5:1, so the mistake could only surface as a conformance claim computed from nonsense. Now rejected. |
+| The TUI hid each toggle's cost while it was off | Exactly when someone is deciding whether to pay it. |
+
+### 9.4 Two claims measurement contradicted
+
+Recorded because both were about to be written down as fact:
+
+1. **Plain blue is not the failing colour.** `#0000FF` on white is 8.59:1 and
+   conforms comfortably. The 2.6:1 failure is `solutionColor` =
+   rgb(0.2, 0.6, 0.9) = `#3399E6`, defined by the discussion preambles. The
+   conforming palette replaces both so one rule covers every document.
+2. **The first style-fidelity test measured its own fixture.** It compared the
+   class against a hand-written approximation of ee16's `\@maketitle` and
+   reported a 50pt drift that came entirely from the fake masthead. The body is
+   now compared against the house spec written out exactly, and the masthead
+   against the real `ee16.sty`, skipped when the corpus is absent.
+
+### 9.5 What a run produces
+
+Everything under one directory the user chooses, so nothing is scattered and the
+corpus stays read-only by default:
+
+```
+a11y-out/
+  pdf/           converted PDFs
+  logs/          build logs
+  tex/           converted sources, with each driver's transitive relative
+                 dependencies copied at the same offsets so the tree builds
+                 without the corpus beside it
+  descriptions/  the Markdown worklogs staff fill in
+  baseline/      untouched originals, for the before/after pixel comparison
+  run.yaml       the run's settings, replayable with `build --config`
+```
+
+`in-place` mode exists and refuses unless the corpus git worktree is clean, so
+the tool's edits are always reviewable on their own and revertible with
+`git checkout`.

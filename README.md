@@ -40,31 +40,54 @@ Then, from **any** directory:
 # 0. Will this toolchain actually produce a conforming PDF? Run this first.
 latexa11y doctor
 
-# 1. Build the demonstration PDFs and open them to see the bookmark tree.
-./examples/build.sh && open examples/build
+# 1. Convert. Pick a scope, choose which standards to apply, say where the
+#    output goes. Dry run by default; your corpus is never touched.
+latexa11y -p eecs16a run
+```
 
-# 2. Find every figure in your corpus and write the Markdown worklogs.
-#    Writes only to <corpus>/a11y/alt/ -- never to your .tex files.
-latexa11y -p eecs16a scan bank
+That is the whole tool for most people. The runner writes everything it
+produces under one directory you choose:
 
-# 3. A person or an agent fills in the worklogs and marks entries approved.
-latexa11y -p eecs16a agent next-task --limit 5
+```
+a11y-out/
+  pdf/           the converted PDFs
+  logs/          build logs
+  tex/           the converted sources
+  descriptions/  the worklogs staff fill in   ← the alt-text log
+  baseline/      the untouched originals, for the before/after comparison
+  run.yaml       this run's settings, replayable
+```
 
-# 4. Write approved descriptions into the sources (dry run by default).
-latexa11y -p eecs16a apply bank --show-diff
-latexa11y -p eecs16a apply bank --write
+and reports, per assignment, how far the page moved:
 
-# 5. Validate.
-latexa11y -p eecs16a check bank
+```
+assignment      pages  bookmarks  figures  errors  warnings  pixel diff
+sp26/hw/9          13         48        0       0         0       2.34%
+sp26/dis/09A        5         21        0       0         0       1.44%
+```
+
+`pixel diff` is a *difference*, not a score: 2.34% means 97.66% of the page is
+pixel-identical to the original, and the residue is tagging's own repagination.
+
+Everything the menus do has a flag, and both routes call the same engine — so a
+run can be explored interactively, saved, and replayed unchanged in CI:
+
+```bash
+latexa11y -p eecs16a build sp26/hw/9 --write --question-tags
+latexa11y -p eecs16a build --config a11y-out/run.yaml --write --json
+```
+
+The individual stages remain available when you want them:
+
+```bash
+latexa11y -p eecs16a files bank            # what is in scope
+latexa11y -p eecs16a scan bank             # figures -> Markdown worklogs
+latexa11y -p eecs16a agent next-task -n 5  # what an agent should describe next
+latexa11y -p eecs16a apply bank --write    # approved descriptions -> .tex
 latexa11y -p eecs16a check bank --pdf out.pdf --log out.log
 ```
 
 Exit codes: `0` clean, `1` findings, `2` could not run.
-
-To make one of your own assignments accessible, add **two lines** to its driver
-file — `\DocumentMetadata{...}` as the very first line, and
-`\usepackage{latexa11y-ee16}` after `ee16` and `markup`. Nothing else changes:
-not the body, not the macros, not the layout. See QUICKSTART §5.
 
 ---
 

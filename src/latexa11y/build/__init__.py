@@ -684,6 +684,33 @@ def compare_pdfs(original: Path, converted: Path) -> tuple[float | None, str | N
 # ---------------------------------------------------------------------- #
 
 
+def _collect_log(pdf: Path, config: RunConfig) -> Path | None:
+    """Move a build's .log into the log directory; drop the .aux beside it.
+
+    Returns the log's new location, or its old one if the move fails -- a log
+    that could not be relocated is still a log worth reading.
+    """
+    produced = pdf.with_suffix(".log")
+    if not produced.is_file():
+        return None
+    destination = config.output.log_dir() / produced.name
+    if destination == produced:
+        return produced
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(produced), destination)
+    except OSError:  # pragma: no cover
+        return produced
+    for leftover in (".aux", ".out", ".annotations"):
+        candidate = pdf.with_suffix(leftover)
+        if candidate.is_file():
+            try:
+                shutil.move(str(candidate), config.output.log_dir() / candidate.name)
+            except OSError:  # pragma: no cover
+                pass
+    return destination
+
+
 def build_assignment(
     assignment: Assignment,
     config: RunConfig,
@@ -736,7 +763,10 @@ def build_assignment(
         search_path=prepared.search_path,
     )
     report.pdf = pdf if pdf.is_file() else None
-    report.log = pdf.with_suffix(".log")
+    # pdflatex writes .pdf, .log and .aux to one -output-directory. Move the log
+    # into its own directory afterwards so `pdf/` holds only deliverables and the
+    # layout matches what the runner tells the user it produced.
+    report.log = _collect_log(pdf, config)
     report.errors, report.tagpdf_warnings = _log_findings(report.log)
     facts = inspect_pdf(pdf)
     report.pages, report.bookmarks, report.figures = (
@@ -820,6 +850,15 @@ def build_run(
     from ..run import iter_selected
 
     lines = preamble_for(config, profile)
+
+    # Every run records how it was run, next to what it produced. Without this a
+    # PDF in an output directory is unreproducible six months later: which
+    # standards were on, which colours, which toolchain mode. It is written up
+    # front so it survives a build that fails half way.
+    if config.write:
+        config.output.root.mkdir(parents=True, exist_ok=True)
+        (config.output.root / "run.yaml").write_text(config.to_yaml(), encoding="utf-8")
+
     reports: list[BuildReport] = []
     for assignment in iter_selected(profile, config):
         if on_start:

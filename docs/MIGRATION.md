@@ -19,7 +19,7 @@ silently produce untagged output.
 ```bash
 latexa11y -p eecs16a doctor                    # gate
 latexa11y -p eecs16a scan sp26                 # build worklogs for one semester
-#   … staff and agents fill in a11y/alt/*.md, a human approves …
+#   … staff and agents fill in a11y/descriptions/*.md, a human approves …
 latexa11y -p eecs16a apply sp26 --show-diff    # review
 latexa11y -p eecs16a apply sp26 --write
 latexa11y -p eecs16a check sp26

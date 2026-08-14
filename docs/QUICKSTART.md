@@ -117,7 +117,76 @@ still get tagged; they just cannot *claim* PDF/UA until TeX Live 2026.
 
 ---
 
-## 4. Run against your real corpus
+## 4. Convert your assignments
+
+This is the one command most people need. It asks what to convert, which
+standards to apply, and where to put the results:
+
+```bash
+latexa11y -p eecs16a run
+```
+
+```
+╭─ latexa11y run — profile: eecs16a ───────────────────────────────╮
+│   1  Scope         nothing selected                              │
+│   2  Standards     ✓ Tag structure  ✓ Course macro retrofit …    │
+│   3  Colours       conforming palette (5 remapped)               │
+│   4  Descriptions  worklog only, no source edits                 │
+│   5  Output        a11y-out/   (mirror — corpus untouched)       │
+│                                                                  │
+│   Choose a scope first — press 1.                                │
+╰──────────────────────────────────────────────────────────────────╯
+```
+
+Press `1` to pick a scope — a named one from the profile (`sp26`, `exams`,
+`live`), then a kind (homeworks, discussions, exams), then individual
+assignments or all of them. Press `p` to preview: it prints the exact lines it
+will inject and every file it will touch. Nothing is written until you press
+`r` and confirm.
+
+**Everything it produces goes under one directory** (`a11y-out/` by default,
+changeable on screen 5):
+
+```
+a11y-out/
+  pdf/           the converted PDFs
+  logs/          build logs
+  tex/           the converted sources
+  descriptions/  the worklogs staff fill in   ← the alt-text log
+  baseline/      the untouched originals, for the before/after comparison
+  run.yaml       this run's settings
+```
+
+The result table is the honest one:
+
+```
+assignment      pages  bookmarks  figures  errors  warnings  pixel diff
+sp26/hw/9          13         48        0       0         0       2.34%
+sp26/dis/09A        5         21        0       0         0       1.44%
+```
+
+**`pixel diff` is a difference, not a score, and low is the goal.** 2.34% means
+97.66% of the page is pixel-identical to the original; the residue is tagging's
+own repagination. If it were large, conversion would have moved your document.
+
+### Doing the same thing without the menus
+
+Every screen has a flag, and both routes call the same engine:
+
+```bash
+latexa11y -p eecs16a build sp26/hw/9 sp26/dis/09A -o a11y-out          # dry run
+latexa11y -p eecs16a build sp26/hw/9 sp26/dis/09A -o a11y-out --write
+latexa11y -p eecs16a build --config a11y-out/run.yaml --write          # replay
+```
+
+Useful flags: `--question-tags` (real H2 tags for question titles, at the cost
+of reflowing about one question in five), `--house-colors` (keep the course
+palette even where it fails contrast), `--in-place` (edit the corpus directly;
+refuses unless its git worktree is clean), `--json` (for agents and CI).
+
+---
+
+## 5. Working with the corpus directly
 
 The `-p eecs16a` flag loads `profiles/eecs16a.yaml`, which already points at
 your `questionBank`. These can be run from **any directory**.
@@ -144,10 +213,10 @@ latexa11y -p eecs16a scan bank
 ```
 266 call sites → 234 unique figures (1.14× deduplication)
 described: 0   outstanding: 234
-worklogs: .../questionBank/a11y/alt (42 files)
+worklogs: .../questionBank/a11y/descriptions (42 files)
 ```
 
-This creates `questionBank/a11y/alt/*.md` — one Markdown file per assignment
+This creates `questionBank/a11y/descriptions/*.md` — one Markdown file per assignment
 folder. **This is the only thing `scan` writes, and it writes nothing inside
 your `.tex` files.** Safe to re-run: it regenerates the machine-written parts
 and never overwrites text a person typed.
@@ -159,11 +228,11 @@ Add `--no-write` to see the counts without creating any files.
 Open a worklog, e.g.:
 
 ```bash
-open "/Users/meli/Desktop/Kevin/UCB/EECS 16A/questionBank/a11y/alt/questionBank-hw-10.md"
+open "/Users/meli/Desktop/Kevin/UCB/EECS 16A/questionBank/a11y/descriptions/questionBank-hw-10.md"
 ```
 
 Each entry shows the machine-derived facts, the question the figure belongs to,
-and an empty `### alt` section. Type the description there and change
+and an empty `### description` section. Type the description there and change
 `- status: todo` to `- status: approved`. The rules are in `ALT_TEXT_SPEC.md`.
 
 ### Write approved descriptions into the .tex files
@@ -199,7 +268,7 @@ Exit codes: `0` clean, `1` findings, `2` could not run.
 
 ---
 
-## 5. Make one of your own assignments accessible
+## 6. What conversion actually does to a file
 
 Add **two lines** to a driver file such as `sp26/hw/9/sol9.tex`. Nothing else
 changes — not the body, not the macros, not the layout.
@@ -267,7 +336,7 @@ To undo: `rm "$(kpsewhich -var-value TEXMFHOME)/tex/latex/latexa11y"`.
 
 ---
 
-## 6. Run the tests
+## 7. Run the tests
 
 From the **tool repo**:
 

@@ -53,15 +53,15 @@ answer.
 ```bash
 # 3. Submit. Validation runs BEFORE the write.
 latexa11y -p eecs16a --json agent submit --id fig-b345050cb9d2 \
-  --alt 'Two capacitors C1 and C2, each from its own top node to ground, joined by switch S1.'
+  --description 'Two capacitors C1 and C2, each from its own top node to ground, joined by switch S1.'
 ```
 
 Rejections are actionable and arrive in one turn:
 
 ```json
 {"accepted": false, "rejections": [
-  {"rule": "ALT-OPENER", "message": "do not open with 'image of'; a reader already says 'graphic'"},
-  {"rule": "ALT-MARKUP", "message": "contains LaTeX markup; /Alt is a plain string…"}
+  {"rule": "DESCRIPTION-OPENER", "message": "do not open with 'image of'; a reader already says 'graphic'"},
+  {"rule": "DESCRIPTION-MARKUP", "message": "contains LaTeX markup; /Alt is a plain string…"}
 ]}
 ```
 
