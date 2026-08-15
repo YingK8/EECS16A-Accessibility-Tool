@@ -159,7 +159,7 @@ class Wizard:
             if output.in_place
             else "mirror — corpus untouched"
         )
-        return f"{output.root}/   ({mode})"
+        return f"{escape(str(output.root))}/   ({mode})"
 
     # ------------------------------------------------------------------ #
     # the loop
@@ -495,7 +495,7 @@ class Wizard:
             return
 
         current = self.config.colors.replacements(self.profile).get(name, "")
-        value = self.ask(f"hex for {name} [{current or 'none'}]> ")
+        value = self.ask(f"hex for {escape(name)} \\[{escape(current or 'none')}]> ")
         if not value:
             return
         try:
@@ -574,13 +574,16 @@ class Wizard:
         table.add_column("path", overflow="fold")
         table.add_column("", overflow="fold", style="dim")
 
-        table.add_row("0", "[bold]Root[/]", str(output.root), "everything else hangs off this")
+        table.add_row(
+            "0", "[bold]Root[/]", escape(str(output.root)),
+            "everything else hangs off this",
+        )
         for index, (slug, label, note) in enumerate(ARTIFACTS, 1):
             customised = slug in output.paths
             table.add_row(
                 str(index),
                 label + (" [cyan]*[/]" if customised else ""),
-                str(output.path_for(slug)),
+                escape(str(output.path_for(slug))),
                 note,
             )
         return table
@@ -616,7 +619,7 @@ class Wizard:
                 continue
 
             if index == 0:
-                value = self.ask(f"root directory [{output.root}]> ")
+                value = self.ask(f"root directory \\[{escape(str(output.root))}]> ")
                 if value:
                     output.root = Path(value).expanduser()
                 continue
@@ -625,13 +628,13 @@ class Wizard:
             except IndexError:
                 self.console.print("[red]not one of the listed options[/]")
                 continue
-            value = self.ask(f"{label} [{output.path_for(slug)}]> ")
+            value = self.ask(f"{label} \\[{escape(str(output.path_for(slug)))}]> ")
             try:
                 output.set_path(slug, value or None)
             except LatexA11yError as exc:
                 self.console.print(f"[red]{escape(str(exc))}[/]")
                 continue
-            self.console.print(f"  {label}: {output.path_for(slug)}")
+            self.console.print(f"  {label}: {escape(str(output.path_for(slug)))}")
 
     def _edit_write_mode(self) -> None:
         output = self.config.output
@@ -644,7 +647,7 @@ class Wizard:
                 else "edit the corpus .tex directly (requires a clean git worktree)"
             )
             self.console.print(f" {marker} [cyan]{index}[/] {mode:<9} {note}")
-        answer = self.ask(f"write mode [{output.write_mode}]> ")
+        answer = self.ask(f"write mode \\[{escape(output.write_mode)}]> ")
         if not answer:
             return
         try:
@@ -711,8 +714,10 @@ class Wizard:
         path = path or (self.config.output.root / "run.yaml")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.config.to_yaml(), encoding="utf-8")
-        self.console.print(f"[green]saved[/] {path}")
-        self.console.print(f"[dim]replay with:  latexa11y run --config {path}[/]")
+        self.console.print(f"[green]saved[/] {escape(str(path))}")
+        self.console.print(
+            f"[dim]replay with:  latexa11y run --config {escape(str(path))}[/]"
+        )
         return path
 
     def confirm_run(self) -> None:

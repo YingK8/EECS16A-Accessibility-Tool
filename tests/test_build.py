@@ -273,3 +273,57 @@ def test_a_clean_log_reads_clean(tmp_path: Path):
     log = tmp_path / "job.log"
     log.write_text("This is pdfTeX\nOutput written on job.pdf (13 pages).\n")
     assert _log_findings(log) == ([], [])
+
+
+def test_a_missing_log_reads_empty_rather_than_crashing():
+    """A build that never wrote a log still has to report its failure.
+
+    Raising here replaces the build error the user needs with an
+    AttributeError from the reporting code -- which is exactly what happened.
+    """
+    assert _log_findings(None) == ([], [])
+    assert _log_findings(Path("/nonexistent/job.log")) == ([], [])
+
+
+# ---------------------------------------------------------------------- #
+# output paths reach the engine correctly
+# ---------------------------------------------------------------------- #
+
+
+def test_artifact_paths_are_absolute(monkeypatch, tmp_path: Path):
+    """`-o a11y-out` must not land inside the directory being built.
+
+    pdflatex is run with cwd set to the source/mirror directory, and resolves a
+    relative -output-directory against THAT. A relative output root therefore
+    wrote the PDF into the mirrored source tree, and the log lookup that
+    followed found nothing and crashed. Every artifact path is absolute by the
+    time it leaves the model.
+    """
+    monkeypatch.chdir(tmp_path)
+    output = Output(root=Path("a11y-out"))
+    for directory in (
+        output.pdf_dir(),
+        output.log_dir(),
+        output.tex_dir(),
+        output.worklog_dir(),
+        output.baseline_dir(),
+    ):
+        assert directory.is_absolute(), directory
+        assert directory.is_relative_to(tmp_path)
+
+
+def test_a_relative_override_is_absolute_too(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    output = Output(root=Path("out"))
+    output.set_path("pdf", "final")
+    assert output.pdf_dir() == (tmp_path / "out" / "final")
+    assert output.pdf_dir().is_absolute()
+
+
+def test_run_yaml_keeps_the_path_the_user_typed(monkeypatch, tmp_path: Path):
+    """Absolute at use, relative on disk -- or run.yaml stops being portable."""
+    monkeypatch.chdir(tmp_path)
+    output = Output(root=Path("a11y-out"))
+    output.set_path("descriptions", "shared/alt")
+    assert output.as_dict()["root"] == "a11y-out"
+    assert output.as_dict()["paths"]["descriptions"] == "shared/alt"

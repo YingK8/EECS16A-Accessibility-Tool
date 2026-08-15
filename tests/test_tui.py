@@ -206,18 +206,36 @@ def test_each_artifact_path_can_be_moved_independently(profile: Profile, tmp_pat
     shared = tmp_path / "shared" / "alt"
     config, _, _ = drive(profile, ["5", "4", str(shared), "q", "q"])
     assert config.output.worklog_dir() == shared
-    assert config.output.pdf_dir() == Path("a11y-out") / "pdf"
+    assert config.output.pdf_dir() == (Path("a11y-out") / "pdf").absolute()
 
 
 def test_a_relative_artifact_path_hangs_off_the_root(profile: Profile):
     config, _, _ = drive(profile, ["5", "1", "final", "q", "q"])
-    assert config.output.pdf_dir() == Path("a11y-out") / "final"
+    assert config.output.pdf_dir() == (Path("a11y-out") / "final").absolute()
+    # Stored as typed, so run.yaml stays portable between machines.
+    assert config.output.as_dict()["paths"]["pdf"] == "final"
 
 
 def test_an_artifact_path_can_be_restored_to_its_default(profile: Profile):
     config, _, _ = drive(profile, ["5", "1", "final", "1", "", "q", "q"])
     assert config.output.paths == {}
-    assert config.output.pdf_dir() == Path("a11y-out") / "pdf"
+    assert config.output.pdf_dir() == (Path("a11y-out") / "pdf").absolute()
+
+
+def test_a_path_prompt_survives_an_absolute_default(profile: Profile, tmp_path: Path):
+    """Regression: `[/Users/...]` in a prompt was parsed as Rich markup.
+
+    Absolute paths appear in every path prompt now, and an unescaped one
+    crashed the runner with MarkupError before it could ask the question.
+    """
+    absolute = tmp_path / "somewhere"
+    # Reaching the end at all is most of the assertion: an unescaped path raised
+    # MarkupError out of console.print before the question was ever asked.
+    config, _, output = drive(profile, ["5", "0", str(absolute), "1", "", "q", "q"])
+    assert config.output.root == absolute
+    # Not the whole path: Rich wraps it, and `drive` collapses the wrap to a
+    # space, so a long tmp_path would never match as one string.
+    assert "somewhere" in output
 
 
 def test_write_mode_can_be_set(profile: Profile):

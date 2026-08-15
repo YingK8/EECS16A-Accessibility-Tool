@@ -502,6 +502,9 @@ def compile_document(
             f"{engine.name} is not on PATH",
             hint="install TeX Live, or run `latexa11y doctor` for the full picture",
         )
+    # Absolute before it reaches the subprocess: -output-directory is resolved
+    # against the child's cwd, which is the directory being built, not ours.
+    output_dir = output_dir.absolute()
     output_dir.mkdir(parents=True, exist_ok=True)
     jobname = jobname or driver.stem
 
@@ -597,9 +600,15 @@ _LOG_FATAL = (
 )
 
 
-def _log_findings(log: Path) -> tuple[list[str], list[str]]:
-    """(LaTeX errors, tagpdf warnings) from a build log."""
-    if not log.is_file():
+def _log_findings(log: Path | None) -> tuple[list[str], list[str]]:
+    """(LaTeX errors, tagpdf warnings) from a build log.
+
+    ``None`` is a real case, not defensive padding: a build that never got far
+    enough to write a log has no log to read. Crashing here would replace the
+    build failure the user needs to see with an AttributeError from the
+    reporting code.
+    """
+    if log is None or not log.is_file():
         return [], []
     text = log.read_text(encoding="utf-8", errors="replace")
     errors: list[str] = []
@@ -778,6 +787,13 @@ def build_assignment(
         report.pixel_diff, report.diff_note = compare_pdfs(original_pdf, pdf)
 
     report.ok = report.pdf is not None and not report.errors
+    if report.pdf is None and not report.errors:
+        # No PDF and nothing in the log to explain it -- usually the engine
+        # never ran. Say so, rather than showing a bare ✗ with zero errors.
+        report.note = (
+            f"{profile.engine.name} produced no PDF and no readable log; "
+            f"expected {pdf}"
+        )
     if not config.output.keep_logs and report.log and report.log.is_file():
         report.log.unlink()
         report.log = None

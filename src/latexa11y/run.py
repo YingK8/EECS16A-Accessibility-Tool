@@ -364,11 +364,22 @@ class Output:
         return self.write_mode == "in-place"
 
     def path_for(self, slug: str) -> Path:
-        """Where one artifact goes. Overrides win; otherwise ``root/<slug>``."""
+        """Where one artifact goes, as an ABSOLUTE path.
+
+        Absolute matters, and not for tidiness. The engine runs pdflatex with
+        ``cwd`` set to the directory being built and ``-output-directory`` set
+        from here; a relative value is then resolved against *that* directory,
+        not against the one the user typed it in. ``-o a11y-out`` quietly wrote
+        the PDF inside the mirrored source tree, and the log lookup that
+        followed found nothing.
+
+        ``as_dict`` still serialises the raw value, so ``run.yaml`` keeps the
+        relative form and stays portable between machines.
+        """
         override = self.paths.get(slug)
         if override is None:
-            return self.root / slug
-        return override if override.is_absolute() else self.root / override
+            return (self.root / slug).absolute()
+        return (override if override.is_absolute() else self.root / override).absolute()
 
     def set_path(self, slug: str, value: str | Path | None) -> None:
         """Relocate one artifact. ``None`` or empty restores the default."""

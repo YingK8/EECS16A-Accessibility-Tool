@@ -468,3 +468,46 @@ document:** a count of source patterns is not a measurement of rendered output.
 free because "every question is followed by a blank line", which was also never
 checked. Both were settled in minutes by building the documents and comparing
 pixels. Infer nothing about a page that can be rendered.
+
+### 9.7 A relative output directory went to the wrong place
+
+Reported from a real run: `latexa11y build ... -o a11y-out --write` crashed with
+`AttributeError: 'NoneType' object has no attribute 'is_file'`.
+
+The AttributeError was the symptom. The engine runs pdflatex with `cwd` set to
+the directory being built and `-output-directory` taken from the run config; a
+**relative** output path is then resolved against *that* directory, not against
+the one the user typed it in. The PDF and log were written inside the mirrored
+source tree, the log lookup that followed found nothing, and the reporting code
+fell over on `None` -- replacing the build result with a traceback.
+
+Every artifact path is now absolute by the time it leaves the model, while
+`as_dict` still serialises the raw value so `run.yaml` stays portable. `run.yaml`
+records `a11y-out`; the engine receives `/Users/.../a11y-out/pdf`.
+
+**Why the tests missed it.** Every fixture passed an absolute `tmp_path`. The
+defect lived exactly in the gap between what was tested and what a person types
+-- `-o a11y-out` is the obvious thing to type, and no test ever did. The
+regression tests now `monkeypatch.chdir` and assert on relative input.
+
+Two further defects fell out of the fix:
+
+* Absolute paths appear in every path prompt, and `[/Users/...]` is Rich markup.
+  An unescaped one raised `MarkupError` before the question could be asked. Every
+  interpolated value in a prompt or table cell is escaped now.
+* `_log_findings(None)` raised. A build that never wrote a log is a real case,
+  and crashing there hides the build failure the user actually needs to see.
+
+### 9.8 A third construct LaTeX's own tagging cannot handle
+
+The same run surfaced `A11Y-SRC-042`: a line break immediately after display
+math -- `\end{align*}` followed by `\newline` -- fails under tagging with
+"There's no line here to end" and produces no PDF. Display math ends in vertical
+mode, so there is no line for `\newline` to end; the untagged build tolerates
+it, which is why the construct is in the corpus at all.
+
+Attributed the same way as the others, and worth doing every time: two control
+builds, one with tagging alone and latexa11y entirely absent, one with the full
+retrofit and question H2 tags off. Both produced the **identical** two errors, so
+neither this package nor the newly-flipped default is responsible. Measured
+across the live corpus: 12 occurrences in 8 files.
