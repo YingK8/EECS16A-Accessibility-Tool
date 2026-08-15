@@ -421,6 +421,7 @@ def _load_run_config(
 def _report_table(reports: list) -> Table:
     table = Table(header_style="bold", title_justify="left")
     table.add_column("assignment", no_wrap=True)
+    table.add_column("variant", no_wrap=True)
     table.add_column("", width=2)
     table.add_column("pages", justify="right")
     table.add_column("bookmarks", justify="right")
@@ -436,6 +437,7 @@ def _report_table(reports: list) -> Table:
         )
         table.add_row(
             report.assignment,
+            report.variant,
             "[green]✓[/green]" if report.ok else "[red]✗[/red]",
             str(report.pages if report.pages is not None else "—"),
             str(report.bookmarks if report.bookmarks is not None else "—"),
@@ -549,7 +551,9 @@ def build(
                 console.print(f"  [cyan]{escape(line)}[/cyan]")
             console.print()
             for report in reports:
-                console.print(f"  {report.assignment}  ({report.driver})")
+                console.print(
+                    f"  {report.assignment}  {report.variant}  ({report.driver})"
+                )
             console.print("\n[dim]re-run with --write to build[/dim]")
         else:
             console.print(_report_table(reports))
@@ -575,7 +579,10 @@ def _print_failures(console: Console, failures: list) -> None:
     them no way to find out what.
     """
     for report in failures:
-        console.print(f"\n[red]{escape(report.assignment)} failed[/red]")
+        console.print(
+            f"\n[red]{escape(report.assignment)} "
+            f"({escape(report.variant)}) failed[/red]"
+        )
         if report.note:
             console.print(f"  {escape(report.note)}")
         for line in report.errors[:5]:
@@ -628,7 +635,9 @@ def run_command(ctx: Context, config_path: Path | None, output: Path | None) -> 
     reports = build_run(
         config,
         ctx.profile,
-        on_start=lambda item: wizard.console.print(f"[dim]building {item.path}…[/dim]"),
+        on_start=lambda item, variant: wizard.console.print(
+            f"[dim]building {item.path} ({variant})…[/dim]"
+        ),
     )
     wizard.console.print(_report_table(reports))
     if descriptions.get("scanned") and descriptions.get("outstanding"):

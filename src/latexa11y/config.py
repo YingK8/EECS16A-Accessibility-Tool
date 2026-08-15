@@ -111,6 +111,10 @@ class CorpusScope:
     include: tuple[str, ...] = ("**/*.tex",)
     exclude: tuple[str, ...] = ()
     named: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    #: Driver filename prefix -> variant, e.g. ``{"prob": "problem"}``. An
+    #: assignment ships several documents built from one body; this says which
+    #: file is which. Empty falls back to run.DEFAULT_VARIANT_PREFIXES.
+    variants: dict[str, str] = field(default_factory=dict)
     #: Path fragment -> human kind, e.g. ``{"hw": "homework", "dis": "discussion"}``.
     #: Lets the runner offer "all homeworks" without the Python knowing that this
     #: particular course spells that directory ``hw``.
@@ -341,6 +345,10 @@ def load_profile(
             kinds={
                 str(key): str(value)
                 for key, value in (corpus_data.get("kinds") or {}).items()
+            },
+            variants={
+                str(key): str(value)
+                for key, value in (corpus_data.get("variants") or {}).items()
             },
         ),
         headings=HeadingMap(

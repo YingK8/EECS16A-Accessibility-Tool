@@ -51,6 +51,16 @@ corpus:
   # Path fragment -> what that material IS. The runner groups its scope picker by
   # these, so "all homeworks" works without the Python knowing this course spells
   # that directory `hw`. A course using `problem-sets/` changes one line here.
+  # An assignment is several documents built from ONE body, differing only in
+  # how \sol is defined. sol9.tex prints solutions; prob9.tex swallows them and
+  # is what students receive. Discussions add dis<N> (handout) and ans<N>.
+  # Filename prefix -> which document it is:
+  variants:
+    sol: solution
+    prob: problem
+    dis: problem
+    ans: answer
+
   kinds:
     hw: homework
     dis: discussion

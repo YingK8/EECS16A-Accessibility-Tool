@@ -346,3 +346,46 @@ def test_wizard_can_save_its_config(profile: Profile, tmp_path: Path):
     assert path.is_file()
     assert RunConfig.load(path).assignments == ("sem/hw/1",)
     assert "--config" in buffer.getvalue()
+
+
+# ---------------------------------------------------------------------- #
+# documents (variants)
+# ---------------------------------------------------------------------- #
+
+
+def test_every_version_is_built_by_default(profile: Profile):
+    """The blank handout is what students receive; it must not be optional."""
+    assert RunConfig().variants == ()
+    _, _, output = drive(profile, ["6", "", "q"])
+    assert "every version each assignment has" in output
+
+
+def test_a_version_can_be_deselected(profile: Profile):
+    # 6 → documents, 3 → toggle "answer" off, blank → back, q → quit.
+    config, _, _ = drive(profile, ["6", "3", "", "q"])
+    assert config.variants == ("solution", "problem")
+
+
+def test_selecting_everything_is_stored_as_no_filter(profile: Profile):
+    """Off then on again must return to the default, not freeze a list."""
+    config, _, _ = drive(profile, ["6", "3", "3", "", "q"])
+    assert config.variants == ()
+
+
+def test_the_last_version_cannot_be_removed(profile: Profile):
+    config, _, output = drive(profile, ["6", "1", "2", "3", "", "q"])
+    assert config.variants, "the wizard must never build nothing"
+    assert "would build nothing" in output
+
+
+def test_the_screen_counts_how_many_assignments_have_each_version(profile: Profile):
+    config = RunConfig().with_assignments(["sem/hw/1", "sem/hw/2"])
+    _, _, output = drive(profile, ["6", "", "q"], config)
+    assert "solutions" in output or "solution" in output
+    assert "blank, as students receive it" in output
+
+
+def test_the_preview_lists_every_document_that_will_be_built(profile: Profile):
+    config = RunConfig().with_assignments(["sem/hw/1"])
+    _, _, output = drive(profile, ["p", "q"], config)
+    assert "sem-hw-1-solution.pdf" in output

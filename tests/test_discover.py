@@ -18,6 +18,7 @@ from latexa11y.run import (
     RunConfig,
     discover_assignments,
     find_driver,
+    find_drivers,
     group_by_kind,
     iter_selected,
 )
@@ -204,3 +205,93 @@ def test_dependency_walk_terminates_on_a_cycle(corpus: Path):
     a.write_text("\\input{cycle_b}\n")
     b.write_text("\\input{cycle_a}\n")
     assert relative_dependencies(a) == {a, b}
+
+
+# ---------------------------------------------------------------------- #
+# variants: an assignment is several documents, not one
+# ---------------------------------------------------------------------- #
+
+
+def test_all_variants_of_an_assignment_are_found(corpus: Path):
+    """sol9.tex and prob9.tex share a body and differ only in \\sol.
+
+    Building only the solutions would leave the blank handout -- the document
+    students actually receive -- unconverted.
+    """
+    found = find_drivers(corpus / "sem" / "hw" / "3")
+    assert found == {"solution": "sol3.tex", "problem": "prob3.tex"}
+
+
+def test_a_discussion_adds_a_student_handout_and_answers(tmp_path: Path):
+    directory = tmp_path / "01A"
+    directory.mkdir()
+    for name in ("sol01A", "dis01A", "ans01A"):
+        (directory / f"{name}.tex").write_text("\\begin{document}\\end{document}\n")
+    assert find_drivers(directory) == {
+        "solution": "sol01A.tex",
+        "problem": "dis01A.tex",
+        "answer": "ans01A.tex",
+    }
+
+
+def test_an_unconventional_driver_is_still_built(tmp_path: Path):
+    """No prefix match must not mean "skip it"."""
+    directory = tmp_path / "odd"
+    directory.mkdir()
+    (directory / "main.tex").write_text("\\begin{document}\\end{document}\n")
+    assert find_drivers(directory) == {"document": "main.tex"}
+
+
+def test_fragments_only_directory_has_no_variants(corpus: Path):
+    assert find_drivers(corpus / "sem" / "figures") == {}
+
+
+def test_variant_prefixes_come_from_the_profile(tmp_path: Path):
+    """A course spelling them differently changes one line of YAML."""
+    directory = tmp_path / "ps1"
+    directory.mkdir()
+    (directory / "keyps1.tex").write_text("\\begin{document}\\end{document}\n")
+    (directory / "blankps1.tex").write_text("\\begin{document}\\end{document}\n")
+    found = find_drivers(directory, {"key": "solution", "blank": "problem"})
+    assert found == {"solution": "keyps1.tex", "problem": "blankps1.tex"}
+
+
+def test_discovery_carries_every_variant(profile: Profile):
+    found = {item.path: item for item in discover_assignments(profile, "sem")}
+    assert found["sem/hw/3"].drivers == {
+        "solution": "sol3.tex",
+        "problem": "prob3.tex",
+    }
+    # `driver` stays the single representative one, for callers that want one.
+    assert found["sem/hw/3"].driver == "sol3.tex"
+
+
+def test_no_selection_means_every_version(profile: Profile):
+    assignment = {a.path: a for a in discover_assignments(profile, "sem")}["sem/hw/3"]
+    assert set(assignment.variants_for()) == {"solution", "problem"}
+    assert set(assignment.variants_for(())) == {"solution", "problem"}
+
+
+def test_a_selection_narrows_to_what_was_asked_for(profile: Profile):
+    assignment = {a.path: a for a in discover_assignments(profile, "sem")}["sem/hw/3"]
+    assert assignment.variants_for(["problem"]) == {"problem": "prob3.tex"}
+
+
+def test_asking_for_a_version_an_assignment_lacks_yields_nothing(profile: Profile):
+    """And the runner then says which versions it DOES have.
+
+    sem/dis/01A ships solutions only. Reporting "no driver file" there would be
+    wrong -- it has one, just not the one that was asked for.
+    """
+    assignment = {a.path: a for a in discover_assignments(profile, "sem")}["sem/dis/01A"]
+    assert assignment.drivers == {"solution": "sol01A.tex"}
+    assert assignment.variants_for(["answer"]) == {}
+
+
+def test_an_unconventional_driver_survives_any_filter(tmp_path: Path):
+    """`document` has no variant name, so a filter must not exclude it."""
+    from latexa11y.run import Assignment
+
+    odd = Assignment(path="x", kind="other", driver="main.tex",
+                     drivers={"document": "main.tex"})
+    assert odd.variants_for(["solution"]) == {"document": "main.tex"}

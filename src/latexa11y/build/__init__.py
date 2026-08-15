@@ -260,6 +260,7 @@ def materialise(
     *,
     lines: list[str] | None = None,
     write: bool | None = None,
+    driver: str | None = None,
 ) -> Prepared:
     """Produce a buildable, converted copy of one assignment.
 
@@ -269,7 +270,8 @@ def materialise(
     outside the assignment -- ``ee16.sty`` three levels up, ``figures/``,
     ``timestamp.sty`` -- resolve back to the corpus without being copied.
     """
-    if assignment.driver is None:
+    driver_name = driver or assignment.driver
+    if driver_name is None:
         raise LatexA11yError(
             f"{assignment.path} has no driver file to build",
             hint="a driver is the .tex containing \\begin{document}",
@@ -279,11 +281,11 @@ def materialise(
     source_dir = (root / assignment.path).resolve()
     lines = preamble_for(config, profile) if lines is None else lines
 
-    source = TexSource.from_path(source_dir / assignment.driver)
+    source = TexSource.from_path(source_dir / driver_name)
     converted = inject(source, lines)
 
     if config.output.in_place:
-        driver = source_dir / assignment.driver
+        driver = source_dir / driver_name
         if write:
             require_clean_worktree(root)
             driver.write_bytes(source.encode(converted))
@@ -293,18 +295,18 @@ def materialise(
 
     mirror_root = config.output.tex_dir().resolve()
     target_dir = (mirror_root / assignment.path).resolve()
-    driver = target_dir / assignment.driver
+    driver = target_dir / driver_name
     if write:
         target_dir.mkdir(parents=True, exist_ok=True)
         for path in sorted(source_dir.iterdir()):
             if path.is_file() and path.suffix.lower() in (".tex", ".sty", ".cls"):
-                if path.name != assignment.driver:
+                if path.name != driver_name:
                     shutil.copy2(path, target_dir / path.name)
         driver.write_bytes(source.encode(converted))
         # Everything the driver reaches by an explicit relative path, at the
         # same offsets, so the mirror builds without the corpus beside it.
         mirror_dependencies(
-            source_dir / assignment.driver, source_dir, target_dir, mirror_root
+            source_dir / driver_name, source_dir, target_dir, mirror_root
         )
     return Prepared(
         assignment,
@@ -548,6 +550,8 @@ class BuildReport:
 
     assignment: str
     ok: bool = False
+    #: Which document of the assignment this is: solution, problem, answer.
+    variant: str = "document"
     driver: str | None = None
     pdf: Path | None = None
     log: Path | None = None
@@ -567,6 +571,7 @@ class BuildReport:
         return {
             "assignment": self.assignment,
             "ok": self.ok,
+            "variant": self.variant,
             "driver": self.driver,
             "pdf": str(self.pdf) if self.pdf else None,
             "log": str(self.log) if self.log else None,
@@ -755,23 +760,33 @@ def build_assignment(
     *,
     lines: list[str] | None = None,
     compare: bool = True,
+    variant: str = "document",
+    driver: str | None = None,
 ) -> BuildReport:
-    """Convert and build one assignment, reporting on the result."""
-    report = BuildReport(assignment=assignment.path, driver=assignment.driver)
-    if assignment.driver is None:
+    """Convert and build ONE variant of one assignment.
+
+    An assignment is several documents built from one body -- solutions, the
+    blank handout students receive, sometimes answers-only -- so the caller says
+    which. :func:`build_run` expands the selection; this builds one.
+    """
+    driver = driver or assignment.driver
+    report = BuildReport(assignment=assignment.path, variant=variant, driver=driver)
+    if driver is None:
         report.note = "no driver file; nothing to build"
         return report
 
     lines = preamble_for(config, profile) if lines is None else lines
     report.injected = list(lines)
 
-    prepared = materialise(assignment, config, profile, lines=lines)
+    prepared = materialise(assignment, config, profile, lines=lines, driver=driver)
     if not config.write:
         report.ok = True
         report.note = "dry run: nothing written"
         return report
 
     slug = assignment.path.replace("/", "-")
+    if variant and variant != "document":
+        slug = f"{slug}-{variant}"
     pdf_dir = config.output.pdf_dir()
 
     # The untouched original first and immediately before the converted build:
@@ -782,7 +797,7 @@ def build_assignment(
         root = profile.corpus.root.resolve()
         try:
             original_pdf = compile_document(
-                (root / assignment.path / assignment.driver),
+                (root / assignment.path / driver),
                 work_dir=root / assignment.path,
                 output_dir=config.output.baseline_dir(),
                 profile=profile,
@@ -905,18 +920,53 @@ def build_run(
 
     reports: list[BuildReport] = []
     for assignment in iter_selected(profile, config):
-        if on_start:
-            on_start(assignment)
-        try:
-            report = build_assignment(assignment, config, profile, lines=lines)
-        except LatexA11yError as exc:
-            report = BuildReport(
-                assignment=assignment.path,
-                driver=assignment.driver,
-                note=str(exc),
-                injected=list(lines),
+        # Every variant the assignment has, unless the run named a subset. The
+        # blank handout is the document students are actually given; converting
+        # only the solutions would leave the one that matters most untagged.
+        variants = assignment.variants_for(config.variants)
+        if not variants:
+            # Two different situations, and conflating them is misleading: a
+            # directory with no document at all, versus one that simply has no
+            # copy of the version this run asked for.
+            if assignment.drivers:
+                note = (
+                    "has no "
+                    + " or ".join(config.variants)
+                    + " version; it has "
+                    + ", ".join(sorted(assignment.drivers))
+                )
+            else:
+                note = "no driver file; nothing to build"
+            reports.append(
+                BuildReport(
+                    assignment=assignment.path,
+                    driver=None,
+                    note=note,
+                    injected=list(lines),
+                )
             )
-        reports.append(report)
-        if on_finish:
-            on_finish(report)
+            continue
+        for variant, driver in variants.items():
+            if on_start:
+                on_start(assignment, variant)
+            try:
+                report = build_assignment(
+                    assignment,
+                    config,
+                    profile,
+                    lines=lines,
+                    variant=variant,
+                    driver=driver,
+                )
+            except LatexA11yError as exc:
+                report = BuildReport(
+                    assignment=assignment.path,
+                    variant=variant,
+                    driver=driver,
+                    note=str(exc),
+                    injected=list(lines),
+                )
+            reports.append(report)
+            if on_finish:
+                on_finish(report)
     return reports

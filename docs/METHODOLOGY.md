@@ -511,3 +511,36 @@ builds, one with tagging alone and latexa11y entirely absent, one with the full
 retrofit and question H2 tags off. Both produced the **identical** two errors, so
 neither this package nor the newly-flipped default is responsible. Measured
 across the live corpus: 12 occurrences in 8 files.
+
+### 9.9 An assignment is not one document
+
+The runner built one file per assignment, chosen by preferring `sol<N>.tex`.
+That is half the job at best. An EECS 16A assignment is several documents built
+from **one body**, differing only in how `\sol` is defined:
+
+| File | What it is |
+|---|---|
+| `sol9.tex` | `\newcommand{\sol}[1]{{\color{blue}\textbf{Solution: } #1}}` |
+| `prob9.tex` | `\newcommand{\sol}[1]{}` -- the blank version students receive |
+| `dis09A.tex` | the discussion handout, same idea |
+| `ans09A.tex` | answers only |
+
+Converting the solutions alone leaves the document students are actually given
+untagged -- the exact opposite of the priority. Every variant is now built by
+default, each with its own job name, baseline and fidelity number:
+
+```
+sp26/hw/9     solution   13pp  48 bookmarks  2.34%
+sp26/hw/9     problem     8pp  48 bookmarks  2.38%
+sp26/dis/09A  solution    5pp  21 bookmarks  1.44%
+sp26/dis/09A  problem     3pp  21 bookmarks  1.93%
+sp26/dis/09A  answer      4pp  21 bookmarks  1.70%
+```
+
+The page counts are the evidence that these are genuinely different documents
+and that building one was never sufficient.
+
+Which prefix means which document is declared in the profile (`corpus.variants`),
+so a course spelling them `key`/`blank` changes one line of YAML rather than any
+Python. A directory whose driver matches no prefix is still built, under the name
+`document`, rather than being skipped for failing to follow a convention.

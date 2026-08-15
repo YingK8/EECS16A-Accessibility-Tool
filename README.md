@@ -61,10 +61,17 @@ a11y-out/
 and reports, per assignment, how far the page moved:
 
 ```
-assignment      pages  bookmarks  figures  errors  warnings  pixel diff
-sp26/hw/9          13         48        0       0         0       2.34%
-sp26/dis/09A        5         21        0       0         0       1.44%
+assignment    variant    pages  bookmarks  figures  errors  warnings  pixel diff
+sp26/hw/9     solution      13         48        0       0         0       2.34%
+sp26/hw/9     problem        8         48        0       0         0       2.38%
+sp26/dis/09A  solution       5         21        0       0         0       1.44%
+sp26/dis/09A  problem        3         21        0       0         0       1.93%
+sp26/dis/09A  answer         4         21        0       0         0       1.70%
 ```
+
+Every version of each assignment is converted, not just the solutions. `sol9.tex`
+and `prob9.tex` share one body and differ only in whether `\sol` prints, and the
+blank one is what students actually receive.
 
 `pixel diff` is a *difference*, not a score: 2.34% means 97.66% of the page is
 pixel-identical to the original, and the residue is tagging's own repagination.

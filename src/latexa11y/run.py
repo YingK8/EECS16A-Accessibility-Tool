@@ -43,6 +43,9 @@ __all__ = [
     "Assignment",
     "discover_assignments",
     "find_driver",
+    "VARIANTS",
+    "VARIANT_LABELS",
+    "find_drivers",
     "normalise_hex",
 ]
 
@@ -448,6 +451,10 @@ class RunConfig:
     colors: ColorChoice = field(default_factory=ColorChoice)
     alt: AltChoice = field(default_factory=AltChoice)
     output: Output = field(default_factory=Output)
+    #: Which variants to build. Empty means every variant each assignment has,
+    #: which is the honest default: a course ships both the solutions and the
+    #: blank handout, and it is the blank one students actually receive.
+    variants: tuple[str, ...] = ()
     #: False is a dry run: nothing is written anywhere. The default, deliberately.
     write: bool = False
 
@@ -462,6 +469,7 @@ class RunConfig:
             "colors": self.colors.as_dict(),
             "alt": self.alt.as_dict(),
             "output": self.output.as_dict(),
+            "variants": list(self.variants),
         }
 
     @classmethod
@@ -476,6 +484,7 @@ class RunConfig:
             colors=ColorChoice.from_dict(data.get("colors")),
             alt=AltChoice.from_dict(data.get("alt")),
             output=Output.from_dict(data.get("output")),
+            variants=tuple(str(item) for item in (data.get("variants") or ())),
         )
 
     def to_yaml(self) -> str:
@@ -523,6 +532,8 @@ class Assignment:
     #: Driver file name within that directory, e.g. ``sol9.tex``.
     driver: str | None
     tex_files: int = 0
+    #: Every buildable variant, ``{"solution": "sol9.tex", "problem": "prob9.tex"}``.
+    drivers: dict[str, str] = field(default_factory=dict)
 
     @property
     def buildable(self) -> bool:
@@ -532,38 +543,97 @@ class Assignment:
     def name(self) -> str:
         return self.path.rsplit("/", 1)[-1]
 
+    def variants_for(self, wanted: Iterable[str] | None = None) -> dict[str, str]:
+        """The variants to build, ``{variant: driver}``, in declared order.
+
+        An empty or absent selection means *everything this assignment has* --
+        the honest default, since a course ships both files and a student only
+        ever sees the blank one.
+        """
+        available = self.drivers or ({"document": self.driver} if self.driver else {})
+        wanted = tuple(wanted or ())
+        if not wanted:
+            return dict(available)
+        chosen = {name: available[name] for name in wanted if name in available}
+        # Never build nothing because a filter matched nothing: an assignment
+        # with only an unconventional driver still has to convert.
+        return chosen or (
+            {"document": available["document"]} if "document" in available else {}
+        )
+
     def as_dict(self) -> dict:
         return {
             "path": self.path,
             "kind": self.kind,
             "driver": self.driver,
+            "drivers": dict(self.drivers),
             "tex_files": self.tex_files,
             "buildable": self.buildable,
         }
 
 
-def find_driver(directory: Path) -> str | None:
-    """The file to hand to pdflatex for this assignment, or ``None``.
+#: The variants of one assignment, in the order a person thinks about them.
+#: An EECS 16A assignment is not one document: `sol9.tex` and `prob9.tex` pull
+#: in the SAME body and differ only in how `\sol` is defined -- printed in blue,
+#: or swallowed. Discussions add `dis09A.tex` (student handout) and `ans09A.tex`
+#: (answers only). Converting just one of them leaves the other, which students
+#: actually receive, untagged.
+VARIANT_LABELS: tuple[tuple[str, str], ...] = (
+    ("solution", "with solutions"),
+    ("problem", "blank, as students receive it"),
+    ("answer", "answers only"),
+)
+VARIANTS: tuple[str, ...] = tuple(name for name, _ in VARIANT_LABELS)
 
-    A driver is the file that carries ``\\begin{document}``; the rest of an
-    assignment is ``\\input`` fragments (``body9.tex``) that do not compile on
-    their own. The naming convention is checked first because it is what the
-    corpus actually uses, and the content probe is the fallback for anything
-    that does not follow it.
+#: Filename prefix -> variant. Overridable per course via ``corpus.variants``.
+DEFAULT_VARIANT_PREFIXES: dict[str, str] = {
+    "sol": "solution",
+    "prob": "problem",
+    "dis": "problem",
+    "ans": "answer",
+}
+
+
+def find_drivers(
+    directory: Path, prefixes: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Every buildable variant in an assignment directory, ``{variant: file}``.
+
+    A driver is a file carrying ``\\begin{document}``; the rest of an assignment
+    is ``\\input`` fragments that do not compile alone. Variants are recognised
+    by the naming convention the corpus uses -- ``<prefix><name>.tex`` -- and
+    anything that opens a document without matching one is returned under
+    ``document`` so it is still built rather than silently skipped.
     """
+    prefixes = prefixes or DEFAULT_VARIANT_PREFIXES
     name = directory.name
-    for candidate in (f"sol{name}.tex", "sol.tex", f"{name}.tex", f"prob{name}.tex"):
-        if (directory / candidate).is_file():
-            return candidate
-    # Fallback: any .tex that really does open a document. Sorted so the choice
-    # is deterministic across machines rather than filesystem-order dependent.
-    for path in sorted(directory.glob("*.tex")):
-        try:
-            head = path.read_text(encoding="utf-8", errors="replace")[:20_000]
-        except OSError:  # pragma: no cover
-            continue
-        if "\\begin{document}" in head:
-            return path.name
+    found: dict[str, str] = {}
+
+    for prefix, variant in prefixes.items():
+        for candidate in (f"{prefix}{name}.tex", f"{prefix}.tex"):
+            if variant not in found and (directory / candidate).is_file():
+                found[variant] = candidate
+
+    if not found:
+        # No convention match: fall back to whatever really opens a document.
+        # Sorted, so the choice is deterministic rather than filesystem-ordered.
+        for path in sorted(directory.glob("*.tex")):
+            try:
+                head = path.read_text(encoding="utf-8", errors="replace")[:20_000]
+            except OSError:  # pragma: no cover
+                continue
+            if "\\begin{document}" in head:
+                found["document"] = path.name
+                break
+    return found
+
+
+def find_driver(directory: Path, prefixes: dict[str, str] | None = None) -> str | None:
+    """The single most representative driver: solutions if there is one."""
+    found = find_drivers(directory, prefixes)
+    for variant in (*VARIANTS, "document"):
+        if variant in found:
+            return found[variant]
     return None
 
 
@@ -607,15 +677,18 @@ def discover_assignments(
         parent = relative.parent.as_posix()
         counts[parent] = counts.get(parent, 0) + 1
 
+    prefixes = profile.corpus.variants or DEFAULT_VARIANT_PREFIXES
     found: list[Assignment] = []
     for relative, count in sorted(counts.items()):
         directory = root / relative
+        drivers = find_drivers(directory, prefixes)
         found.append(
             Assignment(
                 path=relative,
                 kind=_kind_of(relative, kinds),
-                driver=find_driver(directory),
+                driver=next(iter(drivers.values()), None),
                 tex_files=count,
+                drivers=drivers,
             )
         )
     return found
@@ -637,6 +710,7 @@ def iter_selected(profile: Profile, config: RunConfig) -> Iterator[Assignment]:
     """
     root = profile.corpus.root.resolve()
     kinds = profile.corpus.kinds
+    prefixes = profile.corpus.variants or DEFAULT_VARIANT_PREFIXES
     for relative in config.assignments:
         directory = (root / relative).resolve()
         if not directory.is_dir():
@@ -644,9 +718,11 @@ def iter_selected(profile: Profile, config: RunConfig) -> Iterator[Assignment]:
                 f"no such assignment directory: {relative}",
                 hint=f"paths are relative to the corpus root {root}",
             )
+        drivers = find_drivers(directory, prefixes)
         yield Assignment(
             path=relative,
             kind=_kind_of(relative, kinds),
-            driver=find_driver(directory),
+            driver=next(iter(drivers.values()), None),
             tex_files=len(list(directory.glob("*.tex"))),
+            drivers=drivers,
         )

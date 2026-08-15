@@ -40,6 +40,8 @@ from ..run import (
     COLOR_MODES,
     STANDARD_TOGGLES,
     WRITE_MODES,
+    VARIANT_LABELS,
+    VARIANTS,
     Assignment,
     AltChoice,
     ColorChoice,
@@ -142,9 +144,10 @@ class Wizard:
         table.add_row("3", "Colours", config.colors.describe(self.profile))
         table.add_row("4", "Alt text", config.alt.describe())
         table.add_row("5", "Output", self._describe_output())
+        table.add_row("6", "Documents", self._describe_variants())
 
         footer = Text.from_markup(
-            "[dim]1-5[/] edit    [dim]p[/] preview the plan    "
+            "[dim]1-6[/] edit    [dim]p[/] preview the plan    "
             "[dim]r[/] run    [dim]s[/] save run.yaml    [dim]q[/] quit"
         )
         ready = selected > 0
@@ -166,6 +169,87 @@ class Wizard:
         shown = ", ".join(self.config.assignments[:3])
         more = f" +{count - 3} more" if count > 3 else ""
         return f"{count} assignment(s): {escape(shown)}{more}"
+
+    def _describe_variants(self) -> str:
+        chosen = self.config.variants
+        if not chosen:
+            return "every version each assignment has (solutions AND blank)"
+        labels = dict(VARIANT_LABELS)
+        return ", ".join(f"{name} ({labels.get(name, name)})" for name in chosen)
+
+    def edit_variants(self) -> None:
+        """Which documents of each assignment to build.
+
+        An assignment is not one document. `sol9.tex` and `prob9.tex` pull in
+        the same body and differ only in whether `\\sol` prints; discussions add
+        a student handout and an answers-only build. Converting solutions alone
+        leaves the file students actually receive untagged, so the default is
+        everything.
+        """
+        available = self._available_variants()
+        while True:
+            self.console.print()
+            table = Table(box=None, header_style="bold", padding=(0, 2))
+            table.add_column("#", style="cyan", width=3)
+            table.add_column("", width=2)
+            table.add_column("document", no_wrap=True)
+            table.add_column("", overflow="fold", style="dim")
+            table.add_column("in scope", justify="right")
+            for index, (name, note) in enumerate(VARIANT_LABELS, 1):
+                on = not self.config.variants or name in self.config.variants
+                count = available.get(name, 0)
+                table.add_row(
+                    str(index),
+                    "[green]✓[/]" if on else "[red]✗[/]",
+                    name,
+                    note,
+                    str(count) if count else "[dim]none[/]",
+                )
+            self.console.print(table)
+            self.console.print(
+                "[dim]A number toggles one. Everything selected is the same as "
+                "nothing selected: build every version each assignment has.[/]"
+            )
+            self.console.print("[dim]number toggles   a all   blank returns[/]")
+
+            answer = self.ask("documents> ").lower()
+            if not answer or answer in ("q", "quit", "exit"):
+                return
+            if answer == "a":
+                self.config.variants = ()
+                continue
+            try:
+                name = VARIANTS[int(answer) - 1]
+            except (ValueError, IndexError):
+                self.console.print("[red]not one of the listed documents[/]")
+                continue
+            current = set(self.config.variants or VARIANTS)
+            current.symmetric_difference_update({name})
+            if not current:
+                self.console.print(
+                    "[yellow]That would build nothing.[/] Leave at least one."
+                )
+                continue
+            ordered = tuple(item for item in VARIANTS if item in current)
+            self.config.variants = () if set(ordered) == set(VARIANTS) else ordered
+
+    def _available_variants(self) -> dict[str, int]:
+        """How many selected assignments actually have each variant.
+
+        Shown because the answer is course-specific and often surprising:
+        homeworks have solutions and a blank version, discussions add an
+        answers-only build, and a few assignments have only one file.
+        """
+        from ..run import iter_selected
+
+        counts: dict[str, int] = {}
+        try:
+            for assignment in iter_selected(self.profile, self.config):
+                for name in assignment.drivers:
+                    counts[name] = counts.get(name, 0) + 1
+        except LatexA11yError:
+            pass
+        return counts
 
     def _describe_output(self) -> str:
         output = self.config.output
@@ -197,6 +281,7 @@ class Wizard:
             "3": self.edit_colors,
             "4": self.edit_descriptions,
             "5": self.edit_output,
+            "6": self.edit_variants,
             "p": self.preview,
             "r": self.confirm_run,
             "s": self.save,
@@ -707,17 +792,27 @@ class Wizard:
 
         table = Table(box=None, header_style="bold")
         table.add_column("assignment")
+        table.add_column("document")
         table.add_column("driver")
         table.add_column(".tex used", justify="right")
         table.add_column("→ PDF", overflow="fold")
         for assignment in iter_selected(self.profile, self.config):
-            slug = assignment.path.replace("/", "-")
-            table.add_row(
-                assignment.path,
-                assignment.driver or "[red]none[/]",
-                str(len(source_files_for(assignment, self.profile))),
-                show_path(self.config.output.pdf_dir() / f"{slug}.pdf"),
-            )
+            used = str(len(source_files_for(assignment, self.profile)))
+            variants = assignment.variants_for(self.config.variants)
+            if not variants:
+                table.add_row(assignment.path, "[red]none[/]", "", used, "")
+                continue
+            for variant, driver in variants.items():
+                slug = assignment.path.replace("/", "-")
+                if variant != "document":
+                    slug = f"{slug}-{variant}"
+                table.add_row(
+                    assignment.path,
+                    variant,
+                    driver,
+                    used,
+                    show_path(self.config.output.pdf_dir() / f"{slug}.pdf"),
+                )
         self.console.print(table)
         self.console.print(
             "[dim]'.tex used' counts every file the driver reaches, including "
