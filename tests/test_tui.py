@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from latexa11y.config import CorpusScope, Profile
+from latexa11y.config import ColorPolicy, CorpusScope, Profile
 from latexa11y.run import RunConfig
 from latexa11y.tui import Wizard, _parse_selection, run_wizard
 
@@ -48,6 +48,12 @@ def profile(corpus: Path) -> Profile:
             include=("**/*.tex",),
             named={"sem": ("sem/**/*.tex",)},
             kinds={"hw": "homework", "dis": "discussion"},
+        ),
+        # A real palette, so the colour screen's table, swatches and contrast
+        # arithmetic are exercised rather than skipped.
+        colors=ColorPolicy(
+            replace={"solutionColor": "#0645AD", "redish": "#C00000"},
+            originals={"solutionColor": "#3399E6", "redish": "#FF0000"},
         ),
     )
 
@@ -128,23 +134,26 @@ def test_a_fragments_only_scope_explains_itself(profile: Profile, corpus: Path):
 
 
 def test_a_standard_can_be_toggled_off_and_on(profile: Profile):
-    assert RunConfig().standards.question_tags is False
+    assert RunConfig().standards.question_tags is True
     config, _, _ = drive(profile, ["2", "4", "", "q"])
-    assert config.standards.question_tags is True
-    config, _, _ = drive(profile, ["2", "4", "4", "", "q"])
     assert config.standards.question_tags is False
+    config, _, _ = drive(profile, ["2", "4", "4", "", "q"])
+    assert config.standards.question_tags is True
 
 
 def test_asking_why_explains_without_changing_anything(profile: Profile):
     """'?N' must be inspection, not a toggle with extra steps."""
     config, _, output = drive(profile, ["2", "?4", "", "q"])
-    assert config.standards.question_tags is False
-    assert "74 of 362" in output  # the measured reflow cost
+    assert config.standards.question_tags is True
+    assert "74 of 362" in output  # the count the old default was inferred from
+    assert "0.42%" in output      # and what it actually measured
 
 
 def test_the_summary_states_each_toggle_cost(profile: Profile):
-    _, _, output = drive(profile, ["2", "", "q"])
-    assert "reflows 1 question in 5" in output
+    """Including for toggles that are OFF -- that is when the cost matters."""
+    config, _, output = drive(profile, ["2", "4", "", "q"])
+    assert config.standards.question_tags is False, "fixture should have turned it off"
+    assert "0.00\u20130.79% (measured)" in output
     assert "none measurable" in output
 
 
@@ -183,24 +192,50 @@ def test_descriptions_can_be_switched_off(profile: Profile):
 # ---------------------------------------------------------------------- #
 
 
-def test_output_root_and_write_mode_can_be_set(profile: Profile, tmp_path: Path):
+def test_output_root_can_be_set(profile: Profile, tmp_path: Path):
     target = tmp_path / "elsewhere"
-    config, _, output = drive(profile, ["5", str(target), "2", "q"])
+    config, _, _ = drive(profile, ["5", "0", str(target), "q", "q"])
     assert config.output.root == target
+    # Everything hangs off the root unless separately overridden.
+    assert config.output.pdf_dir() == target / "pdf"
+    assert config.output.worklog_dir() == target / "descriptions"
+
+
+def test_each_artifact_path_can_be_moved_independently(profile: Profile, tmp_path: Path):
+    """Staff asked for the alt-text log somewhere they share; PDFs elsewhere."""
+    shared = tmp_path / "shared" / "alt"
+    config, _, _ = drive(profile, ["5", "4", str(shared), "q", "q"])
+    assert config.output.worklog_dir() == shared
+    assert config.output.pdf_dir() == Path("a11y-out") / "pdf"
+
+
+def test_a_relative_artifact_path_hangs_off_the_root(profile: Profile):
+    config, _, _ = drive(profile, ["5", "1", "final", "q", "q"])
+    assert config.output.pdf_dir() == Path("a11y-out") / "final"
+
+
+def test_an_artifact_path_can_be_restored_to_its_default(profile: Profile):
+    config, _, _ = drive(profile, ["5", "1", "final", "1", "", "q", "q"])
+    assert config.output.paths == {}
+    assert config.output.pdf_dir() == Path("a11y-out") / "pdf"
+
+
+def test_write_mode_can_be_set(profile: Profile):
+    config, _, output = drive(profile, ["5", "w", "2", "q", "q"])
     assert config.output.in_place is True
     assert "clean git worktree" in output
 
 
 def test_blank_keeps_the_current_output_settings(profile: Profile):
-    config, _, _ = drive(profile, ["5", "", "", "q"])
+    config, _, _ = drive(profile, ["5", "", "q"])
     assert config.output.root == Path("a11y-out")
     assert config.output.write_mode == "mirror"
 
 
 def test_the_worklog_path_is_named_so_staff_can_find_it(profile: Profile):
-    _, _, output = drive(profile, ["5", "", "", "q"])
+    _, _, output = drive(profile, ["5", "q", "q"])
     assert "descriptions" in output
-    assert "fill these in" in output
+    assert "Alt-text log" in output
 
 
 # ---------------------------------------------------------------------- #
@@ -218,7 +253,7 @@ def test_declining_the_confirmation_leaves_it_a_dry_run(profile: Profile):
     config, should_run, output = drive(profile, ["1", "1", "a", "", "r", "n", "q"])
     assert should_run is False
     assert config.write is False
-    assert "nothing written" in output
+    assert "nothing was written" in output
 
 
 def test_confirming_arms_the_run(profile: Profile):
@@ -236,9 +271,9 @@ def test_running_with_nothing_selected_is_refused(profile: Profile):
 def test_in_place_confirmation_names_the_corpus_not_a_directory(profile: Profile):
     """The prompt must say what is about to be edited, in plain words."""
     _, _, output = drive(
-        profile, ["1", "1", "a", "", "5", "", "2", "r", "n", "q"]
+        profile, ["1", "1", "a", "", "5", "w", "2", "q", "r", "n", "q"]
     )
-    assert "COURSE SOURCES" in output
+    assert "EDIT YOUR COURSE SOURCES" in output
 
 
 def test_a_saved_config_replays_identically(profile: Profile, tmp_path: Path):

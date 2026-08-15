@@ -36,6 +36,7 @@ from ..config import Profile
 from ..errors import LatexA11yError
 from ..run import (
     ALT_MODES,
+    ARTIFACTS,
     COLOR_MODES,
     STANDARD_TOGGLES,
     WRITE_MODES,
@@ -46,6 +47,8 @@ from ..run import (
     RunConfig,
     discover_assignments,
     group_by_kind,
+    hex_to_rgb,
+    normalise_hex,
 )
 
 __all__ = ["Wizard", "run_wizard"]
@@ -122,7 +125,7 @@ class Wizard:
         table.add_row("1", "Scope", self._describe_scope())
         table.add_row("2", "Standards", marks)
         table.add_row("3", "Colours", config.colors.describe(self.profile))
-        table.add_row("4", "Descriptions", config.alt.describe())
+        table.add_row("4", "Alt text", config.alt.describe())
         table.add_row("5", "Output", self._describe_output())
 
         footer = Text.from_markup(
@@ -326,7 +329,7 @@ class Wizard:
         self.console.print("[dim]number toggles it, '?N' explains it, blank returns[/]")
 
         answer = self.ask("standards> ")
-        while answer:
+        while answer and answer not in ("q", "quit", "exit"):
             explain = answer.startswith("?")
             try:
                 toggle = STANDARD_TOGGLES[int(answer.lstrip("?")) - 1]
@@ -352,45 +355,169 @@ class Wizard:
     # 3. colours
     # ------------------------------------------------------------------ #
 
-    def edit_colors(self) -> None:
-        replacements = self.profile.colors.replace
-        self.console.print()
-        if replacements:
-            table = Table(box=None, header_style="bold")
-            table.add_column("course colour")
-            table.add_column("becomes")
-            for name, value in sorted(replacements.items()):
-                table.add_row(name, value)
-            self.console.print(table)
-            self.console.print(
-                f"[dim]Replacements come from the profile; the floor is "
-                f"{self.profile.colors.min_contrast_normal}:1 (WCAG 1.4.3 AA).[/]"
-            )
-        else:
-            self.console.print("[dim]this profile declares no colour replacements[/]")
+    def _swatch(self, value: str | None) -> str:
+        """A filled block in the colour itself, so the hex is not the only cue.
 
-        for index, mode in enumerate(COLOR_MODES, 1):
-            marker = "→" if mode == self.config.colors.mode else " "
-            note = (
-                "remap to conforming values"
-                if mode == "conforming"
-                else "keep the course originals, even where they fail contrast"
+        A hex code is unreadable as a colour to most people and to all of us in
+        a hurry. Rich paints the background, so the block shows the actual ink.
+        """
+        if not value:
+            return "  "
+        try:
+            return f"[on {normalise_hex(value)}]  [/]"
+        except LatexA11yError:
+            return "[dim]??[/]"
+
+    def _contrast(self, value: str | None) -> tuple[float | None, str]:
+        """(ratio, rendered) against the profile's assumed page background."""
+        if not value:
+            return None, ""
+        from ..check.contrast import contrast_ratio
+
+        try:
+            ratio = contrast_ratio(
+                hex_to_rgb(value), hex_to_rgb(self.profile.colors.background)
             )
-            self.console.print(f" {marker} [cyan]{index}[/] {mode:<12} {note}")
-        answer = self.ask("colours> ")
-        if not answer:
+        except (LatexA11yError, ValueError):
+            return None, "[dim]?[/]"
+        floor = self.profile.colors.min_contrast_normal
+        mark = "[green]✓[/]" if ratio >= floor else "[red]✗[/]"
+        return ratio, f"{ratio:5.2f}:1 {mark}"
+
+    def color_names(self) -> list[str]:
+        """Every colour this run touches, profile order then any additions."""
+        colors = self.profile.colors
+        names = list(colors.replace) + [
+            name for name in colors.originals if name not in colors.replace
+        ]
+        names += [name for name in self.config.colors.overrides if name not in names]
+        return names
+
+    def colors_table(self) -> Table:
+        colors = self.profile.colors
+        effective = self.config.colors.replacements(self.profile)
+
+        table = Table(box=None, header_style="bold", padding=(0, 1))
+        table.add_column("#", style="cyan", width=3)
+        table.add_column("colour", no_wrap=True)
+        table.add_column("course original", no_wrap=True)
+        table.add_column("", width=2)
+        table.add_column("contrast", justify="right")
+        table.add_column("→", width=1)
+        table.add_column("replacement", no_wrap=True)
+        table.add_column("", width=2)
+        table.add_column("contrast", justify="right")
+
+        for index, name in enumerate(self.color_names(), 1):
+            original = colors.originals.get(name)
+            new = effective.get(name)
+            customised = name in self.config.colors.overrides
+            table.add_row(
+                str(index),
+                name + (" [cyan]*[/]" if customised else ""),
+                original or "[dim]unknown[/]",
+                self._swatch(original),
+                self._contrast(original)[1],
+                "→" if new else "",
+                new or "[dim]kept[/]",
+                self._swatch(new),
+                self._contrast(new)[1],
+            )
+        return table
+
+    def edit_colors(self) -> None:
+        # The mode is offered even when the profile names no colours. It is not
+        # only a lookup table: `conforming` emits \accesssetup{conforming-colors},
+        # which remaps whatever the document itself defines. Returning early here
+        # would make the choice unreachable for any course that has not yet
+        # written its palette into a profile.
+        while True:
+            self.console.print()
+            for index, mode in enumerate(COLOR_MODES, 1):
+                marker = "[green]→[/]" if mode == self.config.colors.mode else " "
+                note = (
+                    "replace colours that fail contrast"
+                    if mode == "conforming"
+                    else "keep the course originals, contrast and all"
+                )
+                self.console.print(f" {marker} [cyan]{index}[/] {mode:<12} {note}")
+            if self.color_names():
+                self.console.print()
+                self.console.print(self.colors_table())
+                self.console.print(
+                    f"[dim]Floor is {self.profile.colors.min_contrast_normal}:1 on "
+                    f"{self.profile.colors.background} (WCAG 1.4.3 AA). "
+                    "[/dim][cyan]*[/cyan][dim] marks a colour you set.[/dim]"
+                )
+                self.console.print(
+                    "[dim]1-2 mode   c<N> set colour N to a hex you type   "
+                    "r<N> reset N to the profile   blank returns[/]"
+                )
+            else:
+                self.console.print(
+                    "\n[dim]This profile names no colours, so there is nothing to "
+                    "preview. `conforming` still applies: it remaps whatever the "
+                    "document defines.[/]"
+                )
+
+            answer = self.ask("colours> ").lower()
+            if not answer or answer in ("q", "quit", "exit"):
+                return
+            if answer.lower().startswith(("c", "r")):
+                self._edit_one_color(answer)
+                continue
+            try:
+                mode = COLOR_MODES[int(answer) - 1]
+            except (ValueError, IndexError):
+                self.console.print("[red]not one of the listed options[/]")
+                continue
+            self.config.colors = ColorChoice(
+                mode=mode, overrides=self.config.colors.overrides
+            )
+            if mode == "house":
+                self.console.print(
+                    "[yellow]Note:[/] keeping the course palette can leave the "
+                    "output failing WCAG 1.4.3 even when everything else conforms."
+                )
+
+    def _edit_one_color(self, command: str) -> None:
+        action, _, digits = command[0].lower(), None, command[1:].strip()
+        names = self.color_names()
+        try:
+            name = names[int(digits) - 1]
+        except (ValueError, IndexError):
+            self.console.print(f"[red]no colour numbered {digits!r}[/]")
+            return
+
+        if action == "r":
+            self.config.colors.reset(name)
+            self.console.print(f"  {name}: back to the profile's value")
+            return
+
+        current = self.config.colors.replacements(self.profile).get(name, "")
+        value = self.ask(f"hex for {name} [{current or 'none'}]> ")
+        if not value:
             return
         try:
-            mode = COLOR_MODES[int(answer) - 1]
-        except (ValueError, IndexError):
-            self.console.print("[red]not one of the listed modes[/]")
+            normalised = normalise_hex(value)
+        except LatexA11yError as exc:
+            self.console.print(f"[red]{escape(str(exc))}[/]")
             return
-        self.config.colors = ColorChoice(mode=mode, overrides=self.config.colors.overrides)
-        if mode == "house":
+
+        ratio, rendered = self._contrast(normalised)
+        floor = self.profile.colors.min_contrast_normal
+        self.console.print(
+            f"  {name} → {normalised} {self._swatch(normalised)}  {rendered}"
+        )
+        if ratio is not None and ratio < floor:
+            # Accepted, but never silently: the whole point of the conforming
+            # mode is that its colours conform, and a chosen value that does not
+            # would otherwise look identical to one that does.
             self.console.print(
-                "[yellow]Note:[/] keeping the course palette can leave the output "
-                "failing WCAG 1.4.3 even when everything else conforms."
+                f"[yellow]  That is below the {floor}:1 floor.[/] It will be used "
+                "as given; `latexa11y check` will report it."
             )
+        self.config.colors.set(name, normalised)
 
     # ------------------------------------------------------------------ #
     # 4. descriptions
@@ -398,9 +525,9 @@ class Wizard:
 
     def edit_descriptions(self) -> None:
         notes = {
-            "worklog": "scan figures, write the Markdown worklog, touch no source",
-            "placeholders": "also mark each undescribed figure in the .tex",
-            "off": "do not scan figures at all",
+            "worklog": "find every figure and list it for someone to describe",
+            "placeholders": "also mark each one in the .tex, where an author sees it",
+            "off": "skip figures entirely",
         }
         self.console.print()
         for index, mode in enumerate(ALT_MODES, 1):
@@ -439,17 +566,78 @@ class Wizard:
     # 5. output
     # ------------------------------------------------------------------ #
 
+    def output_table(self) -> Table:
+        output = self.config.output
+        table = Table(box=None, header_style="bold", padding=(0, 1))
+        table.add_column("#", style="cyan", width=3)
+        table.add_column("artifact", no_wrap=True)
+        table.add_column("path", overflow="fold")
+        table.add_column("", overflow="fold", style="dim")
+
+        table.add_row("0", "[bold]Root[/]", str(output.root), "everything else hangs off this")
+        for index, (slug, label, note) in enumerate(ARTIFACTS, 1):
+            customised = slug in output.paths
+            table.add_row(
+                str(index),
+                label + (" [cyan]*[/]" if customised else ""),
+                str(output.path_for(slug)),
+                note,
+            )
+        return table
+
     def edit_output(self) -> None:
+        while True:
+            output = self.config.output
+            self.console.print()
+            self.console.print(self.output_table())
+            self.console.print(
+                f"\n  write mode: [bold]{output.write_mode}[/]  "
+                + (
+                    "[yellow](edits your course sources)[/]"
+                    if output.in_place
+                    else "[dim](corpus stays read-only)[/]"
+                )
+            )
+            self.console.print(
+                "[dim]0-5 change a path (blank restores the default; a relative "
+                "path hangs off the root)   w write mode   blank returns[/]"
+            )
+
+            answer = self.ask("output> ").lower()
+            if not answer or answer in ("q", "quit", "exit"):
+                return
+            if answer == "w":
+                self._edit_write_mode()
+                continue
+            try:
+                index = int(answer)
+            except ValueError:
+                self.console.print("[red]not one of the listed options[/]")
+                continue
+
+            if index == 0:
+                value = self.ask(f"root directory [{output.root}]> ")
+                if value:
+                    output.root = Path(value).expanduser()
+                continue
+            try:
+                slug, label, _ = ARTIFACTS[index - 1]
+            except IndexError:
+                self.console.print("[red]not one of the listed options[/]")
+                continue
+            value = self.ask(f"{label} [{output.path_for(slug)}]> ")
+            try:
+                output.set_path(slug, value or None)
+            except LatexA11yError as exc:
+                self.console.print(f"[red]{escape(str(exc))}[/]")
+                continue
+            self.console.print(f"  {label}: {output.path_for(slug)}")
+
+    def _edit_write_mode(self) -> None:
         output = self.config.output
         self.console.print()
-        self.console.print(f"Current root: [bold]{output.root}[/]")
-        self.console.print("  " + "\n  ".join(self._artifact_lines(output)))
-        root = self.ask(f"output directory [{output.root}]> ")
-        root_path = Path(root) if root else output.root
-
-        self.console.print()
         for index, mode in enumerate(WRITE_MODES, 1):
-            marker = "→" if mode == output.write_mode else " "
+            marker = "[green]→[/]" if mode == output.write_mode else " "
             note = (
                 "write converted .tex + PDFs to the output tree; corpus read-only"
                 if mode == "mirror"
@@ -457,34 +645,20 @@ class Wizard:
             )
             self.console.print(f" {marker} [cyan]{index}[/] {mode:<9} {note}")
         answer = self.ask(f"write mode [{output.write_mode}]> ")
-        mode = output.write_mode
-        if answer:
-            try:
-                mode = WRITE_MODES[int(answer) - 1]
-            except (ValueError, IndexError):
-                self.console.print("[red]not one of the listed modes[/]")
-                return
+        if not answer:
+            return
+        try:
+            mode = WRITE_MODES[int(answer) - 1]
+        except (ValueError, IndexError):
+            self.console.print("[red]not one of the listed modes[/]")
+            return
         if mode == "in-place":
             self.console.print(
                 "[yellow]In-place edits your course sources.[/] The run will refuse "
                 "unless the corpus git worktree is clean, so the change stays "
                 "reviewable and revertible."
             )
-        self.config.output = Output(
-            root=root_path,
-            write_mode=mode,
-            keep_pdf=output.keep_pdf,
-            keep_logs=output.keep_logs,
-            keep_tex=output.keep_tex,
-        )
-
-    def _artifact_lines(self, output: Output) -> list[str]:
-        return [
-            f"PDFs         {output.pdf_dir()}",
-            f"build logs   {output.log_dir()}",
-            f"converted    {output.tex_dir()}",
-            f"descriptions {output.worklog_dir()}   [dim]← fill these in[/]",
-        ]
+        output.write_mode = mode
 
     # ------------------------------------------------------------------ #
     # preview, save, run
@@ -546,14 +720,24 @@ class Wizard:
             self.console.print("[yellow]nothing selected[/]")
             return
         self.preview()
-        target = (
-            "your COURSE SOURCES in place"
-            if self.config.output.in_place
-            else f"{self.config.output.root}"
-        )
-        reply = self.ask(f"write to {target}? [y/N]> ").lower()
+        count = len(self.config.assignments)
+        if self.config.output.in_place:
+            question = (
+                f"[yellow]Build {count} assignment(s) and EDIT YOUR COURSE SOURCES "
+                f"in place?[/]"
+            )
+        else:
+            question = (
+                f"Build {count} assignment(s) into {self.config.output.root}? "
+                f"[dim](your corpus is not modified)[/]"
+            )
+        self.console.print(f"\n{question}")
+        # Spelled out rather than "[y/N]": that convention silently treats Enter
+        # as no, and the first thing anyone does at an unfamiliar prompt is press
+        # Enter. Saying which key does what costs one line.
+        reply = self.ask("type [bold]y[/] to build, or Enter to cancel> ").lower()
         if reply not in ("y", "yes"):
-            self.console.print("[dim]dry run only; nothing written[/]")
+            self.console.print("[dim]cancelled — nothing was written[/]")
             return
         self.config = replace(self.config, write=True)
         self.should_run = True

@@ -747,7 +747,7 @@ def build_assignment(
             original_pdf = compile_document(
                 (root / assignment.path / assignment.driver),
                 work_dir=root / assignment.path,
-                output_dir=config.output.root / "baseline",
+                output_dir=config.output.baseline_dir(),
                 profile=profile,
                 jobname=f"{slug}-original",
             )

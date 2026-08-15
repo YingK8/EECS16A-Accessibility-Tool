@@ -214,6 +214,9 @@ class ColorPolicy:
     min_contrast_large: float = 3.0
     #: Colour names to force-replace, e.g. because the course default fails AA.
     replace: dict[str, str] = field(default_factory=dict)
+    #: What the course currently defines, for display and for showing the
+    #: before/after contrast. Never used to decide anything.
+    originals: dict[str, str] = field(default_factory=dict)
     #: Colour names known to be applied to large text only.
     large_text_colors: tuple[str, ...] = ()
     #: Assumed page background when a colour is used without an explicit one.
@@ -377,6 +380,9 @@ def load_profile(
             min_contrast_normal=float(colors_data.get("min_contrast_normal", 4.5)),
             min_contrast_large=float(colors_data.get("min_contrast_large", 3.0)),
             replace={str(k): str(v) for k, v in (colors_data.get("replace") or {}).items()},
+            originals={
+                str(k): str(v) for k, v in (colors_data.get("originals") or {}).items()
+            },
             large_text_colors=_as_tuple(
                 colors_data.get("large_text_colors"), "colors.large_text_colors"
             ),

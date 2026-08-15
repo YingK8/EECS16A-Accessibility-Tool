@@ -430,3 +430,41 @@ a11y-out/
 `in-place` mode exists and refuses unless the corpus git worktree is clean, so
 the tool's edits are always reviewable on their own and revertible with
 `git checkout`.
+
+### 9.6 Question H2 tags: a default reversed by measurement
+
+They shipped **off**, on the reasoning in §8: a heading may not sit inside a
+paragraph, so a real H2 question title forces a `\par`, and 74 of 362 `\qns`
+calls are followed immediately by text rather than a blank line. A visual cost
+was inferred from that count. It was never rendered.
+
+Measured, off versus on, six assignments including all three in sp26 that
+exhibit the pattern:
+
+| Assignment | pages | H2 | pixel difference |
+|---|---|---|---|
+| sp26/hw/9 | 13 / 13 | 6 | 0.00% |
+| sp26/hw/1 | 11 / 11 | 7 | 0.00% |
+| sp26/hw/2 | 16 / 16 | 8 | 0.00% |
+| sp26/dis/09A | 5 / 5 | 2 | 0.00% |
+| sp26/hw/13 | 21 / 21 | 7 | 0.42% |
+| sp26/dis/11A | 6 / 6 | 2 | 0.79% |
+
+Page counts identical throughout, and a worst case of 0.79% against tagging's
+own 2.6%. The `\par` collapses into the list item's existing `\parskip`
+instead of adding to it, so the reflow the count predicted does not occur.
+
+What it buys is not cosmetic, and is the reason the reversal matters rather than
+being a wash. A screen reader's heading key (`H` in NVDA and JAWS, the rotor in
+VoiceOver) walks the **structure tree**. The bookmark outline is a separate
+object graph and does not answer it. With the toggle off a reader got an H1 and
+then nothing until the body text, on a document whose visual design is entirely
+"here is question 3" — which is also a WCAG 1.3.1 problem, since structure
+conveyed visually was not conveyed programmatically.
+
+**The general lesson, and the second time this exact mistake appears in this
+document:** a count of source patterns is not a measurement of rendered output.
+§8 recorded the same error in the opposite direction — claiming the `\par` was
+free because "every question is followed by a blank line", which was also never
+checked. Both were settled in minutes by building the documents and comparing
+pixels. Infer nothing about a page that can be rendered.

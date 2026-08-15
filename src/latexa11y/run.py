@@ -22,6 +22,7 @@ only the author ever reads.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -42,11 +43,48 @@ __all__ = [
     "Assignment",
     "discover_assignments",
     "find_driver",
+    "normalise_hex",
 ]
 
 WRITE_MODES = ("mirror", "in-place")
 COLOR_MODES = ("conforming", "house")
 ALT_MODES = ("worklog", "placeholders", "off")
+
+#: The artifacts a run produces, each separately relocatable. Named once here so
+#: the model, the TUI and the docs cannot disagree about what a run writes.
+ARTIFACTS: tuple[tuple[str, str, str], ...] = (
+    ("pdf", "PDFs", "the converted documents"),
+    ("logs", "Build logs", "LaTeX output, kept for diagnosis"),
+    ("tex", "Converted sources", "the .tex the PDFs were built from"),
+    ("descriptions", "Alt-text log", "the Markdown worklogs staff fill in"),
+    ("baseline", "Originals", "untouched builds, for the before/after comparison"),
+)
+
+_HEX = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def normalise_hex(value: str) -> str:
+    """``0645ad`` / ``#0645AD`` / ``#06a`` -> ``#0645AD``.
+
+    Raises on anything else rather than guessing: a colour silently read as
+    black would be a contrast "pass" nobody asked for.
+    """
+    match = _HEX.match(value.strip())
+    if not match:
+        raise ConfigError(
+            f"{value!r} is not a hex colour",
+            hint="write it as #RRGGBB, for example #0645AD",
+        )
+    digits = match.group(1)
+    if len(digits) == 3:
+        digits = "".join(character * 2 for character in digits)
+    return "#" + digits.upper()
+
+
+def hex_to_rgb(value: str) -> tuple[float, float, float]:
+    """``#0645AD`` -> (0.02, 0.27, 0.68), the 0..1 scale WCAG luminance needs."""
+    digits = normalise_hex(value)[1:]
+    return tuple(int(digits[index : index + 2], 16) / 255 for index in (0, 2, 4))
 
 
 # ---------------------------------------------------------------------- #
@@ -103,13 +141,21 @@ STANDARD_TOGGLES: tuple[Toggle, ...] = (
     Toggle(
         "question_tags",
         "Question headings as real H2 tags",
-        False,
-        "reflows 1 question in 5",
-        "A heading tag may not sit inside a paragraph, so this forces a \\par "
-        "after each question title. Measured: 74 of 362 \\qns calls in the live "
-        "question bank (20%) are followed immediately by text. Off by default, "
-        "which keeps the page identical and still puts every question in the "
-        "bookmark tree.",
+        True,
+        "0.00–0.79% (measured)",
+        "Makes each question title a real H2 structure element, so a screen "
+        "reader can jump between questions with its heading key. Bookmarks do "
+        "NOT provide that -- the outline is a separate object graph from the "
+        "structure tree -- so without this a reader has an H1 and then nothing "
+        "until the body text.\n\n"
+        "This was off by default until it was measured. A heading may not sit "
+        "inside a paragraph, so it forces a \\par after the title, and 74 of "
+        "362 \\qns calls are followed immediately by text rather than a blank "
+        "line -- from which a visual cost was inferred. Measured across six "
+        "assignments, including all three in sp26 that exhibit the pattern: "
+        "0.00%, 0.00%, 0.00%, 0.00%, 0.42%, 0.79%, with page counts identical "
+        "throughout. The \\par collapses into the list item's existing "
+        "\\parskip rather than adding to it.",
     ),
     Toggle(
         "unicode_map",
@@ -131,7 +177,7 @@ class Standards:
     tagging: bool = True
     retrofit: bool = True
     bookmarks: bool = True
-    question_tags: bool = False
+    question_tags: bool = True
     unicode_map: bool = True
 
     @classmethod
@@ -196,11 +242,19 @@ class ColorChoice:
             return {}
         return {**profile.colors.replace, **self.overrides}
 
+    def set(self, name: str, value: str) -> None:
+        """Override one colour. ``value`` is normalised to ``#RRGGBB``."""
+        self.overrides[name] = normalise_hex(value)
+
+    def reset(self, name: str) -> None:
+        self.overrides.pop(name, None)
+
     def describe(self, profile: Profile) -> str:
         if self.mode == "house":
             return "course originals kept (may fail WCAG 1.4.3)"
         count = len(self.replacements(profile))
-        return f"conforming palette ({count} remapped)"
+        custom = f", {len(self.overrides)} customised" if self.overrides else ""
+        return f"conforming palette ({count} remapped{custom})"
 
     def as_dict(self) -> dict:
         return {"mode": self.mode, "overrides": dict(self.overrides)}
@@ -252,10 +306,12 @@ class AltChoice:
 
     def describe(self) -> str:
         if self.mode == "off":
-            return "not scanned"
+            return "figures not scanned — no alt text will be written"
         if self.mode == "worklog":
-            return "worklog only, no source edits"
-        return "placeholders injected" + ("" if self.strict else " (NOT strict — draft only)")
+            return "list figures needing alt text (your .tex files are not edited)"
+        return "list figures AND mark each one in the .tex" + (
+            "" if self.strict else "  [NOT strict — draft builds only]"
+        )
 
     def as_dict(self) -> dict:
         return {"mode": self.mode, "strict": self.strict}
@@ -283,9 +339,20 @@ class Output:
     keep_pdf: bool = True
     keep_logs: bool = True
     keep_tex: bool = True
+    #: Per-artifact path overrides, keyed by the slugs in :data:`ARTIFACTS`.
+    #: A relative value is taken relative to :attr:`root`; an absolute one wins
+    #: outright, so a worklog can live in a shared drive while the PDFs do not.
+    paths: dict[str, Path] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
+        self.paths = {key: Path(value) for key, value in self.paths.items()}
+        unknown = set(self.paths) - {slug for slug, _, _ in ARTIFACTS}
+        if unknown:
+            raise ConfigError(
+                f"unknown output path(s): {', '.join(sorted(unknown))}",
+                hint="known: " + ", ".join(slug for slug, _, _ in ARTIFACTS),
+            )
         if self.write_mode not in WRITE_MODES:
             raise ConfigError(
                 f"unknown write mode {self.write_mode!r}",
@@ -296,18 +363,37 @@ class Output:
     def in_place(self) -> bool:
         return self.write_mode == "in-place"
 
-    #: Sub-directories, named once so the TUI, the docs and the engine agree.
+    def path_for(self, slug: str) -> Path:
+        """Where one artifact goes. Overrides win; otherwise ``root/<slug>``."""
+        override = self.paths.get(slug)
+        if override is None:
+            return self.root / slug
+        return override if override.is_absolute() else self.root / override
+
+    def set_path(self, slug: str, value: str | Path | None) -> None:
+        """Relocate one artifact. ``None`` or empty restores the default."""
+        if slug not in {name for name, _, _ in ARTIFACTS}:
+            raise ConfigError(f"unknown output path {slug!r}")
+        if value is None or str(value).strip() == "":
+            self.paths.pop(slug, None)
+        else:
+            self.paths[slug] = Path(str(value).strip()).expanduser()
+
+    #: Named accessors, so the engine never spells a slug itself.
     def pdf_dir(self) -> Path:
-        return self.root / "pdf"
+        return self.path_for("pdf")
 
     def log_dir(self) -> Path:
-        return self.root / "logs"
+        return self.path_for("logs")
 
     def tex_dir(self) -> Path:
-        return self.root / "tex"
+        return self.path_for("tex")
 
     def worklog_dir(self) -> Path:
-        return self.root / "descriptions"
+        return self.path_for("descriptions")
+
+    def baseline_dir(self) -> Path:
+        return self.path_for("baseline")
 
     def as_dict(self) -> dict:
         return {
@@ -316,6 +402,7 @@ class Output:
             "keep_pdf": self.keep_pdf,
             "keep_logs": self.keep_logs,
             "keep_tex": self.keep_tex,
+            "paths": {key: str(value) for key, value in sorted(self.paths.items())},
         }
 
     @classmethod
@@ -327,6 +414,10 @@ class Output:
             keep_pdf=bool(data.get("keep_pdf", True)),
             keep_logs=bool(data.get("keep_logs", True)),
             keep_tex=bool(data.get("keep_tex", True)),
+            paths={
+                str(key): Path(str(value))
+                for key, value in (data.get("paths") or {}).items()
+            },
         )
 
 

@@ -80,7 +80,7 @@ headings:
     ans: "Answer"
 
 figures:
-  alt_max_chars: 200
+  description_max_chars: 200
   max_inline_data_points: 12
   max_series: 2
   max_graph_edges: 6
@@ -103,16 +103,28 @@ colors:
   min_contrast_normal: 4.5
   min_contrast_large: 3.0
   background: "#FFFFFF"
+  # What the course actually defines, so the runner can show you what it is
+  # about to change and compute both contrast ratios. Display only -- nothing is
+  # decided from these; `replace` below is what takes effect.
+  originals:
+    solutionColor: "#3399E6"   # rgb(0.2,0.6,0.9)  -> 3.07:1, fails
+    solansColor:   "#3399E6"
+    answerColor:   "#3399E6"
+    redish:        "#FF0000"   # 4.00:1, fails 4.5:1 by a hair
+    blueish:       "#B31AB3"   # rgb(0.7,0.1,0.7)  -> 5.65:1, passes
+
   # Course defaults that fail WCAG AA on white, with conforming replacements.
   replace:
-    #  rgb(0.2,0.6,0.9)  = #3399E6, ~2.6:1  -> fails
+    #  rgb(0.2,0.6,0.9) = #3399E6, 3.07:1 -> fails the 4.5:1 floor
     solutionColor: "#0645AD"
     solansColor: "#0645AD"
     answerColor: "#0645AD"
-    #  pure red = #FF0000, 4.0:1 -> fails. The previous tool's "contrast fix"
-    #  set this to `red`, which is the failing value.
+    #  pure red = #FF0000, 4.00:1 -> just fails. The previous tool's "contrast
+    #  fix" set this to `red`, which IS the failing value.
     redish: "#C00000"
-    #  rgb(0.7,0.1,0.7) = #B31AB3, borderline; pin it to a conforming purple.
+    #  rgb(0.7,0.1,0.7) = #B31AB3 already passes at 5.65:1. Replaced anyway,
+    #  for margin and for one consistent accent across the corpus -- not
+    #  because it fails. Drop this line to keep the original.
     blueish: "#6A1B9A"
 
 engine:

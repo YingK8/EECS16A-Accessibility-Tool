@@ -100,8 +100,26 @@ def test_defaults_emit_metadata_retrofit_and_palette(profile):
     assert "testphase=" in lines[0]
     assert "\\usepackage{latexa11y-ee16}" in lines
     assert "\\accesssetup{conforming-colors}" in lines
-    # Off by default: it reflows one question in five.
-    assert not any("accessquestiontags" in line for line in lines)
+    assert "\\accessquestiontags" in lines
+
+
+def test_question_tags_are_on_by_default():
+    """They were off, on an inferred cost that measurement did not support.
+
+    A heading may not sit inside a paragraph, so real H2 question titles force a
+    \\par, and 74 of 362 \\qns calls are followed immediately by text rather
+    than a blank line. A visual cost was inferred from that count and never
+    rendered. Measured across six assignments -- including all three in sp26
+    that exhibit the pattern -- the difference is 0.00%, 0.00%, 0.00%, 0.00%,
+    0.42%, 0.79%, with page counts identical throughout: the \\par collapses
+    into the list item's existing \\parskip instead of adding to it.
+
+    What it buys is not cosmetic. A screen reader's heading key walks the
+    structure tree; the bookmark outline is a separate object graph and does not
+    answer it. Without this a reader gets an H1 and then nothing.
+    """
+    assert Standards.defaults().question_tags is True
+    assert RunConfig().standards.question_tags is True
 
 
 def test_modern_toolchain_declares_conformance(profile):
@@ -173,7 +191,15 @@ def test_draft_mode_downgrades_placeholder_errors(profile):
 
 
 def test_tagging_off_emits_no_metadata(profile):
-    config = RunConfig(standards=Standards(tagging=False, retrofit=False, bookmarks=False))
+    config = RunConfig(
+        standards=Standards(
+            tagging=False,
+            retrofit=False,
+            bookmarks=False,
+            question_tags=False,
+            unicode_map=False,
+        )
+    )
     lines = preamble_for(config, profile, TaggingMode.UNAVAILABLE)
     assert not any(line.startswith("\\DocumentMetadata") for line in lines)
 
