@@ -166,8 +166,21 @@ see `tests/test_latex_golden.py::test_described_has_no_nested_readable_element`.
 
 ## Status
 
-Working and verified end to end: toolchain gate, template layer, legacy shim,
-figure scanning, deterministic describers, worklogs, apply, checker, agent API.
+Working and verified end to end against the real corpus: toolchain gate, the
+interactive runner and its `build` equivalent, the conversion engine, template
+layer, legacy shim, figure scanning across the include graph, deterministic
+describers, worklogs, apply, checker, agent API.
 
-Not yet implemented: the math-to-speech pipeline, the Textual TUI, the veraPDF
-gate, and the parallel build harness. See `docs/METHODOLOGY.md` § Next phase.
+Not yet implemented: the **math-to-speech pipeline**
+(`src/latexa11y/mathspeech/` is an empty package), the **veraPDF gate** (not
+installed; `doctor` warns), and a **parallel build harness**. See
+`docs/METHODOLOGY.md` § Next phase.
+
+Three constructs in the live corpus fail under LaTeX's own tagging, with
+latexa11y absent — `check` locates all three without rebuilding:
+
+| Rule | Construct | In the live corpus |
+|---|---|---|
+| `A11Y-SRC-040` | enumitem options on a tagged list | 238 in 86 files |
+| `A11Y-SRC-041` | `array`/`tabular` inside a matrix | 14 in 3 files |
+| `A11Y-SRC-042` | line break immediately after display math | 12 in 8 files |
