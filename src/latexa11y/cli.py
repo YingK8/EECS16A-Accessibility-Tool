@@ -563,13 +563,37 @@ def build(
                 )
                 for path in descriptions.get("worklogs", [])[:5]:
                     console.print(f"  [dim]{escape(path)}[/dim]")
-            for report in failures:
-                console.print(f"\n[red]{report.assignment} failed[/red]")
-                if report.note:
-                    console.print(f"  {escape(report.note)}")
-                for line in report.errors[:5]:
-                    console.print(f"  [red]{escape(line)}[/red]")
+            _print_failures(console, failures)
     sys.exit(EXIT_FINDINGS if failures else EXIT_OK)
+
+
+def _print_failures(console: Console, failures: list) -> None:
+    """Say what went wrong, and where to look next.
+
+    Shared by `build` and `run`: the interactive path used to show a ✗ in the
+    table and nothing else, which tells a user that something failed and gives
+    them no way to find out what.
+    """
+    for report in failures:
+        console.print(f"\n[red]{escape(report.assignment)} failed[/red]")
+        if report.note:
+            console.print(f"  {escape(report.note)}")
+        for line in report.errors[:5]:
+            console.print(f"  [red]{escape(line)}[/red]")
+        if len(report.errors) > 5:
+            console.print(f"  [dim]…{len(report.errors) - 5} more[/dim]")
+        if report.log:
+            from .tui import show_path
+
+            console.print(f"  [dim]full log: {escape(show_path(report.log))}[/dim]")
+    if failures:
+        # Most build failures in this corpus are constructs LaTeX's own tagging
+        # cannot handle, and `check` names the file and line in milliseconds
+        # rather than after another three-minute compile.
+        console.print(
+            "\n[dim]`latexa11y check <scope>` locates constructs that tagging "
+            "cannot compile, without rebuilding.[/dim]"
+        )
 
 
 @main.command("run")
@@ -607,14 +631,17 @@ def run_command(ctx: Context, config_path: Path | None, output: Path | None) -> 
         on_start=lambda item: wizard.console.print(f"[dim]building {item.path}…[/dim]"),
     )
     wizard.console.print(_report_table(reports))
-    if descriptions.get("scanned"):
+    if descriptions.get("scanned") and descriptions.get("outstanding"):
         wizard.console.print(
-            f"\n[bold]{descriptions['outstanding']}[/bold] figures still need a "
-            f"description. Fill them in:"
+            f"\n[bold]{descriptions['outstanding']}[/bold] figure(s) still need "
+            f"alt text. Fill them in:"
         )
         for path in descriptions.get("worklogs", [])[:8]:
             wizard.console.print(f"  {escape(path)}")
-    sys.exit(EXIT_FINDINGS if any(not r.ok for r in reports) else EXIT_OK)
+
+    failures = [report for report in reports if not report.ok]
+    _print_failures(wizard.console, failures)
+    sys.exit(EXIT_FINDINGS if failures else EXIT_OK)
 
 
 # ---------------------------------------------------------------------- #

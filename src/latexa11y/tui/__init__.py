@@ -58,6 +58,21 @@ __all__ = ["Wizard", "run_wizard"]
 Prompt = Callable[[str], str]
 
 
+def show_path(path: Path) -> str:
+    """A path as short as it can be without becoming ambiguous.
+
+    Paths are absolute internally, because a relative ``-output-directory``
+    resolves against the subprocess's directory rather than the user's. Printing
+    them raw puts a wrapped 80-character absolute path in every table, so
+    anything under the working directory is shown relative to it and everything
+    else is shown in full.
+    """
+    try:
+        return str(path.absolute().relative_to(Path.cwd()))
+    except ValueError:
+        return str(path)
+
+
 def _scripted(answers: Sequence[str]) -> Prompt:
     """A prompt that replays a fixed list, then answers 'q' forever.
 
@@ -583,7 +598,7 @@ class Wizard:
             table.add_row(
                 str(index),
                 label + (" [cyan]*[/]" if customised else ""),
-                escape(str(output.path_for(slug))),
+                escape(show_path(output.path_for(slug))),
                 note,
             )
         return table
@@ -628,13 +643,13 @@ class Wizard:
             except IndexError:
                 self.console.print("[red]not one of the listed options[/]")
                 continue
-            value = self.ask(f"{label} \\[{escape(str(output.path_for(slug)))}]> ")
+            value = self.ask(f"{label} \\[{escape(show_path(output.path_for(slug)))}]> ")
             try:
                 output.set_path(slug, value or None)
             except LatexA11yError as exc:
                 self.console.print(f"[red]{escape(str(exc))}[/]")
                 continue
-            self.console.print(f"  {label}: {escape(str(output.path_for(slug)))}")
+            self.console.print(f"  {label}: {escape(show_path(output.path_for(slug)))}")
 
     def _edit_write_mode(self) -> None:
         output = self.config.output
@@ -701,7 +716,7 @@ class Wizard:
                 assignment.path,
                 assignment.driver or "[red]none[/]",
                 str(len(source_files_for(assignment, self.profile))),
-                str(self.config.output.pdf_dir() / f"{slug}.pdf"),
+                show_path(self.config.output.pdf_dir() / f"{slug}.pdf"),
             )
         self.console.print(table)
         self.console.print(
@@ -714,9 +729,9 @@ class Wizard:
         path = path or (self.config.output.root / "run.yaml")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.config.to_yaml(), encoding="utf-8")
-        self.console.print(f"[green]saved[/] {escape(str(path))}")
+        self.console.print(f"[green]saved[/] {escape(show_path(path))}")
         self.console.print(
-            f"[dim]replay with:  latexa11y run --config {escape(str(path))}[/]"
+            f"[dim]replay with:  latexa11y run --config {escape(show_path(path))}[/]"
         )
         return path
 

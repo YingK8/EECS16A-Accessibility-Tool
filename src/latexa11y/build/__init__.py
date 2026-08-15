@@ -611,15 +611,43 @@ def _log_findings(log: Path | None) -> tuple[list[str], list[str]]:
     if log is None or not log.is_file():
         return [], []
     text = log.read_text(encoding="utf-8", errors="replace")
+    lines = text.splitlines()
     errors: list[str] = []
     warnings: list[str] = []
-    for line in text.splitlines():
+    for index, line in enumerate(lines):
         stripped = line.strip()
         if _LOG_ERROR.match(stripped) or stripped.startswith(_LOG_FATAL):
-            errors.append(stripped)
+            errors.append(_unwrap(lines, index))
         elif "tagpdf Warning" in line:
-            warnings.append(stripped)
+            warnings.append(_unwrap(lines, index))
     return errors, warnings
+
+
+#: TeX hard-wraps its log at `max_print_line` (79 by default) with no
+#: continuation marker, so a message is routinely cut mid-word: "LaTeX Error:
+#: There's n" / "o line here to end." Reporting the first fragment alone tells a
+#: user almost nothing, and the break lands in a different place every time.
+_WRAP_WIDTH = 79
+
+
+def _unwrap(lines: list[str], index: int, limit: int = 3) -> str:
+    """Rejoin a log message TeX split across lines.
+
+    Only continues while the previous line is full-width, which is what makes
+    this safe: a message shorter than the wrap width was never split, so nothing
+    unrelated is ever glued onto it.
+    """
+    message = lines[index].strip()
+    joined = message
+    cursor = index
+    while len(lines[cursor]) >= _WRAP_WIDTH and cursor + 1 < len(lines) and limit > 0:
+        cursor += 1
+        nxt = lines[cursor]
+        if not nxt.strip() or _LOG_ERROR.match(nxt.strip()):
+            break
+        joined += nxt.rstrip() if joined.endswith("-") else nxt.rstrip()
+        limit -= 1
+    return " ".join(joined.split())
 
 
 def inspect_pdf(pdf: Path) -> dict:
