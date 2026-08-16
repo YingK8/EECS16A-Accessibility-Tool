@@ -261,6 +261,7 @@ def materialise(
     lines: list[str] | None = None,
     write: bool | None = None,
     driver: str | None = None,
+    siblings_to_skip: frozenset[str] = frozenset(),
 ) -> Prepared:
     """Produce a buildable, converted copy of one assignment.
 
@@ -300,7 +301,13 @@ def materialise(
         target_dir.mkdir(parents=True, exist_ok=True)
         for path in sorted(source_dir.iterdir()):
             if path.is_file() and path.suffix.lower() in (".tex", ".sty", ".cls"):
-                if path.name != driver_name:
+                # Never copy the original over a driver this run converts. An
+                # assignment has several drivers built in turn, and copying
+                # siblings wholesale meant the `problem` pass laid the ORIGINAL
+                # sol9.tex over the converted one written moments earlier: the
+                # PDFs were right, the mirrored tree was not, and rebuilding
+                # from it produced an untagged document.
+                if path.name != driver_name and path.name not in siblings_to_skip:
                     shutil.copy2(path, target_dir / path.name)
         driver.write_bytes(source.encode(converted))
         # Everything the driver reaches by an explicit relative path, at the
@@ -762,6 +769,7 @@ def build_assignment(
     compare: bool = True,
     variant: str = "document",
     driver: str | None = None,
+    siblings_to_skip: frozenset[str] = frozenset(),
 ) -> BuildReport:
     """Convert and build ONE variant of one assignment.
 
@@ -778,7 +786,14 @@ def build_assignment(
     lines = preamble_for(config, profile) if lines is None else lines
     report.injected = list(lines)
 
-    prepared = materialise(assignment, config, profile, lines=lines, driver=driver)
+    prepared = materialise(
+        assignment,
+        config,
+        profile,
+        lines=lines,
+        driver=driver,
+        siblings_to_skip=siblings_to_skip,
+    )
     if not config.write:
         report.ok = True
         report.note = "dry run: nothing written"
@@ -946,6 +961,9 @@ def build_run(
                 )
             )
             continue
+        # Each of these is converted in its own pass, so none may be copied
+        # over as an original by another pass.
+        converted = frozenset(variants.values())
         for variant, driver in variants.items():
             if on_start:
                 on_start(assignment, variant)
@@ -957,6 +975,7 @@ def build_run(
                     lines=lines,
                     variant=variant,
                     driver=driver,
+                    siblings_to_skip=converted,
                 )
             except LatexA11yError as exc:
                 report = BuildReport(

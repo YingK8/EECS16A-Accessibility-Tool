@@ -382,3 +382,38 @@ def test_a_single_page_document_is_not_flagged():
         outline_targets = [(f"H{i}", 1, "/XYZ") for i in range(5)]
 
     assert _bookmark_navigation(Stub(), "x.pdf") == []
+
+
+def test_a_second_variant_does_not_clobber_the_first(
+    corpus: Path, profile: Profile, tmp_path: Path
+):
+    """Building `problem` must not lay the original over the converted `solution`.
+
+    The copy-siblings step took every .tex except the driver it was converting,
+    which on the second pass included the first pass's freshly converted driver.
+    The PDFs were correct -- each was compiled before being overwritten -- so
+    only the mirrored tree was wrong, and rebuilding from it produced an
+    untagged document.
+    """
+    directory = corpus / "sem" / "hw" / "3"
+    (directory / "prob3.tex").write_text(
+        "\\documentclass{article}\n\\input{body}\n"
+    )
+    assignment = Assignment(
+        path="sem/hw/3",
+        kind="homework",
+        driver="sol3.tex",
+        drivers={"solution": "sol3.tex", "problem": "prob3.tex"},
+    )
+    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    both = frozenset(assignment.drivers.values())
+    for driver in ("sol3.tex", "prob3.tex"):
+        materialise(
+            assignment, config, profile, lines=LINES,
+            driver=driver, siblings_to_skip=both,
+        )
+    mirror = config.output.tex_dir() / "sem" / "hw" / "3"
+    for driver in ("sol3.tex", "prob3.tex"):
+        assert (mirror / driver).read_text().startswith("\\DocumentMetadata{"), (
+            f"{driver} lost its conversion"
+        )

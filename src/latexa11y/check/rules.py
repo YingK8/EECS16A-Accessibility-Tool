@@ -253,12 +253,33 @@ def _check_contrast(source: TexSource, profile: Profile, name: str) -> list[Find
 # line that is perfectly valid LaTeX, in a shared question file the person
 # converting an assignment has probably never opened.
 
-#: enumitem's key-value options on a list that latex-lab is also tagging.
-#: Measured on sp26/hw/5: `\begin{enumerate}[label=(\roman*)]` produces one
-#: "Missing number, treated as zero" per \item, and no PDF.
-_ENUMITEM_KEYS = re.compile(
+#: enumitem's STARRED counter in a per-instance label, e.g. `\roman*`.
+#:
+#: Bisected rather than guessed. The trigger is not `label=` and not enumitem:
+#: it is the starred counter in an optional argument on the environment, and it
+#: breaks as soon as latex-lab's `math` module or `phase-III` is loaded. Both
+#: are essential here, and every other combination was tested:
+#:
+#:   phase-I / phase-II / tagpdf alone .............. renders (i) (ii), 0 errors
+#:   phase-II + table / graphic / firstaid .......... renders (i) (ii), 0 errors
+#:   phase-II + math ................................ renders ()  (),  2 errors
+#:   phase-III (any combination) .................... renders ()  (),  2 errors
+#:   \setlist[enumerate,1]{label=(\roman*)} ......... renders (i) (ii), 0 errors
+#:   \renewcommand{\labelenumi}{(\roman{enumi})} .... renders (i) (ii), 0 errors
+#:
+#: The last two are the fixes, and both are verified to render identically to the
+#: untagged original. Note the *rendering*: this is not only a build failure. The
+#: labels come out EMPTY -- `() first () second` -- so a document that ignored
+#: the errors would ship visibly wrong list numbering.
+_ENUMITEM_STARRED = re.compile(
     r"\\begin\s*\{(?:enumerate|itemize|description)\}\s*\[[^\]]*"
-    r"(?:label|ref|start|resume|itemsep|topsep|leftmargin)\s*="
+    r"\\(?:arabic|roman|Roman|alph|Alph|value)\s*\*"
+)
+
+#: `leftmargin=*` fails the same way (3 errors), and for the same reason.
+_ENUMITEM_STAR_MARGIN = re.compile(
+    r"\\begin\s*\{(?:enumerate|itemize|description)\}\s*\[[^\]]*"
+    r"(?:leftmargin|labelwidth|labelsep|widest)\s*=\s*\*"
 )
 
 #: A tabular-family environment nested inside a matrix environment. Measured on
@@ -302,25 +323,32 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 ),
             )
         )
-    for match in _ENUMITEM_KEYS.finditer(source.masked):
-        findings.append(
-            Finding(
-                rule="A11Y-SRC-040",
-                severity=Severity.ERROR,
-                message=(
-                    "enumitem options on a list that LaTeX will also tag; this "
-                    "currently fails the build with 'Missing number, treated as zero'"
-                ),
-                file=name,
-                line=source.line_of(match.start()),
-                standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
-                hint=(
-                    "redefine the label with \\renewcommand{\\labelenumi}{...} "
-                    "before the list instead of passing label= to enumitem, or "
-                    "exclude this file until latex-lab supports it"
-                ),
+    for pattern, detail in (
+        (_ENUMITEM_STARRED, "a starred counter such as \\roman* in the label"),
+        (_ENUMITEM_STAR_MARGIN, "a starred length such as leftmargin=*"),
+    ):
+        for match in pattern.finditer(source.masked):
+            findings.append(
+                Finding(
+                    rule="A11Y-SRC-040",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"enumitem list options use {detail}; under tagging this "
+                        "fails with 'Missing number, treated as zero' AND renders "
+                        "the labels empty"
+                    ),
+                    file=name,
+                    line=source.line_of(match.start()),
+                    standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
+                    hint=(
+                        "move the option to the preamble as "
+                        "\\setlist[enumerate,1]{label=(\\roman*)}, or drop enumitem "
+                        "for this list and use \\renewcommand{\\labelenumi}"
+                        "{(\\roman{enumi})} before it -- both verified to render "
+                        "identically to the untagged original"
+                    ),
+                )
             )
-        )
     for match in _ARRAY_IN_MATRIX.finditer(source.masked):
         findings.append(
             Finding(

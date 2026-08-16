@@ -600,3 +600,61 @@ different costume appears in §3.4: a `Described` region with a perfect `/Alt`, 
 clean log and a correct tag tree, still reading its contents aloud. Both were
 found only by asking what a user would experience -- what does the reader
 announce, where does this link go -- rather than what the file contains.
+
+### 9.11 The enumitem blocker, bisected
+
+`sp26/hw/3` fails on `questionBank/hw/4/q_orthonormal_basis_basics.tex:8`. The
+rule already flagged it, but the rule's explanation was wrong in two ways, and
+both mattered.
+
+**It is not a build failure only.** Rendering the same list three ways:
+
+| Build | Renders |
+|---|---|
+| untagged | `(i) first (ii) second` |
+| tagged | `() first () second` |
+| repaired + tagged | `(i) first (ii) second` |
+
+The labels come out **empty**. A document that ignored the errors would ship
+with its list numbering silently gone -- worse than the failure, because it
+looks like a build that worked.
+
+**It is not "enumitem options" and not phase-III.** Bisected:
+
+| Configuration | Result |
+|---|---|
+| `phase-I` / `phase-II` / `tagpdf` alone | `(i) (ii)`, 0 errors |
+| `phase-II` + `table` / `graphic` / `firstaid` | `(i) (ii)`, 0 errors |
+| **`phase-II` + `math`** | `()`, 2 errors |
+| **`phase-III`** (any combination) | `()`, 2 errors |
+| `itemsep=0pt`, `noitemsep`, `itemize label=--` | 0 errors |
+| `label=(\theenumi)` (unstarred) | 0 errors |
+| `\setlist[enumerate,1]{label=(\roman*)}` | 0 errors |
+| `\renewcommand{\labelenumi}{(\roman{enumi})}` | 0 errors |
+
+So the trigger is narrow: **a starred counter (`\roman*`, `\alph*`, `\arabic*`)
+in a per-instance optional argument**, once the `math` module or `phase-III` is
+loaded. `leftmargin=*` fails the same way. The same starred key in a preamble
+`\setlist` is fine, which is what shows the problem is the inline path rather
+than the key.
+
+Narrowing the rule to the starred forms took it from 238 occurrences in 86 files
+to **103 in 57** -- the other 135 were `itemsep`, `noitemsep` and friends, which
+compile perfectly and were being reported as blockers.
+
+Both fixes are verified to render identically to the untagged original, so the
+diagnostic now names them instead of saying "exclude this file". Dropping the
+`math` module is not among the options: this is a linear-algebra course.
+
+### 9.12 The second variant clobbered the first
+
+Found while investigating the above, and invisible from the PDFs. Materialising
+an assignment copies its sibling `.tex` files into the mirror; the copy skipped
+only the driver being converted. Building `problem` therefore laid the ORIGINAL
+`sol9.tex` over the converted one written moments before.
+
+The PDFs were all correct -- each was compiled before being overwritten -- so
+nothing in the build report showed it. Only the mirrored tree was wrong, and the
+mirror is what makes the output archivable: rebuilding from it produced an
+untagged solutions document. Every driver a run converts is now skipped by every
+other pass's copy step.
