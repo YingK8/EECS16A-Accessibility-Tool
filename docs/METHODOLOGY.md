@@ -544,3 +544,59 @@ Which prefix means which document is declared in the profile (`corpus.variants`)
 so a course spelling them `key`/`blank` changes one line of YAML rather than any
 Python. A directory whose driver matches no prefix is still built, under the name
 `document`, rather than being skipped for failing to follow a convention.
+
+### 9.10 Bookmarks that listed the document without moving to it
+
+Reported: clicking an entry in the table of contents did not jump to the
+section. It jumped to page 1 -- from every entry, on every document.
+
+`\bookmark[level=N, dest=NAME]` from the bookmark package **references** a
+destination. It does not create one. Nothing else in the package created them,
+so the missing anchors were invented at the top of the document.
+
+What makes this worth recording is how thoroughly it passed inspection:
+
+* 48 bookmarks, the expected count;
+* correct titles, correctly purified;
+* correct nesting, `H1 → H2 → H3 → H4`;
+* a populated `/Names /Dests` tree containing every name referenced;
+* every `/A` a well-formed `/GoTo` action pointing at a name that existed.
+
+Every one of those was already asserted by the test suite. The defect is one
+level below all of them: **resolve the destination to a page number.** All 48
+resolved to page 1, as `/Fit` -- page-level, no coordinates -- while hyperref's
+own destinations in the same file were `/XYZ` on the right pages. That contrast
+inside a single PDF is what identified it.
+
+The fix is to use hyperref's `\pdfbookmark`, which writes the outline entry
+*and* drops the anchor at the current point in one call. Its `\hyper@anchorstart`
+brackets the anchor with `\Hy@SaveLastskip` / `\Hy@RestoreLastskip` precisely so
+the whatsit cannot alter spacing: measured before and after, the pixel difference
+against the untouched original is **2.34% either way**, unchanged.
+
+Destinations after the fix, on `sp26/hw/9`:
+
+```
+pages : {1: 5, 2: 4, 3: 1, 4: 6, 5: 3, 6: 7, 7: 5, 8: 2, 9: 6, 10: 4, 11: 3, 13: 2}
+types : {'/XYZ': 48}
+```
+
+Three checks now exist so no route can reintroduce it, structurally rather than
+by inspecting the LaTeX:
+
+| Rule | What it catches |
+|---|---|
+| `A11Y-PDF-023` | a bookmark whose destination resolves nowhere |
+| `A11Y-PDF-024` | an outline where nothing is positional, so nothing scrolls to its heading |
+| `A11Y-PDF-025` | every destination on one page of a multi-page document |
+
+`A11Y-PDF-025` reports the old artefact exactly: *"all 48 bookmarks point at page
+1 of 13; the outline cannot navigate."* A single-page document with every
+bookmark on page 1 is correct, and is not flagged.
+
+**The lesson generalises past bookmarks.** Counting artefacts and checking their
+shape is not the same as checking that they *work*. The same mistake in a
+different costume appears in §3.4: a `Described` region with a perfect `/Alt`, a
+clean log and a correct tag tree, still reading its contents aloud. Both were
+found only by asking what a user would experience -- what does the reader
+announce, where does this link go -- rather than what the file contains.

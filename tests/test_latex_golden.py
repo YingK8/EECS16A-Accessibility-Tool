@@ -170,6 +170,26 @@ def test_bookmarks_mirror_the_heading_tree(structure):
     assert structure.outline[0][1] == "Homework 13"
 
 
+def test_every_bookmark_actually_navigates(structure):
+    """A bookmark that lists the document without moving to it is not a bookmark.
+
+    This is invisible to every other assertion here. `\\bookmark[dest=...]`
+    REFERENCES a destination rather than creating one, so the outline had 48
+    correct titles in correct nesting with a fully populated /Names /Dests tree
+    -- and every entry jumped to page 1. Only resolving the destination shows it.
+    """
+    targets = structure.outline_targets
+    assert targets, "no outline destinations could be resolved"
+    dead = [title for title, page, _ in targets if page is None]
+    assert not dead, f"bookmarks pointing nowhere: {dead[:5]}"
+
+
+def test_bookmarks_land_on_the_heading_not_just_the_page(structure):
+    """`/XYZ` carries coordinates; `/Fit` only says "this page"."""
+    kinds = {kind for _, _, kind in structure.outline_targets}
+    assert kinds == {"/XYZ"}, f"non-positional destinations: {kinds}"
+
+
 def test_every_figure_has_meaningful_alt(structure):
     figures = structure.of_tag("Figure")
     assert len(figures) == 3

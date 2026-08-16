@@ -68,6 +68,12 @@ class PdfStructure:
     tagged: bool
     nodes: list[StructNode] = field(default_factory=list)
     outline: list[tuple[int, str]] = field(default_factory=list)
+    #: (title, page number or None, destination type) for every outline entry.
+    #: A bookmark that lists the document without moving to it is a defect no
+    #: count of bookmarks can detect -- see `bookmark_targets`.
+    outline_targets: list[tuple[str, int | None, str | None]] = field(
+        default_factory=list
+    )
     title: str | None = None
     lang: str | None = None
     page_count: int = 0
@@ -147,6 +153,10 @@ def read_structure(path: Path | str) -> PdfStructure:
                 result.outline = list(_flatten_outline(outline.root))
         except Exception:  # pragma: no cover - no outline
             result.outline = []
+        try:
+            result.outline_targets = _outline_targets(pdf)
+        except Exception:  # pragma: no cover - malformed outline
+            result.outline_targets = []
 
         struct_root = root.get("/StructTreeRoot")
         if struct_root is None:
@@ -233,3 +243,80 @@ def _walk(
     out.append(element)
     index = len(out) - 1
     _walk(node.get("/K"), depth + 1, index, role_map, out, seen)
+
+
+def _named_destinations(pdf) -> dict:
+    """Every name in the /Names /Dests tree, flattened."""
+    found: dict = {}
+
+    def walk(node) -> None:
+        names = node.get("/Names")
+        if names is not None:
+            for index in range(0, len(names), 2):
+                found[str(names[index])] = names[index + 1]
+        for kid in node.get("/Kids", []) or []:
+            walk(kid)
+
+    names = pdf.Root.get("/Names")
+    if names is not None and names.get("/Dests") is not None:
+        walk(names["/Dests"])
+    return found
+
+
+def _outline_targets(pdf) -> list[tuple[str, int | None, str | None]]:
+    """Where each bookmark actually goes: (title, page, destination type).
+
+    Written because a bookmark can be perfectly formed and still navigate
+    nowhere. ``\\bookmark[dest=...]`` REFERENCES a destination rather than
+    creating one, and the bookmark package then invents the missing anchors at
+    the top of page 1. Titles, nesting, counts and the /Dests tree all looked
+    correct; every entry jumped to page 1. Only resolving the destination to a
+    page number shows it.
+
+    The type matters as much as the page: ``/XYZ`` carries coordinates and lands
+    on the heading, ``/Fit`` only says "this page".
+    """
+    import pikepdf
+
+    pages = {page.obj.objgen: number for number, page in enumerate(pdf.pages, 1)}
+    named = _named_destinations(pdf)
+
+    def resolve(spec) -> tuple[int | None, str | None]:
+        # A destination is an array; getting to it may pass through a name (into
+        # the /Dests tree) or a dictionary wrapper, and a name may point at
+        # either. Bounded, so a malformed file cannot loop forever.
+        for _ in range(4):
+            if spec is None:
+                return None, None
+            if isinstance(spec, pikepdf.Array):
+                break
+            if isinstance(spec, pikepdf.Dictionary):
+                spec = spec.get("/D")
+                continue
+            spec = named.get(str(spec))
+        if not isinstance(spec, pikepdf.Array) or len(spec) == 0:
+            return None, None
+        page = pages.get(getattr(spec[0], "objgen", None))
+        kind = str(spec[1]) if len(spec) > 1 else None
+        return page, kind
+
+    targets: list[tuple[str, int | None, str | None]] = []
+
+    def walk(item) -> None:
+        while item is not None:
+            spec = item.get("/Dest")
+            if spec is None:
+                action = item.get("/A")
+                if action is not None and str(action.get("/S", "")) == "/GoTo":
+                    spec = action.get("/D")
+            page, kind = resolve(spec)
+            targets.append((_decode(item.get("/Title")) or "", page, kind))
+            first = item.get("/First")
+            if first is not None:
+                walk(first)
+            item = item.get("/Next")
+
+    outlines = pdf.Root.get("/Outlines")
+    if outlines is not None:
+        walk(outlines.get("/First"))
+    return targets

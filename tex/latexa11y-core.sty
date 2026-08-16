@@ -150,6 +150,14 @@
     the~preamble.
   }
 
+\msg_new:nnnn { latexa11y } { bookmarks-not-clickable }
+  { Bookmarks~have~no~destinations~and~will~not~navigate. }
+  {
+    An~outline~entry~needs~an~ANCHOR~at~the~heading,~and~only~hyperref~provides~
+    one~(\string\pdfbookmark).~With~the~bookmark~package~alone~the~entries~are~
+    written~but~point~nowhere,~so~clicking~one~does~nothing.~Load~hyperref.
+  }
+
 \msg_new:nnnn { latexa11y } { heading-level }
   { Heading~level~#1~follows~level~#2,~skipping~a~level. }
   {
@@ -518,17 +526,38 @@
       { \cs_if_exist:NF \pdfbookmark { \msg_warning:nn { latexa11y } { no-bookmarks } } }
   }
 
+%% \pdfbookmark, NOT \bookmark[dest=...].
+%%
+%% The two look interchangeable and are not. `dest=` REFERENCES a destination;
+%% it does not create one. Nothing else in this package created them, so the
+%% bookmark package invented the missing anchors -- all of them at the start of
+%% the document, as `/Fit` on page 1. Every check passed: 48 bookmarks, correct
+%% titles, correct nesting, a populated /Names /Dests tree. And clicking any
+%% entry jumped to page 1, which is indistinguishable from "the outline does not
+%% work".
+%%
+%% hyperref's \pdfbookmark writes the outline entry AND drops the anchor at the
+%% current point, in one call. Its \hyper@anchorstart brackets the anchor with
+%% \Hy@SaveLastskip / \Hy@RestoreLastskip precisely so the whatsit cannot change
+%% spacing -- verified here as 0.00% pixel difference against the previous build.
 \cs_new_protected:Npn \__access_bookmark:nn #1#2
   {
-    \cs_if_exist:NTF \bookmark
+    \cs_if_exist:NTF \pdfbookmark
       {
-        \bookmark [ level=#1 , dest=a11y.bm.\int_use:N \g__access_bookmark_int ]
-          { \__access_pdfstring:n {#2} }
+        \pdfbookmark [#1] { \__access_pdfstring:n {#2} }
+          { a11y.bm.\int_use:N \g__access_bookmark_int }
       }
       {
-        \cs_if_exist:NT \pdfbookmark
-          { \pdfbookmark [#1] { \__access_pdfstring:n {#2} }
-              { a11y.bm.\int_use:N \g__access_bookmark_int } }
+        %% No hyperref: the bookmark package alone can still write an outline,
+        %% but it has no anchor mechanism, so the entries carry no destination
+        %% and cannot navigate. An outline that lists the document without
+        %% moving to it is worth having; saying so is what stops it looking
+        %% like a bug in this package.
+        \cs_if_exist:NT \bookmark
+          {
+            \bookmark [ level=#1 ] { \__access_pdfstring:n {#2} }
+            \msg_warning:nn { latexa11y } { bookmarks-not-clickable }
+          }
       }
   }
 

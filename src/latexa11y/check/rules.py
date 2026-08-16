@@ -460,6 +460,78 @@ _PLACEHOLDER = re.compile(r"<<ALT:|\bTODO\b|\bFIXME\b|\bPLACEHOLDER\b", re.IGNOR
 _FILENAME = re.compile(r"\.(?:png|jpg|jpeg|pdf|eps|svg)\s*$", re.IGNORECASE)
 
 
+def _bookmark_navigation(structure, name: str) -> list[Finding]:
+    """Do the bookmarks actually go anywhere?
+
+    Counting bookmarks does not answer this, and neither does reading their
+    titles or their nesting. A bookmark whose destination was never created
+    still appears in the outline, still nests correctly, still counts -- and
+    clicking it lands on page 1. That shipped here: 48 entries, all correct, all
+    pointing at the top of the document.
+
+    Two failures are worth separating. A destination that resolves nowhere is
+    dead. One that resolves to a page-level ``/Fit`` navigates to the right page
+    but not to the heading, which on a 13-page document is most of the value.
+    """
+    targets = getattr(structure, "outline_targets", None)
+    if not targets:
+        return []
+
+    findings: list[Finding] = []
+    dead = [title for title, page, _ in targets if page is None]
+    if dead:
+        findings.append(
+            Finding(
+                "A11Y-PDF-023",
+                Severity.ERROR,
+                f"{len(dead)} of {len(targets)} bookmarks have no destination "
+                f"and do not navigate (e.g. {dead[0]!r})",
+                file=name,
+                standard="WCAG 2.1 AA SC 2.4.5 (technique PDF2)",
+                hint=(
+                    "an outline entry needs an anchor at the heading; "
+                    "\\bookmark[dest=...] only references one, \\pdfbookmark creates it"
+                ),
+            )
+        )
+
+    resolved = [(title, page, kind) for title, page, kind in targets if page is not None]
+    positional = [item for item in resolved if item[2] == "/XYZ"]
+    if resolved and not positional:
+        findings.append(
+            Finding(
+                "A11Y-PDF-024",
+                Severity.WARNING,
+                "every bookmark uses a page-level destination, so none scrolls "
+                "to its heading",
+                file=name,
+                standard="WCAG 2.1 AA SC 2.4.5",
+                hint="use \\pdfbookmark, which anchors at the current position (/XYZ)",
+            )
+        )
+
+    # All destinations on one page of a multi-page document is the exact
+    # signature of anchors that were never placed where the headings are.
+    if structure.page_count > 1 and len(resolved) > 2:
+        pages = {page for _, page, _ in resolved}
+        if len(pages) == 1:
+            findings.append(
+                Finding(
+                    "A11Y-PDF-025",
+                    Severity.ERROR,
+                    f"all {len(resolved)} bookmarks point at page {pages.pop()} of "
+                    f"{structure.page_count}; the outline cannot navigate",
+                    file=name,
+                    standard="WCAG 2.1 AA SC 2.4.5",
+                    hint=(
+                        "the destinations were created somewhere other than at the "
+                        "headings -- check that each heading places its own anchor"
+                    ),
+                )
+            )
+    return findings
+
+
 def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> list[Finding]:
     """Assert the structural contract on a built PDF."""
     from .content import read_page_content
@@ -603,6 +675,8 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
                 ),
             )
         )
+
+    findings.extend(_bookmark_navigation(structure, name))
 
     # The Described contract, checked on the artefact rather than trusted.
     for page in range(structure.page_count):

@@ -327,3 +327,58 @@ def test_run_yaml_keeps_the_path_the_user_typed(monkeypatch, tmp_path: Path):
     output.set_path("descriptions", "shared/alt")
     assert output.as_dict()["root"] == "a11y-out"
     assert output.as_dict()["paths"]["descriptions"] == "shared/alt"
+
+
+# ---------------------------------------------------------------------- #
+# bookmarks that do not navigate
+# ---------------------------------------------------------------------- #
+
+
+def test_an_outline_stuck_on_one_page_is_reported():
+    """The signature of anchors that were never placed at the headings.
+
+    Detected structurally rather than by inspecting the LaTeX: any route that
+    produces this shape is broken, whoever wrote it.
+    """
+    from latexa11y.check.rules import _bookmark_navigation
+
+    class Stub:
+        page_count = 13
+        outline_targets = [(f"H{i}", 1, "/Fit") for i in range(12)]
+
+    rules = {finding.rule for finding in _bookmark_navigation(Stub(), "x.pdf")}
+    assert "A11Y-PDF-025" in rules  # all on one page
+    assert "A11Y-PDF-024" in rules  # and none positional
+
+
+def test_a_healthy_outline_is_not_reported():
+    from latexa11y.check.rules import _bookmark_navigation
+
+    class Stub:
+        page_count = 13
+        outline_targets = [(f"H{i}", 1 + i % 13, "/XYZ") for i in range(12)]
+
+    assert _bookmark_navigation(Stub(), "x.pdf") == []
+
+
+def test_a_dead_destination_is_reported():
+    from latexa11y.check.rules import _bookmark_navigation
+
+    class Stub:
+        page_count = 4
+        outline_targets = [("A", 1, "/XYZ"), ("B", None, None), ("C", 3, "/XYZ")]
+
+    findings = _bookmark_navigation(Stub(), "x.pdf")
+    assert [f.rule for f in findings] == ["A11Y-PDF-023"]
+    assert "'B'" in findings[0].message
+
+
+def test_a_single_page_document_is_not_flagged():
+    """Every bookmark on page 1 of a one-page document is correct, not broken."""
+    from latexa11y.check.rules import _bookmark_navigation
+
+    class Stub:
+        page_count = 1
+        outline_targets = [(f"H{i}", 1, "/XYZ") for i in range(5)]
+
+    assert _bookmark_navigation(Stub(), "x.pdf") == []
