@@ -658,3 +658,47 @@ nothing in the build report showed it. Only the mirrored tree was wrong, and the
 mirror is what makes the output archivable: rebuilding from it produced an
 untagged solutions document. Every driver a run converts is now skipped by every
 other pass's copy step.
+
+### 9.13 Fixing one blocked assignment, and what it corrected
+
+`sp26/hw/3` failed on three errors in one shared question file. Fixing it
+minimally corrected three of this document's own claims.
+
+**The enumitem fix is narrower than §9.11 said.** `\setlist` does NOT work. It
+compiles with 0 errors, which is all §9.11 checked, and then silently ignores the
+label and falls back to `1.`:
+
+| Approach | Errors | Renders |
+|---|---|---|
+| inline `[label=(\roman*)]` | 2 | `()` |
+| inline `[label=(\roman{enumi})]` | 0 | `()` |
+| `\setlist[enumerate,1]{label=(\roman*)}` | 0 | `1.` |
+| `\renewcommand{\labelenumi}{(\roman{enumi})}` | 0 | `(i) (ii)` |
+
+Only the plain LaTeX2e redefinition works. Counting errors was not enough here
+either -- the same mistake as §9.10, one level up.
+
+**`A11Y-SRC-042` missed the construct that actually broke the build.** The rule
+matched `\end{align}` and friends but not `$$ ... $$\\`, which is what
+`q_orthonormal_basis_basics.tex:85` contained. The file was reported clean and
+the build failed anyway. All three spellings of display math are matched now,
+and the rule went from 12 occurrences in 8 files to **35 in 27**.
+
+**Deleting the line break is the wrong fix, and the hint said to.** Measured
+against the untouched original, untagged:
+
+| Replacement for `$$...$$\\` | Difference from the original |
+|---|---|
+| `$$...$$\mbox{}\\` | **0.0019%** |
+| `$$...$$\par\vspace{\baselineskip}` | 0.2380% |
+| `$$...$$\medskip` | 0.2460% |
+| `$$...$$` (break deleted) | 0.4157%, repaginates pages 6-7 |
+
+The `\\` was producing a real blank line, so deleting it moves the page. Giving
+it a line to end with `\mbox{}` keeps the layout and compiles. The hint now says
+so, with the numbers.
+
+Final state of `sp26/hw/3`: both variants build with **0 errors and 0 warnings**,
+10 and 5 pages, 28 bookmarks each, 2.58% and 1.56% against their originals -- and
+the list renders `(i) Give the dimension... (ii) Provide an orthonormal...` as it
+always did. The source diff is six lines.

@@ -296,10 +296,15 @@ _ARRAY_IN_MATRIX = re.compile(
 #: mode under tagging, so `\end{align*}` followed by `\newline` raises "There's
 #: no line here to end" and the build produces no PDF. The untagged build
 #: tolerates it, which is why the construct is in the corpus at all.
-#: Measured: 12 occurrences in 8 live files.
+#: All three spellings of display math count. An earlier version matched only
+#: \\end{align} and missed `$$ ... $$\\\\`, which is what actually broke
+#: sp26/hw/3 -- the rule reported the file clean and the build failed anyway.
 _BREAK_AFTER_DISPLAY = re.compile(
+    r"(?:"
     r"\\end\s*\{(?:align|equation|gather|multline|eqnarray|flalign)\*?\}"
-    r"\s*(?:\\newline\b|\\\\)"
+    r"|\\\]"
+    r"|\$\$"
+    r")\s*(?:\\newline\b|\\\\)"
 )
 
 
@@ -318,8 +323,11 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 line=source.line_of(match.start()),
                 standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                 hint=(
-                    "delete the \\newline: display math already ends the line, "
-                    "and a blank line gives the paragraph break if one is wanted"
+                    "give the break a line to end -- \\mbox{}\\\\ -- which "
+                    "compiles and keeps the spacing. Measured: DELETING the "
+                    "break instead removes a blank line and repaginated "
+                    "sp26/hw/3 (0.42% of pixels), while \\mbox{} left it at "
+                    "0.002%"
                 ),
             )
         )
