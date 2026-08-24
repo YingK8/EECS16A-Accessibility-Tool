@@ -37,6 +37,11 @@ class StructNode:
     actual_text: str | None = None
     lang: str | None = None
     title: str | None = None
+    #: ``/C``, the attribute classes on this element, as bare names.
+    #: latex-lab marks a layout table `ARIA-role-presentation` rather than
+    #: dropping the Table tag, so this is what separates a grid a reader
+    #: should ignore from a real data table.
+    classes: list[str] = field(default_factory=list)
     #: Marked-content ids owned directly by this element.
     mcids: list[int] = field(default_factory=list)
     #: ``/K`` in document order: ``("mc", i)`` for ``mcids[i]``, ``("el", n)``
@@ -191,6 +196,18 @@ def _flatten_outline(items, depth: int = 1) -> Iterator[tuple[int, str]]:
         yield from _flatten_outline(item.children, depth + 1)
 
 
+def _classes(value) -> list[str]:
+    """``/C`` as bare names. It holds one name or an array of them."""
+    if value is None:
+        return []
+    try:
+        items = list(value)
+    except TypeError:
+        # pikepdf.Name advertises __iter__ and raises when it is used.
+        return [str(value).lstrip("/")]
+    return [str(item).lstrip("/") for item in items]
+
+
 def _walk(
     node: Any,
     depth: int,
@@ -256,6 +273,7 @@ def _walk(
         actual_text=_decode(node.get("/ActualText")),
         lang=_decode(node.get("/Lang")),
         title=_decode(node.get("/T")),
+        classes=_classes(node.get("/C")),
         parent=parent,
     )
     out.append(element)

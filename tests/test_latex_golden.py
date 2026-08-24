@@ -237,9 +237,18 @@ def test_data_table_has_header_cells(structure):
 
 
 def test_layout_table_is_not_a_table(structure):
-    # Exactly one Table element: the DataTable. The LayoutTable must degrade to
-    # a non-table structure so a reader is not trapped in a meaningless grid.
-    assert len(structure.of_tag("Table")) == 1
+    """A layout grid must not be announced as a table.
+
+    latex-lab used to drop the Table tag for `table/tagging=presentation`. It now
+    keeps the tag and marks it `ARIA-role-presentation`, which says the same
+    thing explicitly, so this asserts the role rather than counting elements.
+    """
+    tables = structure.of_tag("Table")
+    presentation = [t for t in tables if "ARIA-role-presentation" in t.classes]
+    data = [t for t in tables if "ARIA-role-presentation" not in t.classes]
+
+    assert len(data) == 1, "the DataTable must stay a real table"
+    assert len(presentation) == 1, "the LayoutTable must carry the presentation role"
 
 
 # ---------------------------------------------------------------------- #
