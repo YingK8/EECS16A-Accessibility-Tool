@@ -1,7 +1,7 @@
-%% latexa11y-assignment.cls
+%% latexally-assignment.cls
 %% Accessible homework / problem-set class in the EECS 16A house style.
 %%
-%%   \documentclass[sol]{latexa11y-assignment}
+%%   \documentclass[sol]{latexally-assignment}
 %%
 %% Typesets identically to an ee16.sty document -- same text block, same fonts,
 %% same masthead, same "1." question labels and inline blue "Solution:" -- and
@@ -22,7 +22,7 @@
 %%   draft        downgrade unfilled-alt errors to warnings (migration only)
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
-\ProvidesClass{latexa11y-assignment}[2026-08-11 v0.2.0 Accessible assignment]
+\ProvidesClass{latexally-assignment}[2026-08-11 v0.2.0 Accessible assignment]
 
 \newif\ifaccess@sol         \access@solfalse
 \newif\ifaccess@ans         \access@ansfalse
@@ -43,7 +43,7 @@
 
 \LoadClass[11pt]{article}
 
-%% No `geometry` here: latexa11y-doc sets the text block by raw dimension
+%% No `geometry` here: latexally-doc sets the text block by raw dimension
 %% assignment, exactly as ee16.sty does, and geometry would recompute it from
 %% margins into something different. No `enumitem` either -- it changes list
 %% spacing, and the house style depends on the stock list parameters.
@@ -51,9 +51,9 @@
 \RequirePackage{bookmark}
 
 \ifaccess@house
-  \PassOptionsToPackage{housecolors}{latexa11y-doc}
+  \PassOptionsToPackage{housecolors}{latexally-doc}
 \fi
-\RequirePackage{latexa11y-doc}
+\RequirePackage{latexally-doc}
 
 \ifaccess@sol\accessshowsolutions\fi
 \ifaccess@ans\accessshowanswers\fi

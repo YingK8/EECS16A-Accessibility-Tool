@@ -1,4 +1,4 @@
-%% latexa11y-compat-ee16.sty
+%% latexally-compat-ee16.sty
 %% Compatibility shim: the legacy EECS 16A macro vocabulary, re-expressed in
 %% terms of tagged primitives, so existing question files keep compiling.
 %%
@@ -24,10 +24,10 @@
 %%     a file that slips through still produces a correct title.
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
-\ProvidesExplPackage{latexa11y-compat-ee16}{2026-08-08}{0.1.0}
+\ProvidesExplPackage{latexally-compat-ee16}{2026-08-08}{0.1.0}
   {Legacy EECS 16A macro compatibility}
 
-\RequirePackage{latexa11y-doc}
+\RequirePackage{latexally-doc}
 
 %% ---------------------------------------------------------------------------
 %% Questions and parts
@@ -113,10 +113,10 @@
 %% an artifact or it is described.
 %%
 %% These aliases live here, in the compatibility shim, and deliberately NOT in
-%% latexa11y-core.sty, so the core API has exactly one spelling of each idea.
+%% latexally-core.sty, so the core API has exactly one spelling of each idea.
 %% They warn once each, naming the replacement.
 
-\msg_new:nnn { latexa11y } { deprecated-name }
+\msg_new:nnn { latexally } { deprecated-name }
   { '#1'~is~deprecated;~use~'#2'~instead. }
 
 %% \tl_to_str:n, not plain expansion: the argument may be a control sequence
@@ -124,7 +124,7 @@
 %% deprecated command being reported. Str-ifying prints "\altonly" as characters.
 \cs_new_protected:Npn \__access_compat_warn:nn #1#2
   {
-    \msg_warning:nnee { latexa11y } { deprecated-name }
+    \msg_warning:nnee { latexally } { deprecated-name }
       { \tl_to_str:n {#1} } { \tl_to_str:n {#2} }
   }
 
@@ -142,7 +142,7 @@
 %% The key changed with the environment: `alt` names the PDF dictionary entry the
 %% string lands in, not the thing an author writes. A key is not a control
 %% sequence, so the alias is a one-line `.meta:n` forward rather than a wrapper.
-\keys_define:nn { latexa11y / figure }
+\keys_define:nn { latexally / figure }
   { alt .meta:n = { description = {#1} } }
 
 \ProvideDocumentEnvironment { FigureBlock } { O{} }
@@ -160,7 +160,7 @@
 %% Argument-less \title recovery
 %% ---------------------------------------------------------------------------
 %% Every legacy body.tex writes `\def\title{Homework 9}`, which overwrites the
-%% one-argument \title defined in latexa11y-doc. Rather than fail with an empty
+%% one-argument \title defined in latexally-doc. Rather than fail with an empty
 %% document title -- a PDF/UA metadata failure (Matterhorn 06-003) that is easy
 %% to miss -- detect the argument-less form and adopt its expansion.
 

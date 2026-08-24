@@ -1,0 +1,137 @@
+%% latexally-math.sty -- spoken alt text for every tagged formula.
+%%
+%% The problem this solves
+%% -----------------------
+%% latex-lab turns `math/alt/use' on by itself the moment PDF/UA-1 is declared,
+%% and fills /Alt from \l__math_content_template_tl, whose value is the LaTeX
+%% source wrapped in "LaTeX formula starts ... LaTeX formula ends".  A screen
+%% reader announces that character by character while veraPDF reports the file
+%% clean, so the failure is silent -- the worst kind for material under a legal
+%% obligation.  ALLY-PDF-041 rejects it; this package supplies the replacement.
+%%
+%% How
+%% ---
+%% `latexally build' runs the document once with
+%% \tagpdfsetup{math/mathml/write-dummy}, converts every formula latex-lab
+%% reported, and writes \jobname-mathspeech.ltx next to the source.  This file
+%% swaps in a plug for the tagsupport/math/content socket that looks the spoken
+%% string up by latex-lab's own MD5 of the formula.
+%%
+%% Nothing here touches the MathML or TeX-source attachments: `math/mathml/AF'
+%% and `math/tex/AF' are both true by default, and \jobname-mathml.html is
+%% already the first entry of \l__tag_math_mathml_files_clist.  A reader that
+%% prefers notation to speech gets it for free.
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{latexally-math}
+  [2026/08/21 v1.0 latexally spoken math alt text]
+
+\ExplSyntaxOn
+
+\tl_new:N \l__latexally_math_hash_tl
+\tl_new:N \l__latexally_math_speech_tl
+
+%% `write-dummy' is what hands the formula list to the converter, and it must
+%% be set at load time, NOT from a begindocument hook. latex-lab decides whether
+%% to assign the plug that does the writing before that hook runs, so a late
+%% switch produces a syntactically perfect dummy file containing no formulas at
+%% all -- and the only symptom is that nothing gets described.
+\cs_if_exist:NT \tagpdfsetup { \tagpdfsetup{ math/mathml/write-dummy } }
+
+%% latex-lab enables `math/alt/use' by itself only when the document declares
+%% PDF/UA-1, and clears \l__math_content_alt_tl after the content socket when it
+%% is off -- so on TeX Live 2025, which cannot declare ua-1, every formula would
+%% come out with an empty /Alt no matter what the plug below computed. Ask for
+%% it explicitly so the speech survives on both toolchains.
+\AddToHook{begindocument}
+  { \cs_if_exist:NT \tagpdfsetup { \tagpdfsetup{ math/alt/use = true } } }
+
+%% The generated table. Absent on the first pass, which is not an error: the
+%% first pass is what produces the input the table is generated from.
+\AddToHook{begindocument}
+  {
+    \file_if_exist:nT { \c_sys_jobname_str-mathspeech.ltx }
+      { \file_input:n { \c_sys_jobname_str-mathspeech.ltx } }
+  }
+
+%% Nothing to override unless latex-lab's math module is loaded. There is no
+%% \socket_if_exist:nT in the 2025 kernel, so the module's own alt variable is
+%% the probe -- it exists exactly when the socket does.
+\tl_if_exist:NT \l__math_content_alt_tl
+  {
+    \socket_new_plug:nnn
+      { tagsupport/math/content }
+      { latexally-speech }
+      {
+        %% Order is load-bearing. latex-lab hashes \l__math_content_AF_source_tl
+        %% -- not the raw grabbed math -- and it does so in a *later* socket,
+        %% so the source template has to be expanded here first and then hashed.
+        %% Hashing \g__math_grabbed_math_tl instead looks equivalent, produces a
+        %% different digest for every formula, and yields an empty /Alt on all
+        %% of them.
+        \tl_set:Ne \l__math_content_AF_source_tl { \l__math_texsource_template_tl }
+        \tl_set:Ne \l__latexally_math_hash_tl
+          { \str_mdfive_hash:o { \l__math_content_AF_source_tl } }
+        \tl_if_exist:cTF { g__latexally_speech_ \l__latexally_math_hash_tl _tl }
+          {
+            %% /Alt reaches assistive technology that walks the structure
+            %% tree. It does NOT reach a reader that extracts text by position
+            %% -- macOS Preview and most built-in "read aloud" features -- which
+            %% announce the raw glyphs of the equation instead. Those honour
+            %% /ActualText, and only in the *marked-content* property list:
+            %% /ActualText on the structure element was tried and **[verified]**
+            %% to change nothing. See the substruct plug below.
+            \tl_set:Ne \l__latexally_math_speech_tl
+              { \tl_use:c { g__latexally_speech_ \l__latexally_math_hash_tl _tl } }
+            \tl_set:Ne \l__math_content_alt_tl { \l__latexally_math_speech_tl }
+          }
+          {
+            %% No speech for this formula. Leaving /Alt empty is deliberate:
+            %% ALLY-PDF-040 reports a missing /Alt as an error a human can act
+            %% on, whereas falling back to latex-lab's template would ship raw
+            %% LaTeX and read as a pass.
+            \tl_set:Nn \l__math_content_alt_tl {}
+            \tl_clear:N \l__latexally_math_speech_tl
+          }
+        \tl_set:Nn \l__math_content_AF_mathml_tl {}
+        \tl_set:Nn \l__math_content_actual_tl    {}
+      }
+    \socket_assign_plug:nn { tagsupport/math/content } { latexally-speech }
+  }
+
+%% The marked-content layer: what a positional text extractor substitutes.
+%%
+%% This is the half that makes spoken maths work in readers that ignore tags.
+%% It replaces latex-lab's `default' plug, which splits a formula into tagged
+%% subparts -- unnecessary here, because the whole formula already has one
+%% spoken string, and subparts would fragment it. `single' is latex-lab's own
+%% name for the no-splitting pair, so its `end' partner is used unchanged.
+%% Assigned from begindocument, not at load time: latex-lab installs its own
+%% `default' plug during \begin{document} setup and would overwrite an earlier
+%% assignment -- silently, leaving the maths spoken as glyphs again.
+\AddToHook{begindocument}
+  {
+    \tl_if_exist:NT \l__math_content_alt_tl
+      {
+        \socket_new_plug:nnn
+          { tagsupport/math/substruct/begin }
+          { latexally-speech }
+          {
+            \tl_if_empty:NTF \l__latexally_math_speech_tl
+              { \tag_mc_begin:n {} }
+              {
+                %% Braced. Speech is prose and prose has commas -- "Row 1: 5
+                %% plus eta, Column 2" -- and an unbraced value ends the key at
+                %% the first one, so the tail is parsed as a key of its own:
+                %% "LaTeX Error: The key '__tag/mc/0 Row 2: Column 1' is unknown".
+                \exp_args:Ne \tag_mc_begin:n
+                  { actualtext = { \l__latexally_math_speech_tl } }
+              }
+          }
+        \socket_assign_plug:nn { tagsupport/math/substruct/begin } { latexally-speech }
+        \socket_assign_plug:nn { tagsupport/math/substruct/end }   { single }
+      }
+  }
+
+\ExplSyntaxOff
+\endinput

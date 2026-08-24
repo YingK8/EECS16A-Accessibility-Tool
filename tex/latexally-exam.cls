@@ -1,4 +1,4 @@
-%% latexa11y-exam.cls
+%% latexally-exam.cls
 %% Accessible exam class in the EECS 16A house style.
 %%
 %%   prob / sol / ans   as for assignments
@@ -13,7 +13,7 @@
 %% real semantics -- see \answerbox, \answerblank and \workingpage.
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
-\ProvidesClass{latexa11y-exam}[2026-08-11 v0.2.0 Accessible exam]
+\ProvidesClass{latexally-exam}[2026-08-11 v0.2.0 Accessible exam]
 
 \newif\ifaccess@sol       \access@solfalse
 \newif\ifaccess@ans       \access@ansfalse
@@ -38,9 +38,9 @@
 \RequirePackage{bookmark}
 
 \ifaccess@house
-  \PassOptionsToPackage{housecolors}{latexa11y-doc}
+  \PassOptionsToPackage{housecolors}{latexally-doc}
 \fi
-\RequirePackage{latexa11y-doc}
+\RequirePackage{latexally-doc}
 
 \ifaccess@sol\accessshowsolutions\fi
 \ifaccess@ans\accessshowanswers\fi

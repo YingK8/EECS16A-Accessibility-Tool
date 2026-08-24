@@ -1,4 +1,4 @@
-%% latexa11y-worksheet.cls
+%% latexally-worksheet.cls
 %% Accessible discussion-worksheet class in the EECS 16A house style.
 %%
 %% Same structure as an assignment; the difference is that worksheets are
@@ -11,7 +11,7 @@
 %%   housecolors  use the course's original solution colours
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
-\ProvidesClass{latexa11y-worksheet}[2026-08-11 v0.2.0 Accessible worksheet]
+\ProvidesClass{latexally-worksheet}[2026-08-11 v0.2.0 Accessible worksheet]
 
 \newif\ifaccess@sol       \access@solfalse
 \newif\ifaccess@ans       \access@ansfalse
@@ -34,9 +34,9 @@
 \RequirePackage{bookmark}
 
 \ifaccess@house
-  \PassOptionsToPackage{housecolors}{latexa11y-doc}
+  \PassOptionsToPackage{housecolors}{latexally-doc}
 \fi
-\RequirePackage{latexa11y-doc}
+\RequirePackage{latexally-doc}
 
 \ifaccess@sol\accessshowsolutions\fi
 \ifaccess@ans\accessshowanswers\fi

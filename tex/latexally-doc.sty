@@ -1,4 +1,4 @@
-%% latexa11y-doc.sty
+%% latexally-doc.sty
 %% Shared document machinery for assignments, exams and worksheets.
 %%
 %% ---------------------------------------------------------------------------
@@ -13,10 +13,10 @@
 %% bookmarks, document metadata, artifacts for decorative rules, and
 %% Unicode-mapped text.
 %%
-%% Unlike latexa11y-ee16.sty, which patches the real ee16.sty, this file is
+%% Unlike latexally-ee16.sty, which patches the real ee16.sty, this file is
 %% SELF-CONTAINED: no ee16.sty, no markup.sty, no timestamp.sty required. Use it
 %% for a new course, or for a document that should not depend on the legacy
-%% style files. Use latexa11y-ee16.sty instead when ee16.sty is present, because
+%% style files. Use latexally-ee16.sty instead when ee16.sty is present, because
 %% patching the real file guarantees fidelity automatically.
 %%
 %% Written in plain LaTeX2e rather than expl3 so that it reads alongside the
@@ -29,11 +29,11 @@
 %% conforming blue everywhere. Pass [housecolors] to get the originals back.
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
-\ProvidesPackage{latexa11y-doc}[2026-08-11 v0.2.0 EECS 16A house style, tagged]
+\ProvidesPackage{latexally-doc}[2026-08-11 v0.2.0 EECS 16A house style, tagged]
 
-\RequirePackage{latexa11y-core}
+\RequirePackage{latexally-core}
 
-%% Interword-space injection OFF -- same reason as latexa11y-ee16.sty.
+%% Interword-space injection OFF -- same reason as latexally-ee16.sty.
 %% Activating tagging also enables tagpdf's `activate/spaces`, which injects
 %% real space glyphs. With the Times/Dunhill setup used here that reflows text
 %% in the running header and footer and inside \emph and \Large groups until the
@@ -308,8 +308,8 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
   \definecolor{accessSolutionText}{named}{blue}
   \definecolor{accessAnswerText}{rgb}{0.2,0.2,0.9}
 \else
-  \colorlet{accessSolutionText}{a11ySolution}
-  \colorlet{accessAnswerText}{a11yAnswer}
+  \colorlet{accessSolutionText}{allySolution}
+  \colorlet{accessAnswerText}{allyAnswer}
 \fi
 
 \newlength{\accessreservelen}
@@ -357,7 +357,7 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
 \newcommand{\guidance}[1]{%
   \ifaccess@showguid
     \accessbookmarkonly{4}{Guidance}%
-    {\color{a11yAccent}\textbf{Guidance: }#1}%
+    {\color{allyAccent}\textbf{Guidance: }#1}%
   \fi
 }
 
