@@ -1,4 +1,4 @@
-%% latexa11y-ee16.sty
+%% latexally-ee16.sty
 %% Accessibility retrofit for the existing EECS 16A macro set.
 %%
 %% ---------------------------------------------------------------------------
@@ -25,15 +25,15 @@
 %%     \usepackage{../../../ee16}
 %%     \usepackage{../../../markup}
 %%     \usepackage{../../sp26}
-%%     \usepackage{latexa11y-ee16}     % <- after ee16 and markup
+%%     \usepackage{latexally-ee16}     % <- after ee16 and markup
 %%
 %% \DocumentMetadata MUST be the first line of the file, before \documentclass.
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
-\ProvidesExplPackage{latexa11y-ee16}{2026-08-08}{0.1.0}
+\ProvidesExplPackage{latexally-ee16}{2026-08-08}{0.1.0}
   {Accessibility retrofit for the EECS 16A macro set}
 
-\RequirePackage{latexa11y-core}
+\RequirePackage{latexally-core}
 
 %% ---------------------------------------------------------------------------
 %% 0. Interword-space injection -- OFF, for visual fidelity
@@ -72,7 +72,17 @@
 %% readable. Verified: cmdunh10 emits /ToUnicode and extracts as real words.
 \ifdefined\pdfgentounicode
   \pdfgentounicode=1
+  %% \ExplSyntaxOff is load-bearing, not tidiness. This is a
+  %% \ProvidesExplPackage, so expl3 catcodes are live here and SPACE IS
+  %% IGNORED -- and glyphtounicode.tex spells its multi-codepoint entries
+  %% "\pdfglyphtounicode{ffi}{0066 0066 0069}". Read under those catcodes the
+  %% spaces vanish, pdfTeX sees one number 0x006600660069, and warns
+  %% "ToUnicode: value out of range" 119 times while dropping the entry.
+  %% Every affected glyph then falls back to its presentation form: "difficult"
+  %% extracted as "di<U+FB03>cult", which breaks Ctrl+F and reads badly.
+  \ExplSyntaxOff
   \InputIfFileExists{glyphtounicode.tex}{}{\input{glyphtounicode}}
+  \ExplSyntaxOn
 \fi
 
 %% ---------------------------------------------------------------------------
