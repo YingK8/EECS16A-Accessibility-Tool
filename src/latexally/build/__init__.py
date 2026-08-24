@@ -1,4 +1,4 @@
-"""The conversion engine: turn a :class:`~latexa11y.run.RunConfig` into PDFs.
+"""The conversion engine: turn a :class:`~latexally.run.RunConfig` into PDFs.
 
 This is the code that used to be ``examples/build-corpus.sh``. Moving it into
 Python is not tidying: the shell version was the *definition* of what conversion
@@ -29,12 +29,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import Profile
-from ..errors import LatexA11yError, ToolchainError
-from ..run import Assignment, RunConfig
+from ..errors import LatexAllyError, ToolchainError
+from ..run import RunConfig
+from ..discover import Assignment
 from ..texlex import EditBuffer, TexSource
 from ..toolchain import TaggingMode, probe
 
 __all__ = [
+    "combine_logs",
+    "write_report",
     "BuildReport",
     "preamble_for",
     "materialise",
@@ -54,6 +57,32 @@ PACKAGE_TEX_DIR = Path(__file__).resolve().parents[3] / "tex"
 
 def _package_tex_dirs() -> list[Path]:
     return [PACKAGE_TEX_DIR] if PACKAGE_TEX_DIR.is_dir() else []
+
+
+#: Suffix on the artefact this tool PRODUCED, and on the untouched copy it was
+#: measured against. Both are marked: an unsuffixed `fa19-hw-7-solution.pdf`
+#: says nothing about where it came from, and in `in_place` mode it lands in the
+#: course repository next to files a TA built by hand, where "which of these did
+#: the tool make?" has no answer. Naming only the baseline, as this once did,
+#: marks the one file nobody needs to identify.
+ACCESSIBLE_SUFFIX = "accessible"
+ORIGINAL_SUFFIX = "original"
+
+
+def base_slug(assignment_path: str, variant: str = "document") -> str:
+    """``fa19/hw/7`` + ``solution`` -> ``fa19-hw-7-solution``."""
+    slug = assignment_path.replace("/", "-")
+    return slug if variant == "document" else f"{slug}-{variant}"
+
+
+def accessible_slug(base: str) -> str:
+    """The converted build's jobname, and so its .pdf/.log/.annotations."""
+    return f"{base}-{ACCESSIBLE_SUFFIX}"
+
+
+def original_slug(base: str) -> str:
+    """The untouched baseline's jobname, built for the visual diff."""
+    return f"{base}-{ORIGINAL_SUFFIX}"
 
 #: Pixel comparison settings, proven during the fidelity work: greyscale at
 #: 110 dpi, counting only pixels that differ by more than 96/255. A lower
@@ -92,7 +121,7 @@ def preamble_for(
             raise ToolchainError(
                 "this toolchain cannot produce a tagged PDF",
                 hint=(
-                    "run `latexa11y doctor` for the specific missing capability; "
+                    "run `latexally doctor` for the specific missing capability; "
                     "building anyway would emit an untagged PDF with no error"
                 ),
             )
@@ -110,29 +139,31 @@ def preamble_for(
     # Emitting \accesssetup with neither loaded is an undefined control sequence
     # -- and one that a naive log scan reports as a clean build, because pdflatex
     # carries on in nonstop mode and still writes a PDF.
+    recolours = config.colors.replacements(profile)
     wants_core = (
         config.standards.bookmarks
         or config.standards.question_tags
         or config.colors.mode == "conforming"
+        or bool(recolours)
         or not config.alt.strict
     )
     if config.standards.retrofit:
-        lines.append("\\usepackage{latexa11y-ee16}")
+        lines.append("\\usepackage{latexally-ee16}")
         loaded = True
     elif wants_core:
         # The primitives without the course-specific patching. Asking for
         # bookmarks with the retrofit off would otherwise silently do nothing.
-        lines.append("\\usepackage{latexa11y-core}")
+        lines.append("\\usepackage{latexally-core}")
         loaded = True
     else:
         loaded = False
 
     if config.standards.question_tags and not config.standards.retrofit:
         # \accessquestiontags is defined by the retrofit, which is what knows
-        # what a "question" is in this course. latexa11y-core has no such notion,
+        # what a "question" is in this course. latexally-core has no such notion,
         # so the combination is undefined -- say so rather than emit a control
         # sequence that does not exist.
-        raise LatexA11yError(
+        raise LatexAllyError(
             "question_tags needs the course macro retrofit, which is switched off",
             hint=(
                 "turn 'Course macro retrofit' back on, or turn question H2 tags "
@@ -145,8 +176,22 @@ def preamble_for(
             lines.append("\\accessquestiontags")
         if config.colors.mode == "conforming":
             lines.append("\\accesssetup{conforming-colors}")
+        # Order is load-bearing. Both this and conforming-colors act from a
+        # begindocument hook, and hooks run in the order they are declared, so
+        # the per-name values must come second to win over the blind allySolution
+        # fallbacks. Without these lines nothing the runner computed or the user
+        # confirmed ever reaches the page: `conforming-colors` alone remaps to a
+        # fixed palette and ignores the run entirely.
+        for name, value in recolours.items():
+            lines.append(f"\\accessrecolor{{{name}}}{{{value.lstrip('#')}}}")
         if not config.alt.strict:
             lines.append("\\accesssetup{strict=false}")
+
+    if config.standards.math_speech:
+        # Formula /Alt. Loaded even on the first pass, when the speech table it
+        # reads does not exist yet -- the package tolerates that, and it is the
+        # run that produces the table's input.
+        lines.append("\\usepackage{latexally-math}")
 
     if config.standards.unicode_map:
         # Guarded: \pdfgentounicode is a pdfTeX primitive and does not exist
@@ -197,7 +242,7 @@ def _preamble_insertion_point(source: TexSource) -> int:
     if last is not None:
         return last
 
-    raise LatexA11yError(
+    raise LatexAllyError(
         "cannot find where to insert packages: the driver has no "
         "\\begin{document} and no \\input",
         hint="pass the file that actually starts the document",
@@ -245,6 +290,108 @@ class Prepared:
     #: Text actually written, for dry-run display.
     text: str = ""
     injected: list[str] = field(default_factory=list)
+    #: Missing includes that were resolved from elsewhere in the corpus.
+    substitutions: list = field(default_factory=list)
+    #: The driver as it was before conversion, mirrored so the baseline builds
+    #: against the same repaired includes the converted document does.
+    original: Path | None = None
+
+
+#: The rules that decide whether a figure or formula actually says anything: no
+#: /Alt, an unfilled placeholder, a file name, raw LaTeX read aloud. Every one
+#: is a *silent* failure -- the PDF is well-formed and veraPDF passes it -- so
+#: they are the ones worth failing a build over.
+_ALT_RULES = ("ALLY-PDF-002", "ALLY-PDF-003", "ALLY-PDF-004", "ALLY-PDF-040", "ALLY-PDF-041")
+
+
+def _alt_text_failures(pdf: Path, config: RunConfig) -> list[str]:
+    """Alt-text errors in the built PDF, as build errors, under strict mode.
+
+    ``check_pdf_structure`` used to be reachable only from ``latexally check``,
+    so a build could emit a PDF whose every figure was described by its own file
+    name and still report a clean tick. ``alt.strict`` meanwhile only ever
+    reached LaTeX, where it guards a placeholder blocklist that nothing in this
+    corpus triggers. Checking the artefact here is what makes the setting mean
+    what its name says.
+    """
+    if not config.alt.strict or pdf is None or not pdf.is_file():
+        return []
+    from ..check.rules import Severity, check_pdf_structure
+
+    try:
+        findings = check_pdf_structure(pdf, require_bookmarks=config.standards.bookmarks)
+    except Exception as exc:  # a check that crashes must not mask the build
+        return [f"alt-text check could not run: {exc}"]
+    return [
+        f"{finding.rule}: {finding.message}"
+        for finding in findings
+        if finding.severity is Severity.ERROR and finding.rule in _ALT_RULES
+    ]
+
+
+def apply_descriptions(
+    prepared: Prepared, config: RunConfig, profile: Profile
+) -> int:
+    r"""Wrap the mirror's figures in ``Described``. Returns how many.
+
+    This is the step that turns a worklog into accessible output, and it runs
+    against ``prepared.work_dir`` -- the mirrored copy -- so the corpus is never
+    edited. Figure ids are content hashes, so a description written against the
+    corpus file matches its mirrored twin without any path bookkeeping.
+
+    The baseline ``-original.tex`` is deliberately excluded: it exists to be
+    compiled *unconverted* for the visual diff, and wrapping its figures would
+    make the comparison measure this tool against itself.
+    """
+    if not config.alt.scans:
+        return 0
+
+    from ..apply import apply_scope
+    from ..catalog import build_catalog, load_entries
+
+    # The dependency walk, NOT a glob of the assignment directory: this corpus
+    # keeps its figures in shared question files three levels up
+    # (`fall19_questionBank/hw/7/q_multitouch_new.tex`), which a walk of
+    # `work_dir` never reaches. Run against the mirrored driver, so the paths
+    # that come back are the mirror's own copies.
+    files = sorted(
+        path
+        for path in relative_dependencies(prepared.driver)
+        if path.suffix.lower() == ".tex" and not path.stem.endswith("-original")
+    )
+    if not files:
+        return 0
+
+    # Catalogue from the MIRROR, not the corpus. `describe_run` scans the corpus
+    # before any mirror exists, where this corpus's cross-semester includes are
+    # dangling -- `repair_missing` resolves them while materialising, so the
+    # mirror is the first place the document is whole. Scanning it here is what
+    # makes the worklog list every figure instead of the handful reachable
+    # before the repair. Ids are content hashes, so the two agree on any figure
+    # both can see.
+    build_catalog(
+        profile,
+        files=files,
+        write=config.write,
+        output_root=config.output.root if config.write else None,
+        # The mirror repeats the corpus's directory layout, so sharding against
+        # its root yields exactly the worklog names a corpus scan would.
+        shard_root=config.output.tex_dir(),
+    )
+
+    entries = load_entries(profile, config.output.root)
+    if not entries:
+        return 0
+
+    plans = apply_scope(
+        profile,
+        None,
+        entries,
+        dry_run=False,
+        placeholders=config.alt.injects,
+        files=files,
+    )
+    return sum(plan.wrapped for plan in plans)
 
 
 def tex_search_path(*directories: Path) -> str:
@@ -273,11 +420,12 @@ def materialise(
     """
     driver_name = driver or assignment.driver
     if driver_name is None:
-        raise LatexA11yError(
+        raise LatexAllyError(
             f"{assignment.path} has no driver file to build",
             hint="a driver is the .tex containing \\begin{document}",
         )
     write = config.write if write is None else write
+    substitutions: list = []
     root = profile.corpus.root.resolve()
     source_dir = (root / assignment.path).resolve()
     lines = preamble_for(config, profile) if lines is None else lines
@@ -285,18 +433,10 @@ def materialise(
     source = TexSource.from_path(source_dir / driver_name)
     converted = inject(source, lines)
 
-    if config.output.in_place:
-        driver = source_dir / driver_name
-        if write:
-            require_clean_worktree(root)
-            driver.write_bytes(source.encode(converted))
-        return Prepared(
-            assignment, driver, source_dir, _package_tex_dirs(), converted, lines
-        )
-
     mirror_root = config.output.tex_dir().resolve()
     target_dir = (mirror_root / assignment.path).resolve()
     driver = target_dir / driver_name
+    original = target_dir / f"{Path(driver_name).stem}-original.tex"
     if write:
         target_dir.mkdir(parents=True, exist_ok=True)
         for path in sorted(source_dir.iterdir()):
@@ -310,10 +450,21 @@ def materialise(
                 if path.name != driver_name and path.name not in siblings_to_skip:
                     shutil.copy2(path, target_dir / path.name)
         driver.write_bytes(source.encode(converted))
+        # The untouched driver, beside the converted one and inside the same
+        # mirror. The baseline used to compile from the corpus, where a
+        # historical assignment's includes are still missing -- so every
+        # repaired document produced no "before" PDF and its pixel diff read
+        # "one side missing". Built from here, both sides see the same repaired
+        # includes and the diff measures only what the conversion changed.
+        original = target_dir / f"{Path(driver_name).stem}-original.tex"
+        original.write_bytes(source.encode(source.text))
         # Everything the driver reaches by an explicit relative path, at the
         # same offsets, so the mirror builds without the corpus beside it.
         mirror_dependencies(
             source_dir / driver_name, source_dir, target_dir, mirror_root
+        )
+        substitutions = repair_missing(
+            source_dir / driver_name, root, mirror_root, assignment.path
         )
     return Prepared(
         assignment,
@@ -328,6 +479,8 @@ def materialise(
         [target_dir, *_package_tex_dirs(), source_dir],
         converted,
         lines,
+        substitutions,
+        original,
     )
 
 
@@ -404,6 +557,61 @@ def relative_dependencies(
     return seen
 
 
+def repair_missing(
+    driver: Path, corpus_root: Path, mirror_root: Path, assignment_path: str
+) -> list:
+    """Place a stand-in for every include this document cannot resolve.
+
+    Historical assignments reference questions the live bank has since retired;
+    the files survive in the frozen per-semester snapshots. See
+    :mod:`latexally.repair` for how one is chosen, and why choosing carefully
+    matters. Nothing is written to the corpus -- the replacement lands in the
+    mirror at the path the source asked for, so the source is never edited and
+    the substitution is a file you can diff.
+    """
+    from ..repair import assets_beside, find_replacements, unresolved_packages
+    from ..texlex.includes import IncludeGraph
+
+    graph = IncludeGraph([corpus_root])
+    resolved, _ = graph.transitive_inputs(driver)
+    unresolved: list[tuple[Path, str]] = []
+    for source in [driver, *resolved]:
+        try:
+            _, missing = graph.direct_inputs(source)
+        except OSError:
+            continue
+        unresolved.extend((source, target) for target in missing)
+        # A package loaded by path is a dependency the include graph never
+        # followed, so a missing one stopped the build with nothing to point at.
+        unresolved.extend((source, target) for target in unresolved_packages(source))
+    if not unresolved:
+        return []
+
+    semester = assignment_path.split("/", 1)[0]
+    substitutions = find_replacements(
+        unresolved,
+        corpus_root=corpus_root,
+        mirror_root=mirror_root,
+        semester=semester,
+    )
+    for substitution in substitutions:
+        for target in (substitution.destination, substitution.alias):
+            if target is None:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if not target.exists():
+                shutil.copy2(substitution.used, target)
+        # A question carries its figures beside it. Copying the .tex alone
+        # builds a PDF with blank boxes where the circuits should be.
+        for asset, target in assets_beside(
+            substitution.used, substitution.destination
+        ):
+            if target.is_relative_to(mirror_root) and not target.exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(asset, target)
+    return substitutions
+
+
 def mirror_dependencies(
     driver: Path, source_dir: Path, target_dir: Path, mirror_root: Path
 ) -> list[Path]:
@@ -450,7 +658,7 @@ def require_clean_worktree(root: Path) -> None:
     unfinished work and neither can be reviewed separately.
     """
     if shutil.which("git") is None:
-        raise LatexA11yError(
+        raise LatexAllyError(
             "in-place conversion needs git to be undoable, and git is not installed",
             hint="use the default mirror mode, which never touches the corpus",
         )
@@ -461,7 +669,7 @@ def require_clean_worktree(root: Path) -> None:
         check=False,
     )
     if inside.returncode != 0 or inside.stdout.strip() != "true":
-        raise LatexA11yError(
+        raise LatexAllyError(
             f"{root} is not a git repository, so in-place edits could not be undone",
             hint="use mirror mode, or `git init` the corpus first",
         )
@@ -475,7 +683,7 @@ def require_clean_worktree(root: Path) -> None:
     if dirty:
         listed = "\n    ".join(dirty[:8])
         more = f"\n    …and {len(dirty) - 8} more" if len(dirty) > 8 else ""
-        raise LatexA11yError(
+        raise LatexAllyError(
             f"the corpus has {len(dirty)} uncommitted change(s):\n    {listed}{more}",
             hint=(
                 "commit or stash them first, so this tool's edits are reviewable "
@@ -497,6 +705,7 @@ def compile_document(
     profile: Profile,
     jobname: str | None = None,
     search_path: list[Path] | None = None,
+    math_dir: Path | None = None,
 ) -> Path:
     """Run the engine ``min_runs`` times and return the PDF path.
 
@@ -504,12 +713,20 @@ def compile_document(
     marked-content ids through the .aux file: after a single run every ``/MCID``
     in the tree reads 1 while the content stream numbers them 0..n, so the
     reading order is wrong in a way that no error reports.
+
+    Math speech rides on the same repetition: the first run writes the list of
+    formulas latex-lab tagged, the conversion happens between runs, and the
+    remaining runs pick the speech up. No extra compilation is bought.
+
+    ``math_dir`` is where the generated MathML and speech table go. It is not
+    the PDF directory: that holds deliverables, and a reader handed a folder of
+    PDFs should not have to pick them out from among the machinery.
     """
     engine = profile.engine
     if shutil.which(engine.name) is None:
         raise ToolchainError(
             f"{engine.name} is not on PATH",
-            hint="install TeX Live, or run `latexa11y doctor` for the full picture",
+            hint="install TeX Live, or run `latexally doctor` for the full picture",
         )
     # Absolute before it reaches the subprocess: -output-directory is resolved
     # against the child's cwd, which is the directory being built, not ours.
@@ -518,8 +735,13 @@ def compile_document(
     jobname = jobname or driver.stem
 
     environment = dict(os.environ)
-    if search_path:
-        environment["TEXINPUTS"] = tex_search_path(*search_path)
+    # The output directory has to be on the *input* path too. TeX does not put
+    # it there: -output-directory governs where files are written, and an
+    # \input of a generated file next to the .aux fails with "File not found"
+    # -- verified, and silent in nonstop mode. The generated math speech table
+    # lives there, and it must not be written into the corpus instead.
+    inputs = [output_dir] + ([math_dir] if math_dir else []) + list(search_path or [])
+    environment["TEXINPUTS"] = tex_search_path(*inputs)
 
     command = [
         engine.name,
@@ -528,7 +750,8 @@ def compile_document(
         f"-jobname={jobname}",
         str(driver),
     ]
-    for _ in range(max(1, engine.min_runs)):
+    runs = max(1, engine.min_runs)
+    for index in range(runs):
         try:
             subprocess.run(
                 command,
@@ -539,11 +762,41 @@ def compile_document(
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise LatexA11yError(
+            raise LatexAllyError(
                 f"{engine.name} timed out after {engine.timeout_seconds}s on {driver.name}",
                 hint="raise engine.timeout_seconds in the profile, or fix the loop",
             ) from exc
+        if math_dir is not None and index == 0 and runs > 1:
+            _convert_math(output_dir, math_dir, jobname)
     return output_dir / f"{jobname}.pdf"
+
+
+def _convert_math(output_dir: Path, math_dir: Path, jobname: str) -> None:
+    """Turn the formulas the first run reported into speech for the next one.
+
+    Never fatal. A missing Node, a missing extra, or one unconvertible equation
+    must not destroy an otherwise good build: the result is a Formula without
+    an /Alt, and ``ALLY-PDF-040`` reports that as an error against the artefact,
+    which is a finding somebody can act on.
+    """
+    from ..mathspeech import convert, read_dummy, write_sources
+
+    # The dummy is written by the engine, which sends every stream to its
+    # -output-directory; the generated files are ours and go elsewhere.
+    dummy = output_dir / f"{jobname}-mathml-dummy.html"
+    if not dummy.is_file():
+        return
+    try:
+        formulas = read_dummy(dummy)
+        if not formulas:
+            return
+        math_dir.mkdir(parents=True, exist_ok=True)
+        # The cache lives with them, keyed by latex-lab's hash: a rebuild after
+        # editing one equation converts one equation.
+        results = convert(formulas, cache=math_dir / f"{jobname}-mathspeech.json")
+        write_sources(results, formulas, jobname, math_dir)
+    except LatexAllyError:
+        return
 
 
 # ---------------------------------------------------------------------- #
@@ -567,17 +820,51 @@ class BuildReport:
     pages: int | None = None
     bookmarks: int | None = None
     figures: int | None = None
+    #: Figures wrapped in `Described` from an approved worklog entry this build.
+    described: int = 0
     #: Fraction of strongly-differing pixels vs the untouched original, 0..1.
     pixel_diff: float | None = None
     #: Set when the comparison could not be made, with the reason.
     diff_note: str | None = None
     injected: list[str] = field(default_factory=list)
     note: str | None = None
+    #: Includes the corpus could not resolve, and what stood in for them.
+    substitutions: list = field(default_factory=list)
+
+    @property
+    def substituted(self) -> bool:
+        """True when this document contains a question from another semester."""
+        return bool(self.substitutions)
+
+    @property
+    def uncertain(self) -> bool:
+        """True when a stand-in was picked from candidates that DIFFER.
+
+        Such a document is not a faithful conversion of anything and must never
+        be reported as a clean one.
+        """
+        return any(item.ambiguous for item in self.substitutions)
+
+    @property
+    def built(self) -> bool:
+        """A PDF came out. ``ok`` additionally requires a clean log.
+
+        The two are not the same outcome and must not read as one. A missing
+        ``\\input`` stops the run dead and produces nothing; a "Missing number,
+        treated as zero" leaves a PDF that opens, paginates and diffs -- with a
+        dimension silently wrong somewhere inside it. Reporting both as
+        "failed" sent people looking for output that was already on disk;
+        reporting both as "ok" is the false pass this package exists to
+        prevent.
+        """
+        return self.pdf is not None
 
     def as_dict(self) -> dict:
         return {
             "assignment": self.assignment,
             "ok": self.ok,
+            "built": self.built,
+            "substitutions": [item.as_dict() for item in self.substitutions],
             "variant": self.variant,
             "driver": self.driver,
             "pdf": str(self.pdf) if self.pdf else None,
@@ -587,6 +874,7 @@ class BuildReport:
             "pages": self.pages,
             "bookmarks": self.bookmarks,
             "figures": self.figures,
+            "described": self.described,
             "pixel_diff": self.pixel_diff,
             "diff_note": self.diff_note,
             "injected": self.injected,
@@ -632,7 +920,23 @@ def _log_findings(log: Path | None) -> tuple[list[str], list[str]]:
             errors.append(_unwrap(lines, index))
         elif "tagpdf Warning" in line:
             warnings.append(_unwrap(lines, index))
+    dropped = text.count(_TOUNICODE_DROPPED)
+    if dropped:
+        warnings.append(
+            f"pdfTeX dropped {dropped} ToUnicode mapping(s) as out of range; "
+            "ligatures and composed symbols will extract as presentation forms"
+        )
     return errors, warnings
+
+
+#: pdfTeX says this when \pdfglyphtounicode is handed a value it cannot parse,
+#: and then SILENTLY DROPS the mapping. It happened here because
+#: glyphtounicode.tex spells multi-codepoint entries "{0066 0066 0069}" and was
+#: being read under expl3 catcodes, where space is ignored -- 119 glyphs per
+#: document, every one of which then extracted as its presentation form
+#: ("difficult" -> "di<U+FB03>cult"), breaking search and reading badly aloud.
+#: Cheap to check, invisible otherwise: the build is "clean" while it happens.
+_TOUNICODE_DROPPED = "ToUnicode: value out of range"
 
 
 #: TeX hard-wraps its log at `max_print_line` (79 by default) with no
@@ -649,15 +953,18 @@ def _unwrap(lines: list[str], index: int, limit: int = 3) -> str:
     this safe: a message shorter than the wrap width was never split, so nothing
     unrelated is ever glued onto it.
     """
-    message = lines[index].strip()
-    joined = message
+    # lstrip, never strip: TeX breaks at exactly max_print_line without
+    # dropping a character, so a space sitting on the boundary is part of the
+    # message. Stripping it turned "not found" into "notfound" -- and would
+    # silently close up a path that happened to break on a space.
+    joined = lines[index].lstrip()
     cursor = index
     while len(lines[cursor]) >= _WRAP_WIDTH and cursor + 1 < len(lines) and limit > 0:
         cursor += 1
         nxt = lines[cursor]
         if not nxt.strip() or _LOG_ERROR.match(nxt.strip()):
             break
-        joined += nxt.rstrip() if joined.endswith("-") else nxt.rstrip()
+        joined += nxt
         limit -= 1
     return " ".join(joined.split())
 
@@ -734,7 +1041,7 @@ def compare_pdfs(original: Path, converted: Path) -> tuple[float | None, str | N
 
 
 def _collect_log(pdf: Path, config: RunConfig) -> Path | None:
-    """Move a build's .log into the log directory; drop the .aux beside it.
+    """Move a build's .log into the log directory and bin the intermediates.
 
     Returns the log's new location, or its old one if the move fails -- a log
     that could not be relocated is still a log worth reading.
@@ -750,13 +1057,37 @@ def _collect_log(pdf: Path, config: RunConfig) -> Path | None:
         shutil.move(str(produced), destination)
     except OSError:  # pragma: no cover
         return produced
-    for leftover in (".aux", ".out", ".annotations"):
+    # pdflatex drops the formula list beside the PDF so the speech pass can
+    # find the formulas; read_dummy consumes it and nothing reads it again.
+    # Filing it under math/ only moved the clutter -- unlike its neighbours
+    # there, which the *next* LaTeX run reads: `-mathml.html` carries the
+    # MathML and `-mathspeech.ltx` the spoken strings. Those two are inputs,
+    # not debris, and deleting them would silently cost the run its spoken
+    # math.
+    dummy = pdf.parent / f"{pdf.stem}-mathml-dummy.html"
+    if dummy.is_file():
+        try:
+            dummy.unlink()
+        except OSError:  # pragma: no cover
+            pass
+    # .aux and .out are cross-reference intermediates, rewritten from scratch
+    # on every run and readable by nothing. They used to be *moved* into the
+    # log directory, which kept pdf/ tidy by making logs/ the dumping ground
+    # instead -- fifteen files to find one. .annotations is kept for now so
+    # combine_logs can fold anything it actually says into run.log.
+    for leftover in (".aux", ".out"):
         candidate = pdf.with_suffix(leftover)
         if candidate.is_file():
             try:
-                shutil.move(str(candidate), config.output.log_dir() / candidate.name)
+                candidate.unlink()
             except OSError:  # pragma: no cover
                 pass
+    annotations = pdf.with_suffix(".annotations")
+    if annotations.is_file():
+        try:
+            shutil.move(str(annotations), config.output.log_dir() / annotations.name)
+        except OSError:  # pragma: no cover
+            pass
     return destination
 
 
@@ -794,31 +1125,47 @@ def build_assignment(
         driver=driver,
         siblings_to_skip=siblings_to_skip,
     )
+    report.substitutions = prepared.substitutions
     if not config.write:
         report.ok = True
         report.note = "dry run: nothing written"
         return report
 
-    slug = assignment.path.replace("/", "-")
-    if variant and variant != "document":
-        slug = f"{slug}-{variant}"
-    pdf_dir = config.output.pdf_dir()
+    # Approved descriptions become real /Alt HERE, in the mirror `materialise`
+    # just wrote -- never in the corpus. Without this step a run scans figures,
+    # writes worklogs, and then builds a PDF whose figures still carry
+    # latex-lab's default alt: the source file name, read aloud verbatim.
+    report.described = apply_descriptions(prepared, config, profile)
+
+    slug = base_slug(assignment.path, variant)
+    # `in-place` is a destination for the PDF, not a licence to edit the source.
+    # It used to rewrite the corpus driver, guarded by a clean git worktree; the
+    # conversion is now always mirrored and the only thing that reaches the
+    # corpus is the finished document, beside the original it was built from.
+    if config.output.in_place:
+        # Additive, but not harmless: a PDF of the same name may already sit
+        # there. The clean-worktree guard is what makes that revertible, and it
+        # is the same one this mode has always used.
+        require_clean_worktree(profile.corpus.root.resolve())
+        pdf_dir = (profile.corpus.root / assignment.path).resolve()
+    else:
+        pdf_dir = config.output.pdf_dir()
 
     # The untouched original first and immediately before the converted build:
     # \timestamp in the running header means a pair built minutes apart differs
     # on every page for reasons unrelated to this tool.
     original_pdf: Path | None = None
-    if compare and not config.output.in_place:
-        root = profile.corpus.root.resolve()
+    if compare and prepared.original is not None:
         try:
             original_pdf = compile_document(
-                (root / assignment.path / driver),
-                work_dir=root / assignment.path,
+                prepared.original,
+                work_dir=prepared.work_dir,
                 output_dir=config.output.baseline_dir(),
                 profile=profile,
-                jobname=f"{slug}-original",
+                jobname=original_slug(slug),
+                search_path=prepared.search_path,
             )
-        except LatexA11yError:
+        except LatexAllyError:
             original_pdf = None
 
     pdf = compile_document(
@@ -826,8 +1173,9 @@ def build_assignment(
         work_dir=prepared.work_dir,
         output_dir=pdf_dir,
         profile=profile,
-        jobname=slug,
+        jobname=accessible_slug(slug),
         search_path=prepared.search_path,
+        math_dir=config.output.math_dir() if config.standards.math_speech else None,
     )
     report.pdf = pdf if pdf.is_file() else None
     # pdflatex writes .pdf, .log and .aux to one -output-directory. Move the log
@@ -843,6 +1191,8 @@ def build_assignment(
     )
     if original_pdf is not None:
         report.pixel_diff, report.diff_note = compare_pdfs(original_pdf, pdf)
+
+    report.errors += _alt_text_failures(pdf, config)
 
     report.ok = report.pdf is not None and not report.errors
     if report.pdf is None and not report.errors:
@@ -882,7 +1232,7 @@ def describe_run(config: RunConfig, profile: Profile) -> dict:
     Returns a summary dict; the caller decides how to display it.
     """
     from ..catalog import build_catalog
-    from ..run import iter_selected
+    from ..discover import iter_selected
 
     if not config.alt.scans:
         return {"scanned": False}
@@ -909,6 +1259,193 @@ def describe_run(config: RunConfig, profile: Profile) -> dict:
     }
 
 
+def combine_logs(config: RunConfig, reports: list[BuildReport]) -> Path | None:
+    """Fold every document's LaTeX log into one file for the run.
+
+    pdflatex writes one log per document, so a directory that used to hold
+    three of them holds thirty-eight after a fortnight, and finding the run you
+    care about means reading timestamps. One file per run, sections banner-
+    separated and greppable, and each report repointed at it so every "full
+    log:" line in the output leads somewhere that exists.
+    """
+    if not config.write:
+        return None
+    merged = [report for report in reports if report.log and report.log.is_file()]
+    if not merged:
+        return None
+    log_dir = config.output.log_dir()
+    combined = log_dir / "run.log"
+    parts: list[str] = []
+    baseline_dir = config.output.baseline_dir()
+    for report in merged:
+        slug = _slug_for(report)
+        parts.append(f"{'=' * 78}\n=== {slug}\n{'=' * 78}\n")
+        parts.append(report.log.read_text(encoding="utf-8", errors="replace"))
+        parts.append(_annotations_of(log_dir / f"{accessible_slug(slug)}.annotations"))
+        # The untouched build's log belongs here too. It is the half that
+        # explains a "one side missing" diff, and it was being left in
+        # baseline/ beside its own pile of .aux and .out.
+        before = baseline_dir / f"{original_slug(slug)}.log"
+        if before.is_file():
+            parts.append(f"{'=' * 78}\n=== {slug}-original\n{'=' * 78}\n")
+            parts.append(before.read_text(encoding="utf-8", errors="replace"))
+    combined.parent.mkdir(parents=True, exist_ok=True)
+    combined.write_text("\n".join(parts), encoding="utf-8")
+    for report in merged:
+        if report.log != combined:
+            try:
+                report.log.unlink()
+            except OSError:  # pragma: no cover
+                pass
+        report.log = combined
+    # Both directories hold only deliverables now: run.log here, PDFs there.
+    # Anything with these extensions is a LaTeX intermediate this tool put
+    # there, including the ones left by runs before it stopped doing that.
+    strays = [
+        path
+        for directory in (log_dir, baseline_dir)
+        for pattern in ("*.aux", "*.out", "*.annotations", "*-original.log")
+        for path in directory.glob(pattern)
+    ]
+    for leftover in strays:
+        try:
+            leftover.unlink()
+        except OSError:  # pragma: no cover
+            pass
+    return combined
+
+
+def _annotations_of(path: Path) -> str:
+    """The tagging annotations for one document, when it wrote any.
+
+    latex-lab emits an ``.annotations`` file per document; almost always it is
+    the eighteen bytes of its own header and nothing else. Folded in when there
+    is something to fold, skipped when there is not, rather than left as a file
+    per document beside the log.
+    """
+    if not path.is_file():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:  # pragma: no cover
+        return ""
+    body = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith(("BEGIN ANNOTATIONS", "END ANNOTATIONS"))
+    ]
+    if not body:
+        return ""
+    return "\n".join([f"--- annotations: {path.stem}", *body, ""])
+
+
+def _slug_for(report: BuildReport) -> str:
+    """The BASE name of an assignment's artefacts, with no provenance suffix."""
+    return base_slug(report.assignment, report.variant)
+
+
+def write_report(config: RunConfig, reports: list[BuildReport]) -> Path | None:
+    """Write a plain-text account of the run beside what it produced.
+
+    ``run.yaml`` records how the run was configured and says nothing about how
+    it went, and the runner's own report goes back to the terminal it came
+    from. Neither survives closing the window, which left "it failed" as
+    something to be retyped by hand. This is greppable, pasteable, and sits
+    next to the PDFs it describes.
+    """
+    if not config.write:
+        return None
+    path = config.output.root / "build-log.txt"
+    lines = [
+        f"latexally {len(reports)} document(s), profile {config.profile}",
+        f"output: {config.output.root}  ({config.output.write_mode})",
+        "",
+        f"{'assignment':<28} {'document':<10} {'state':<10} "
+        f"{'pages':>5} {'marks':>5} {'figs':>5}  pixel diff",
+    ]
+    for report in reports:
+        state = "ok" if report.ok else ("errors" if report.built else "FAILED")
+        if report.uncertain:
+            state = "SUBSTITUTED"
+        elif report.substituted and state == "ok":
+            state = "ok (repaired)"
+        diff = (
+            f"{100 * report.pixel_diff:.2f}%"
+            if report.pixel_diff is not None
+            else (report.diff_note or "-")
+        )
+        lines.append(
+            f"{report.assignment:<28} {report.variant:<10} {state:<10} "
+            f"{_or_dash(report.pages):>5} {_or_dash(report.bookmarks):>5} "
+            f"{_or_dash(report.figures):>5}  {diff}"
+        )
+    for report in reports:
+        if report.ok:
+            continue
+        lines += [
+            "",
+            f"{report.assignment} ({report.variant}) "
+            + (
+                f"built, with {len(report.errors)} error(s) in the log"
+                if report.built
+                else "failed - no PDF"
+            ),
+        ]
+        if report.note:
+            lines.append(f"  {report.note}")
+        lines += [f"  {line}" for line in report.errors]
+        lines += [f"  tagpdf: {line}" for line in report.tagpdf_warnings[:10]]
+        if report.pdf:
+            lines.append(f"  pdf: {report.pdf}")
+        if report.log:
+            lines.append(
+                f"  full log: {report.log}  (search '=== {_slug_for(report)}')"
+            )
+    repaired = [report for report in reports if report.substituted]
+    if repaired:
+        lines += [
+            "",
+            "=" * 78,
+            "SUBSTITUTED INCLUDES",
+            "=" * 78,
+            "",
+            "These files were missing from the corpus. Each was found elsewhere",
+            "and copied into the output mirror so the document could build. The",
+            "corpus was NOT modified -- to make the fix permanent, apply the",
+            "action under each entry.",
+            "",
+            "A line marked DIFFERS means the candidate banks did not agree: the",
+            "stand-in is one of several versions and may not be the question the",
+            "assignment originally asked. Check that one by hand before shipping",
+            "the PDF.",
+        ]
+        for report in repaired:
+            lines += ["", f"{report.assignment} ({report.variant})"]
+            for item in report.substitutions:
+                mark = "  DIFFERS  " if item.ambiguous else "  ok       "
+                lines += [
+                    f"{mark}{item.wanted}",
+                    f"             referenced by: {item.referenced_by}",
+                    f"             stood in from: {item.used}",
+                    f"             fix: {item.fix}",
+                ]
+                if item.ambiguous:
+                    lines.append(
+                        f"             {len(item.candidates)} candidates, not "
+                        "all identical:"
+                    )
+                    lines += [
+                        f"               {path}" for path in item.candidates[:8]
+                    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _or_dash(value: int | None) -> str:
+    return "-" if value is None else str(value)
+
+
 def build_run(
     config: RunConfig,
     profile: Profile,
@@ -921,7 +1458,7 @@ def build_run(
     ``on_start``/``on_finish`` let the TUI draw progress without this module
     importing anything that knows about a terminal.
     """
-    from ..run import iter_selected
+    from ..discover import iter_selected
 
     lines = preamble_for(config, profile)
 
@@ -977,7 +1514,7 @@ def build_run(
                     driver=driver,
                     siblings_to_skip=converted,
                 )
-            except LatexA11yError as exc:
+            except LatexAllyError as exc:
                 report = BuildReport(
                     assignment=assignment.path,
                     variant=variant,
@@ -988,4 +1525,6 @@ def build_run(
             reports.append(report)
             if on_finish:
                 on_finish(report)
+    combine_logs(config, reports)
+    write_report(config, reports)
     return reports

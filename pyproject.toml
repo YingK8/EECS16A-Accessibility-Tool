@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "latexa11y"
+name = "latexally"
 version = "0.1.0"
 description = "Convert LaTeX instructional materials into tagged, ADA Title II / PDF/UA-conforming PDFs"
 readme = "README.md"
@@ -23,24 +23,35 @@ classifiers = [
 dependencies = [
     "click>=8.1",
     "rich>=13.0",
+    "textual>=0.80",
     "PyYAML>=6.0",
 ]
 
 [project.optional-dependencies]
 pdf = ["pikepdf>=8.0"]
-tui = ["textual>=0.60", "PyMuPDF>=1.24"]
-tex = ["pylatexenc>=2.10"]
-dev = ["pytest>=7.4", "pytest-cov>=4.1"]
+tui = ["PyMuPDF>=1.24"]
+math = ["latex2mathml>=3.77"]
 all = [
     "pikepdf>=8.0",
-    "textual>=0.60",
     "PyMuPDF>=1.24",
-    "pylatexenc>=2.10",
+    "latex2mathml>=3.77",
+]
+
+# Synced by default, so `uv run` gives you a fully capable tool rather than one
+# that degrades three ways and tells you to install extras. The extras above
+# stay as they are for anyone installing with pip; this group only says which
+# of them a developer working in the repo should always have. Self-referencing
+# `latexally[all]` rather than restating the pins keeps one list, not two.
+[dependency-groups]
+dev = [
+    "latexally[all]",
     "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "pytest-asyncio>=0.23",
 ]
 
 [project.scripts]
-latexa11y = "latexa11y.cli:main"
+latexally = "latexally.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/YingK8/EECS16A-Accessibility-Tool"
@@ -52,8 +63,9 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-latexa11y = ["py.typed"]
+latexally = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 filterwarnings = ["error::DeprecationWarning"]

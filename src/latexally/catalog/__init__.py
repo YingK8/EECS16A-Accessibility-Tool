@@ -12,8 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import Profile
+from ..errors import CatalogError
 from ..describe import describe_reference
-from ..scan.figures import FigureRef, scan_corpus
+from ..scan import FigureRef, scan_corpus
 from ..texlex import TexSource
 from .worklog import Entry, Worklog, merge, read_worklog, write_worklog
 
@@ -48,17 +49,47 @@ class CatalogResult:
         }
 
 
-def worklog_dir(profile: Profile, output_root: Path | None = None) -> Path:
-    """Where description worklogs live.
+#: Where a run writes when nobody says otherwise. Kept here as well as on
+#: `Output.root` so a bare `scan` and a full `build` agree without one
+#: importing the other.
+DEFAULT_OUTPUT_ROOT = Path("ally-out")
 
-    Defaults to ``<corpus>/<catalog_dir>/descriptions``, beside the material
-    being described. ``output_root`` redirects it, which is what lets a run keep
-    every artifact it produces in one place the user chose -- and what lets the
-    corpus stay strictly read-only in mirror mode.
+
+def worklog_dir(profile: Profile, output_root: Path | None = None) -> Path:
+    """Where description worklogs live: under the output root, never the corpus.
+
+    Resolved against ``output_root``, falling back to
+    :data:`DEFAULT_OUTPUT_ROOT` so a bare ``latexally scan`` writes where a
+    build does.
+
+    It used to default to ``<corpus>/<catalog_dir>/descriptions`` -- beside the
+    material, which reads well and is wrong. The corpus is somebody's course
+    repository, and a tool that quietly grows directories inside it is a tool
+    people stop trusting. Nothing this package produces belongs there.
     """
-    if output_root is not None:
-        return Path(output_root) / "descriptions"
-    return profile.corpus.root / profile.catalog_dir / "descriptions"
+    root = Path(output_root) if output_root is not None else DEFAULT_OUTPUT_ROOT
+    directory = (root / "descriptions").resolve()
+    _refuse_inside_corpus(directory, profile)
+    return directory
+
+
+def _refuse_inside_corpus(directory: Path, profile: Profile) -> None:
+    """Fail loudly rather than write into the material being converted.
+
+    A guard, not a nicety: every other safeguard here assumes the corpus is
+    read-only in mirror mode, and a redirected output root is exactly the kind
+    of setting somebody points at the wrong place once.
+    """
+    corpus = profile.corpus.root.resolve()
+    if directory == corpus or corpus in directory.parents:
+        raise CatalogError(
+            f"worklogs would be written inside the corpus: {directory}",
+            hint=(
+                "the corpus holds the course material and this tool never writes "
+                "into it; point --output somewhere else"
+            ),
+        )
+
 
 
 def _shard_for(reference: FigureRef, root: Path) -> str:
@@ -83,14 +114,20 @@ def build_catalog(
     write: bool = True,
     files: list[Path] | None = None,
     output_root: Path | None = None,
+    shard_root: Path | None = None,
 ) -> CatalogResult:
     """Scan a scope and refresh its worklogs.
 
     ``files`` scans an explicit list instead of a scope glob. That is how an
     assignment is scanned honestly: its graphics mostly are not in its own
-    directory (see :func:`latexa11y.scan.figures.scan_corpus`).
+    directory (see :func:`latexally.scan.scan_corpus`).
+
+    ``shard_root`` is the directory worklog names are taken relative to. It
+    exists for scanning the build mirror, whose layout repeats the corpus's but
+    whose paths are not under it -- without it every mirrored file lands in one
+    ``external`` worklog and each assignment overwrites the last.
     """
-    root = profile.corpus.root.resolve()
+    root = (shard_root or profile.corpus.root).resolve()
     references = scan_corpus(profile, scope, files=files)
 
     by_id: dict[str, list[FigureRef]] = defaultdict(list)
@@ -138,6 +175,15 @@ def build_catalog(
         shard_of[identity] = _shard_for(primary, root)
 
     directory = worklog_dir(profile, output_root)
+    # Descriptions outlive any one run. They are content-addressed and were
+    # written by a person, so the corpus catalogue is always the merge base --
+    # even when `output_root` sends this run's worklogs somewhere else.
+    #
+    # Without this, `-o somewhere-new` starts from zero every time: a scan
+    # reports "0 described, 17 outstanding" while approved descriptions for six
+    # of those very figures sit in the corpus, and the build ships the figures
+    # with no /Alt. The corpus stays read-only -- it is read, never written.
+    baseline = worklog_dir(profile)
     grouped: dict[str, dict[str, Entry]] = defaultdict(dict)
     for identity, entry in entries.items():
         grouped[shard_of[identity]][identity] = entry
@@ -145,7 +191,15 @@ def build_catalog(
     worklogs: dict[Path, Worklog] = {}
     for shard, shard_entries in grouped.items():
         path = directory / f"{shard}.md"
-        merged = merge(read_worklog(path), shard_entries)
+        previous = read_worklog(path)
+        if baseline != directory:
+            # This run's own worklog wins over the corpus, so a description
+            # edited inside an output directory is not reverted by an older
+            # one carrying the same id.
+            inherited = read_worklog(baseline / f"{shard}.md")
+            inherited.entries.update(previous.entries)
+            previous = inherited
+        merged = merge(previous, shard_entries)
         merged.path = path
         merged.scope = shard
         worklogs[path] = merged

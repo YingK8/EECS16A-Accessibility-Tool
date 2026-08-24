@@ -27,12 +27,11 @@ answer, so the tool deliberately does not guess it.
 
 from __future__ import annotations
 
-import math
 import re
 from collections import Counter, defaultdict
 
 from ..texlex import TexSource
-from .common import Skeleton, latex_to_text, parse_options, split_top_level
+from .common import Skeleton, latex_to_text, parse_options
 
 __all__ = ["describe_circuit"]
 

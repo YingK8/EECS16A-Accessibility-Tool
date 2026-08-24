@@ -17,56 +17,68 @@ wrapper but can never corrupt the figure it wraps.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..catalog.worklog import Entry
-from ..config import Profile
-from ..errors import LatexA11yError
-from ..scan.figures import FigureRef, scan_file
-from ..texlex import EditBuffer, TexSource
+from .catalog.worklog import Entry
+from .config import Profile
+from .errors import LatexAllyError
+from .scan import FigureRef, scan_file
+from .texlex import EditBuffer, TexSource
 
 __all__ = ["ApplyPlan", "plan_file", "apply_scope", "escape_description", "DescriptionRejected"]
 
+#: Characters LaTeX cannot take literally in an argument, and the words that
+#: replace them. Words, NOT escapes: tagpdf writes `alt`/`actualtext` with a
+#: byte-level \str_set_convert:Noon (tagpdf-mc-code-generic.sty:392), so a
+#: `\%` reaches the PDF as the four characters `\%` and a screen reader says
+#: "backslash percent". Escaping is therefore not merely unnecessary here, it
+#: is the bug. Spelling `_` as " sub " also matches how the math speech layer
+#: already renders subscripts ("R sub 1"), so a figure and a formula that name
+#: the same quantity sound the same.
 _TEX_SPECIALS = {
-    "\\": r"\textbackslash{}",
-    "&": r"\&",
-    "%": r"\%",
-    "$": r"\$",
-    "#": r"\#",
-    "_": r"\_",
-    "^": r"\textasciicircum{}",
-    "~": r"\textasciitilde{}",
+    "\\": " ",
+    "&": " and ",
+    "%": " percent",
+    "$": " ",
+    "#": " number ",
+    "_": " sub ",
+    "^": " to the power ",
+    "~": " ",
+    "{": " ",
+    "}": " ",
 }
 
 
-class DescriptionRejected(LatexA11yError):
+class DescriptionRejected(LatexAllyError):
     """A description cannot be written into LaTeX as-is."""
 
 
 def escape_description(text: str) -> str:
-    """Make a description safe to place inside a LaTeX argument.
+    r"""Reduce a description to prose that is safe in LaTeX *and* in the PDF.
 
-    Braces are escaped rather than rejected. The previous tool refused any
-    description containing ``{`` or ``}``, which in a linear-algebra course
-    rules out most natural phrasings; the fix is to escape properly, not to
-    forbid the characters.
+    The string has to survive two readers with incompatible rules. LaTeX must
+    parse it as a macro argument, so a bare ``%`` or ``#`` is impossible. tagpdf
+    then writes it into ``/Alt`` byte for byte, with no ``\pdfstringdef``-style
+    expansion, so a LaTeX *escape* is impossible too -- ``\%`` arrives at the
+    screen reader as "backslash percent".
+
+    Nothing satisfies both except a string containing no specials at all, which
+    is what ``docs/ALT_TEXT_SPEC.md`` rule 1 already asks authors for ("Plain
+    words only. No ``$``, no backslashes, no braces"). This enforces the rule
+    rather than papering over it, so a description that ignores it degrades to
+    readable speech instead of shipping visible markup.
     """
     collapsed = " ".join(text.split())
     if not collapsed:
         raise DescriptionRejected("empty description")
-    out: list[str] = []
-    for char in collapsed:
-        if char == "{":
-            out.append(r"\{")
-        elif char == "}":
-            out.append(r"\}")
-        elif char in _TEX_SPECIALS:
-            out.append(_TEX_SPECIALS[char])
-        else:
-            out.append(char)
-    return "".join(out)
+    out = "".join(_TEX_SPECIALS.get(char, char) for char in collapsed)
+    # The substitutions introduce spacing of their own ("R_1" -> "R sub 1"),
+    # and doubled or trailing space is audible as a pause.
+    spoken = " ".join(out.split())
+    if not spoken:
+        raise DescriptionRejected("description is only punctuation")
+    return spoken
 
 
 @dataclass(slots=True)
@@ -98,7 +110,7 @@ class ApplyPlan:
 
 
 #: Marker written for a figure nobody has described yet. It is deliberately one
-#: of the strings ``latexa11y-core.sty`` refuses to accept as alt text, so a
+#: of the strings ``latexally-core.sty`` refuses to accept as alt text, so a
 #: document still carrying one CANNOT be built in strict mode. See
 #: ``_wrap_placeholder`` for why that inversion is the whole safety argument.
 PLACEHOLDER = "<<TODO:{id}>>"
@@ -141,20 +153,52 @@ def plan_file(
         except DescriptionRejected as exc:
             plan.skipped.append((reference.id, str(exc)))
             continue
-        _wrap_described(plan, reference, alt)
+        _wrap_described(plan, reference, alt, entry.long_description)
         plan.wrapped += 1
     return plan
 
 
-def _wrap_described(plan: ApplyPlan, reference: FigureRef, alt: str) -> None:
-    if reference.is_raster:
+def _continues_line(plan: ApplyPlan, reference: FigureRef) -> bool:
+    r"""True when the figure's own line carries content after it.
+
+    The block form opens with ``\par``, so it needs vertical mode. A figure
+    whose line continues is not in vertical mode: the usual case is a trailing
+    ``\\`` ending a `center` line or a tabular row, and ``\end{Described}``
+    before it strands that ``\\`` with no line to end -- a hard build failure.
+    The inline ``\described`` is an ``\mbox``; it leaves the surrounding mode,
+    and the ``\\``, exactly as the author wrote them.
+    """
+    line_end = plan.original.find("\n", reference.end)
+    tail = plan.original[reference.end : len(plan.original) if line_end < 0 else line_end]
+    return bool(tail.strip())
+
+
+def _wrap_described(
+    plan: ApplyPlan, reference: FigureRef, alt: str, long: str = ""
+) -> None:
+    continues = _continues_line(plan, reference)
+
+    # The long description is ordinary body text placed after the figure, so it
+    # needs vertical mode just as the block form does. A figure sharing its line
+    # has nowhere safe to put it; say so rather than emit a \par into a tabular
+    # cell.
+    tail = ""
+    if long.strip():
+        if continues:
+            plan.skipped.append(
+                (reference.id, "long description not written: figure shares its line")
+            )
+        else:
+            tail = f"\n\\LongDescription{{{escape_description(long)}}}"
+
+    if reference.is_raster or continues:
         # Inline form: an \includegraphics usually sits inside running text or a
         # centring group, where a display-level environment would change layout.
         plan.buffer.wrap(
             reference.start,
             reference.end,
             f"\\described{{{alt}}}{{%\n",
-            "}",
+            "}" + tail,
             reason="figure alt text",
             rule="APPLY-DESCRIBED-INLINE",
         )
@@ -163,7 +207,7 @@ def _wrap_described(plan: ApplyPlan, reference: FigureRef, alt: str) -> None:
             reference.start,
             reference.end,
             f"\\begin{{Described}}{{{alt}}}\n",
-            "\n\\end{Described}",
+            "\n\\end{Described}" + tail,
             reason="figure alt text",
             rule="APPLY-DESCRIBED-BLOCK",
         )
@@ -180,14 +224,14 @@ def _wrap_placeholder(plan: ApplyPlan, reference: FigureRef) -> None:
     silent false claim of conformance on material carrying a legal obligation.
 
     What makes the option safe here is that the guarantee is inverted. The
-    marker is one of the strings ``latexa11y-core.sty`` recognises as a
+    marker is one of the strings ``latexally-core.sty`` recognises as a
     placeholder, and in strict mode -- the default -- that is a hard LaTeX
     **error**, not a warning. A document with an unfilled placeholder therefore
     does not build at all. The marker cannot reach a PDF, so it cannot lie about
     one; the worst case is a build failure naming the file and the figure.
     """
     marker = PLACEHOLDER.format(id=reference.id)
-    if reference.is_raster:
+    if reference.is_raster or _continues_line(plan, reference):
         plan.buffer.wrap(
             reference.start,
             reference.end,
@@ -230,7 +274,7 @@ def apply_scope(
     """Plan (and optionally write) edits across a scope.
 
     ``files`` overrides the scope glob, for the same reason
-    :func:`~latexa11y.scan.figures.scan_corpus` accepts one: an assignment's
+    :func:`~latexally.scan.scan_corpus` accepts one: an assignment's
     figures overwhelmingly are not in its own directory.
     """
     plans: list[ApplyPlan] = []

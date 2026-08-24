@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from ..config import Profile
-from ..texlex import EnvSpan, TexSource
+from .config import Profile
+from .texlex import EnvSpan, TexSource
 
 __all__ = ["FigureRef", "scan_file", "scan_corpus", "IMAGE_EXTENSIONS"]
 
@@ -39,7 +39,19 @@ _LABEL = re.compile(r"\\label\s*\{([^{}]*)\}")
 _QUESTION = re.compile(r"\\(?:qns|question|q)\s*(?:\[[^\]]*\])?\s*\{")
 _SOLUTION_ENV = ("solution", "answer", "guidance")
 _SOLUTION_MACRO = re.compile(r"\\(?:sol|ans|solans)\s*\{")
-_ALREADY = re.compile(r"\\begin\s*\{(?:Described|DescribedFigure|Decorative)\}")
+#: A wrapper this tool already wrote. It must match the INLINE forms too --
+#: `\described{...}{%` is what every raster and every line-continuing figure
+#: gets -- or a second apply run nests a fresh wrapper inside the first and the
+#: description is typeset, and spoken, twice.
+#:
+#: Anchored at the end of the preceding text on purpose. An unanchored search
+#: would see the wrapper belonging to a NEARBY figure and skip a figure that
+#: has no description of its own.
+_ALREADY = re.compile(
+    r"(?:\\begin\s*\{(?:Described|DescribedFigure|Decorative)\}[^\n]*"
+    r"|\\(?:described|decorative)\s*\{.*\}\s*\{%?)\s*\Z",
+    re.DOTALL,
+)
 
 
 @dataclass(slots=True)
@@ -232,7 +244,10 @@ def scan_file(path: Path, profile: Profile) -> list[FigureRef]:
 def _build(
     *, source: TexSource, path: Path, identity: str, kind: str, start: int, end: int
 ) -> FigureRef:
-    preceding = source.text[max(0, start - 300) : start]
+    # Wide enough to contain a whole wrapper: the alt argument sits between
+    # `\described{` and the figure, and a 300-character window truncated it,
+    # which read as "not described yet".
+    preceding = source.text[max(0, start - 4000) : start]
     return FigureRef(
         id=identity,
         kind=kind,
@@ -273,7 +288,7 @@ def scan_corpus(
     rather than living in the assignment's own folder, so a directory-scoped
     scan reports a clean sweep having looked at a quarter of the material.
 
-    :func:`latexa11y.build.relative_dependencies` computes the real file set.
+    :func:`latexally.build.relative_dependencies` computes the real file set.
     """
     references: list[FigureRef] = []
     candidates = files if files is not None else profile.iter_files(scope)

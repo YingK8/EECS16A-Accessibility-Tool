@@ -23,7 +23,7 @@ from rich.table import Table
 
 from . import __version__
 from .config import Profile, load_profile
-from .errors import LatexA11yError
+from .errors import LatexAllyError
 from .toolchain import Status, TaggingMode, probe
 
 EXIT_OK = 0
@@ -55,12 +55,15 @@ pass_context = click.make_pass_decorator(Context)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
-@click.version_option(__version__, prog_name="latexa11y")
+@click.version_option(__version__, prog_name="latexally")
 @click.option(
     "--profile",
     "-p",
     default=None,
-    help="Course profile: a builtin name (e.g. eecs16a) or a path to a YAML file.",
+    help=(
+        "Course profile: a builtin name (e.g. eecs16a) or a path to a YAML file. "
+        "Optional while only one profile is installed, which is then used."
+    ),
 )
 @click.option(
     "--corpus",
@@ -82,7 +85,7 @@ def main(
     """Convert LaTeX instructional materials into tagged, PDF/UA-conforming PDFs."""
     try:
         loaded = load_profile(profile, corpus_root=corpus)
-    except LatexA11yError as exc:
+    except LatexAllyError as exc:
         click.echo(f"error: {exc}", err=True)
         ctx.exit(EXIT_ERROR)
     ctx.obj = Context(loaded, as_json=as_json, quiet=quiet)
@@ -115,7 +118,7 @@ def doctor(ctx: Context, strict: bool) -> None:
     else:
         console = ctx.console
         table = Table(
-            title=f"latexa11y doctor — profile: {ctx.profile.name}",
+            title=f"latexally doctor — profile: {ctx.profile.name}",
             title_justify="left",
             header_style="bold",
         )
@@ -177,7 +180,7 @@ def files(ctx: Context, scope: str | None, documents: bool, limit: int) -> None:
 
     try:
         paths = list(ctx.profile.iter_files(scope))
-    except LatexA11yError as exc:
+    except LatexAllyError as exc:
         click.echo(f"error: {exc}", err=True)
         sys.exit(EXIT_ERROR)
 
@@ -257,6 +260,36 @@ def scan(ctx: Context, scope: str | None, no_write: bool) -> None:
 # ---------------------------------------------------------------------- #
 
 
+def _files_to_check(profile: Profile, scope: str | None) -> set[Path]:
+    """Every file the scope compiles, not merely every file inside it.
+
+    A scope glob finds `sp26/dis/01A/*.tex`; the drivers in there `\\input` the
+    shared question bank, and that is where most of the constructs tagging
+    cannot compile actually live. Checking only the directory reported a clean
+    assignment whose PDF then came out with every list numbered zero.
+    """
+    from .build import source_files_for
+    from .discover import discover_assignments
+
+    files = set(profile.iter_files(scope))
+    if scope is None:
+        # No scope is already the whole corpus; following includes would walk
+        # the same files again and add nothing but seconds.
+        return files
+    try:
+        assignments = discover_assignments(profile, scope)
+    except LatexAllyError:
+        return files
+    for assignment in assignments:
+        if not assignment.buildable:
+            continue
+        try:
+            files.update(source_files_for(assignment, profile))
+        except (LatexAllyError, OSError):
+            continue
+    return files
+
+
 @main.command()
 @click.argument("scope", required=False)
 @click.option("--write", is_flag=True, help="Actually modify files (default is a dry run).")
@@ -268,12 +301,12 @@ def apply(ctx: Context, scope: str | None, write: bool, show_diff: bool) -> None
     Defaults to a dry run. Only descriptions marked `approved` are written; a
     draft or empty description is skipped rather than shipped.
     """
-    from .apply.figures import apply_scope
+    from .apply import apply_scope
     from .catalog import load_entries
 
     entries = load_entries(ctx.profile)
     if not entries:
-        click.echo("error: no worklogs found; run `latexa11y scan` first", err=True)
+        click.echo("error: no worklogs found; run `latexally scan` first", err=True)
         sys.exit(EXIT_ERROR)
 
     plans = apply_scope(ctx.profile, scope, entries, dry_run=not write)
@@ -336,7 +369,7 @@ def check(
 
     order = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}
     findings = []
-    for path in ctx.profile.iter_files(scope):
+    for path in sorted(_files_to_check(ctx.profile, scope)):
         if path.suffix.lower() not in (".tex", ".sty", ".cls"):
             continue
         try:
@@ -435,10 +468,22 @@ def _report_table(reports: list) -> Table:
             if report.pixel_diff is not None
             else f"[dim]{escape(report.diff_note or '—')}[/dim]"
         )
+        if report.uncertain:
+            # Built from a question another semester's bank supplied, and the
+            # banks did not agree on it. Not a clean conversion of anything.
+            mark = "[yellow]≈[/yellow]"
+        elif report.ok:
+            mark = "[green]✓[/green]"
+        elif report.built:
+            # Built, with something in the log worth reading. Not the same as
+            # nothing coming out, and it used to be drawn the same way.
+            mark = "[yellow]![/yellow]"
+        else:
+            mark = "[red]✗[/red]"
         table.add_row(
             report.assignment,
             report.variant,
-            "[green]✓[/green]" if report.ok else "[red]✗[/red]",
+            mark,
             str(report.pages if report.pages is not None else "—"),
             str(report.bookmarks if report.bookmarks is not None else "—"),
             str(report.figures if report.figures is not None else "—"),
@@ -457,7 +502,7 @@ def _report_table(reports: list) -> Table:
     "--config",
     "config_path",
     type=click.Path(path_type=Path, exists=True),
-    help="Replay a run.yaml written by `latexa11y run`.",
+    help="Replay a run.yaml written by `latexally run`.",
 )
 @click.option(
     "--output",
@@ -469,7 +514,7 @@ def _report_table(reports: list) -> Table:
 @click.option(
     "--in-place",
     is_flag=True,
-    help="Edit the corpus sources directly. Refuses on a dirty git worktree.",
+    help="Write the PDF beside the original instead of into the output directory. Refuses on a dirty git worktree.",
 )
 @click.option("--question-tags", is_flag=True, help="Emit real H2 tags for question titles.")
 @click.option("--house-colors", is_flag=True, help="Keep the course palette, contrast and all.")
@@ -490,7 +535,7 @@ def build(
     house_colors: bool,
     placeholders: bool,
 ) -> None:
-    """Convert and build assignments. This is what `latexa11y run` runs.
+    """Convert and build assignments. This is what `latexally run` runs.
 
     Every flag here corresponds to a screen in the interactive runner, and both
     paths end up calling the same engine — so a run can be explored in the TUI,
@@ -524,7 +569,7 @@ def build(
     try:
         descriptions = describe_run(config, ctx.profile)
         reports = build_run(config, ctx.profile)
-    except LatexA11yError as exc:
+    except LatexAllyError as exc:
         if ctx.as_json:
             ctx.emit({"ok": False, "error": str(exc)})
         else:
@@ -568,7 +613,53 @@ def build(
                 for path in descriptions.get("worklogs", [])[:5]:
                     console.print(f"  [dim]{escape(path)}[/dim]")
             _print_failures(console, failures)
+            _report_substitutions(console, reports)
+            _name_the_log(console, config)
     sys.exit(EXIT_FINDINGS if failures else EXIT_OK)
+
+
+def _slug_for(report) -> str:
+    from .build import _slug_for as slug_for
+
+    return slug_for(report)
+
+
+def _report_substitutions(console: Console, reports: list) -> None:
+    """Say which documents contain a question the corpus could not supply."""
+    repaired = [report for report in reports if report.substituted]
+    if not repaired:
+        return
+    total = sum(len(report.substitutions) for report in repaired)
+    unsure = [item for report in repaired for item in report.substitutions
+              if item.ambiguous]
+    console.print(
+        f"\n[yellow]{total} missing include(s) stood in from elsewhere in the "
+        f"corpus[/yellow] across {len(repaired)} document(s). The corpus was "
+        "not modified."
+    )
+    for report in repaired:
+        for item in report.substitutions:
+            flag = "[yellow]DIFFERS[/yellow]" if item.ambiguous else "[dim]ok[/dim]"
+            console.print(
+                f"  {flag} {escape(item.wanted)}\n"
+                f"        from {escape(str(item.used))}"
+            )
+    if unsure:
+        console.print(
+            f"\n[yellow]{len(unsure)} of them came from banks that DISAGREE[/yellow]"
+            " — the stand-in may not be the question the assignment asked.\n"
+            "[dim]Every substitution, its candidates and the fix are listed "
+            "under SUBSTITUTED INCLUDES in build-log.txt.[/dim]"
+        )
+
+
+def _name_the_log(console: Console, config) -> None:
+    """Say where the written account of this run is, once."""
+    from .tui import show_path
+
+    saved = config.output.root / "build-log.txt"
+    if saved.is_file():
+        console.print(f"\n[dim]written to {escape(show_path(saved))}[/dim]")
 
 
 def _print_failures(console: Console, failures: list) -> None:
@@ -579,10 +670,21 @@ def _print_failures(console: Console, failures: list) -> None:
     them no way to find out what.
     """
     for report in failures:
-        console.print(
-            f"\n[red]{escape(report.assignment)} "
-            f"({escape(report.variant)}) failed[/red]"
-        )
+        if report.built:
+            console.print(
+                f"\n[yellow]{escape(report.assignment)} "
+                f"({escape(report.variant)}) built, with "
+                f"{len(report.errors)} error(s) in the log[/yellow]"
+            )
+            if report.pdf:
+                from .tui import show_path
+
+                console.print(f"  [dim]{escape(show_path(report.pdf))}[/dim]")
+        else:
+            console.print(
+                f"\n[red]{escape(report.assignment)} "
+                f"({escape(report.variant)}) failed — no PDF[/red]"
+            )
         if report.note:
             console.print(f"  {escape(report.note)}")
         for line in report.errors[:5]:
@@ -592,13 +694,18 @@ def _print_failures(console: Console, failures: list) -> None:
         if report.log:
             from .tui import show_path
 
-            console.print(f"  [dim]full log: {escape(show_path(report.log))}[/dim]")
+            # The logs are one file per run now, so the path alone is not a
+            # destination -- name the section banner to search for.
+            console.print(
+                f"  [dim]full log: {escape(show_path(report.log))}"
+                f"  (search '=== {escape(_slug_for(report))}')[/dim]"
+            )
     if failures:
         # Most build failures in this corpus are constructs LaTeX's own tagging
         # cannot handle, and `check` names the file and line in milliseconds
         # rather than after another three-minute compile.
         console.print(
-            "\n[dim]`latexa11y check <scope>` locates constructs that tagging "
+            "\n[dim]`latexally check <scope>` locates constructs that tagging "
             "cannot compile, without rebuilding.[/dim]"
         )
 
@@ -619,37 +726,49 @@ def _print_failures(console: Console, failures: list) -> None:
 @pass_context
 def run_command(ctx: Context, config_path: Path | None, output: Path | None) -> None:
     """Interactive runner: choose scope, standards, colours and output, then build."""
-    from .build import build_run, describe_run
-    from .tui import Wizard
+    from .tui import LatexAllyApp
+
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        # Textual needs a terminal. Saying so, and naming the route that does not,
+        # is the difference between a tool with a CI story and a traceback.
+        click.echo(
+            "latexally run needs a terminal.\n"
+            "For CI or a pipe, replay a saved configuration instead:\n"
+            "    latexally build --config ally-out/run.yaml --write",
+            err=True,
+        )
+        sys.exit(EXIT_ERROR)
 
     config = _load_run_config(ctx, config_path, (), output, False)
-    wizard = Wizard(ctx.profile, config, console=Console())
-    config = wizard.loop()
+    app = LatexAllyApp(ctx.profile, config)
+    # Keyboard only. Textual's mouse tracking also swallows the terminal's own
+    # click-drag text selection and scrollback, and every control in the runner
+    # has a key, so there is nothing for a mouse to reach that a key cannot.
+    app.run(mouse=False)
 
-    if not wizard.should_run:
+    if not app.should_run:
         ctx.console.print("[dim]nothing built[/dim]")
         sys.exit(EXIT_OK)
 
-    wizard.save()
-    descriptions = describe_run(config, ctx.profile)
-    reports = build_run(
-        config,
-        ctx.profile,
-        on_start=lambda item, variant: wizard.console.print(
-            f"[dim]building {item.path} ({variant})…[/dim]"
-        ),
-    )
-    wizard.console.print(_report_table(reports))
+    # The app draws all of this while it runs, but Textual restores the terminal
+    # on exit and takes the screen with it. Repeating it here is what leaves a
+    # record in the scrollback -- and what a screen reader can go back over.
+    console = ctx.console
+    reports = app.reports
+    console.print(_report_table(reports))
+    descriptions = app.descriptions
     if descriptions.get("scanned") and descriptions.get("outstanding"):
-        wizard.console.print(
+        console.print(
             f"\n[bold]{descriptions['outstanding']}[/bold] figure(s) still need "
             f"alt text. Fill them in:"
         )
         for path in descriptions.get("worklogs", [])[:8]:
-            wizard.console.print(f"  {escape(path)}")
+            console.print(f"  {escape(path)}")
 
     failures = [report for report in reports if not report.ok]
-    _print_failures(wizard.console, failures)
+    _print_failures(console, failures)
+    _report_substitutions(console, reports)
+    _name_the_log(console, config)
     sys.exit(EXIT_FINDINGS if failures else EXIT_OK)
 
 
@@ -670,7 +789,7 @@ def agent() -> None:
 @pass_context
 def agent_next_task(ctx: Context, limit: int, genre: str | None, refresh: bool) -> None:
     """Return self-contained description tasks, highest-value first."""
-    from .agent.tasks import next_tasks
+    from .agent import next_tasks
 
     tasks = next_tasks(ctx.profile, limit=limit, genre=genre, refresh=refresh)
     payload = {"count": len(tasks), "tasks": [task.as_dict() for task in tasks]}
@@ -713,7 +832,7 @@ def agent_submit(
     disposition: str | None,
 ) -> None:
     """Propose a description. Always recorded as needs-review, never approved."""
-    from .agent.tasks import submit
+    from .agent import submit
 
     try:
         result = submit(
@@ -725,7 +844,7 @@ def agent_submit(
             author=author,
             disposition=disposition,
         )
-    except LatexA11yError as exc:
+    except LatexAllyError as exc:
         if ctx.as_json:
             ctx.emit({"accepted": False, "error": str(exc)})
         else:
@@ -747,7 +866,7 @@ def agent_submit(
 @pass_context
 def agent_rules(ctx: Context) -> None:
     """Print the alt-text authoring spec an agent must follow."""
-    from .agent.tasks import AUTHORING_RULES
+    from .agent import AUTHORING_RULES
 
     if ctx.as_json:
         ctx.emit({"rules": list(AUTHORING_RULES)})

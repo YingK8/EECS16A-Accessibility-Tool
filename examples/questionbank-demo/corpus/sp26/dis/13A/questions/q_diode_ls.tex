@@ -1,0 +1,118 @@
+\qns{Diode System ID (Adapted from EECS 16B Fall 2023 Final)}
+
+    \textbf{Note: This problem does not require knowledge of circuits or diodes.}
+    
+    Suppose that we want to characterize a diode $D_1$ with parasitic resistance $R_p$, represented by the following model:
+    \begin{figure}[H]
+        \begin{center}
+            \begin{Described}{Voltage source V sub B drives from ground up to the top node, where diode D1 carries current I D to the right with voltage V D across it, in series with resistor R sub p returning to ground.}
+\begin{circuitikz}
+                \draw (0, 2) to [V, l_=$V_B$] (0, 0) node[ground]{}
+                (0, 2) to [Do, l=$D_1$, i=$I_D$, v=$V_D$] (3, 2) to [R, l=$R_p$] (5, 2) node[ground]{}
+                ;
+            \end{circuitikz}
+\end{Described}
+        \end{center}
+    \end{figure}
+    The current through the diode (forward-biased) is modeled as
+    \begin{equation}
+        I_D = I_0\e^{\frac{V_D}{V_T}}
+    \end{equation}
+    where $V_D$ is the voltage across the diode (as shown in the diagram), $I_0$ is a parameter associated with the diode, and $V_T$ is the thermal voltage, a temperature dependent variable.
+    
+    With some analysis, the system equation can be simplified to:
+    \begin{equation}
+        I_D = I_0 \e^{\frac{V_B - I_D R_p}{V_T}}
+    \end{equation}
+    To collect data, we will vary the temperature to vary $V_T$ and measure the current $I_D$ through the diode.
+    
+        \begin{enumerate}
+
+            \qitem    Use the provided system equation to show that
+                \begin{equation}
+                    I_D R_p - V_T \ln(I_0) = V_B - V_T \ln(I_D)
+                \end{equation}
+                    is a valid equation to represent the system.
+                \begin{hint}
+                    Use the logarithm identity $\ln(\frac{a}{b}) = \ln(a) - \ln(b)$.
+                \end{hint}
+            
+    
+            \ans{
+                \begin{align}
+                    I_D &= I_0 \e^{\frac{V_B - I_D R_p}{V_T}} \\
+                    V_T\ln(\frac{I_D}{I_0}) &= V_B - I_D R_p \\
+                    V_T\ln(I_D) - V_T\ln(I_0) &= V_B - I_D R_p \\
+                    I_D R_p - V_T \ln(I_0) &= V_B - V_T \ln(I_D)
+                \end{align}
+            }
+    
+            % \begin{problempart}{4}{System ID}{0}{0}
+            %     Suppose we use $V_B = 1 \mathrm{V}$ and collect the following data points:
+            %     \begin{itemize}
+            %         \item For $V_T = 0.025 \mathrm{V}$, $I_D = 0.0185 \mathrm{A}$.
+            %         \item For $V_T = 0.05 \mathrm{V}$, $I_D = 0.0172 \mathrm{A}$.
+            %         \item For $V_T = 0.0125 \mathrm{V}$, $I_D = 0.0193 \mathrm{A}$.
+            %     \end{itemize}
+            %     \textbf{Find the matrix $D$ and vector $\vec{s}$ to set up a least-squares problem $D\vec{p} \approx \vec{s}$ where $\vec{p} = \begin{bmatrix} \ln(I_0) \\ R_p \end{bmatrix}$.}
+    
+            %     You do not have to simplify the elements $D$ and $\vec{s}$, but the elements should be numerical values, not in terms of variables.
+            % \end{problempart}
+    
+            % \begin{solution}{4in}
+            %     Each data point can be used with the provided system equation from the first part to create a system of linear equations with the unknowns being $\ln(I_0)$ and $R_p$ (remember that the problem provides that $V_B = 1 \mathrm{V}$):
+            %     \begin{itemize}
+            %         \item $-0.025\ln(I_0) + 0.0185R_p = 1 - 0.025\ln(0.0185)$
+            %         \item $-0.05\ln(I_0) + 0.0172R_p = 1 - 0.05\ln(0.0172)$
+            %         \item $-0.0125\ln(I_0) + 0.0193R_p = 1 - 0.0125\ln(0.0193)$
+            %     \end{itemize}
+            %     The matrix form of this system is:
+            %     \begin{equation}
+            %         \begin{bmatrix} -0.025 & 0.0185 \\ -0.05 & 0.0172 \\ -0.0125 & 0.0193 \end{bmatrix} \begin{bmatrix} \ln(I_0) \\ R_p \end{bmatrix} = \begin{bmatrix} 1 - 0.025\ln(0.0185) \\ 1 - 0.05\ln(0.0172) \\ 1 - 0.0125\ln(0.0193) \end{bmatrix}
+            %     \end{equation}
+            %     Thus, for the least-squares problem, $D = \begin{bmatrix} -0.025 & 0.0185 \\ -0.05 & 0.0172 \\ -0.0125 & 0.0193 \end{bmatrix}$ and $\vec{s} = \begin{bmatrix} 1 - 0.025\ln(0.0185) \\ 1 - 0.05\ln(0.0172) \\ 1 - 0.0125\ln(0.0193) \end{bmatrix}$
+            % \end{solution}
+    
+            \vspace{5cm}
+            
+            \qitem    Suppose we use $V_B = v_B$ and collect the following data points:
+                \begin{itemize}
+                    \item For $V_T = v_{T1}$, $I_D = i_{D1}$.
+                    \item For $V_T = v_{T2}$, $I_D = i_{D2}$.
+                    \item For $V_T = v_{T3}$, $I_D = i_{D3}$.
+                \end{itemize}
+                Find the matrix $\textbf{A}$ and vector $\vec{x}$ to set up a least-squares problem $\textbf{A} \vec{x} \approx \vec{b}$ where $\vec{x} = \begin{bmatrix} \ln(I_0) \\ R_p \end{bmatrix}$
+    
+            \ans{
+                Each data point can be used with the provided system equation from the first part to create a system of linear equations with the unknowns being $\ln(I_0)$ and $R_p$ (remember that the problem provides that $V_B = v_B$):
+                \begin{itemize}
+                    \item $-v_{T1}\ln(I_0) + i_{D1}R_p = v_B - v_{T1}\ln(i_{D1})$
+                    \item $-v_{T2}\ln(I_0) + i_{D2}R_p = v_B - v_{T2}\ln(i_{D2})$
+                    \item $-v_{T3}\ln(I_0) + i_{D3}R_p = v_B - v_{T3}\ln(i_{D3})$
+                \end{itemize}
+                The matrix form of this system is:
+                \begin{equation}
+                    \begin{bmatrix} -v_{T1} & i_{D1} \\ -v_{T2} & i_{D2} \\ -v_{T3} & i_{D3} \end{bmatrix} \begin{bmatrix} \ln(I_0) \\ R_p \end{bmatrix} = \begin{bmatrix} v_B - v_{T1}\ln(i_{D1}) \\ v_B - v_{T2}\ln(i_{D2}) \\ v_B - v_{T3}\ln(i_{D3}) \end{bmatrix}
+                \end{equation}
+                Thus, for the least-squares problem, $\textbf{A} = \begin{bmatrix} -v_{T1} & i_{D1} \\ -v_{T2} & i_{D2} \\ -v_{T3} & i_{D3} \end{bmatrix}$ and $\vec{b} = \begin{bmatrix} v_B - v_{T1}\ln(i_{D1}) \\ v_B - v_{T2}\ln(i_{D2}) \\ v_B - v_{T3}\ln(i_{D3}) \end{bmatrix}$
+            }
+            
+            \vspace{5cm}
+            
+            \qitem    Explain how you would use the least-squares system from the previous part to find model parameters $I_0$ and $R_p$. You do not need to use actual values for this part; you explanation can just use $\textbf{A}$ and $\vec{b}$ as known variables to show what calculations you would do to find $I_0$ and $R_p$.
+            
+    
+            \ans{
+                We would first find the optimal parameter $\hat{\vec{x}}$ with the least squares formula:
+                \begin{equation}
+                    \hat{\vec{x}} = (\textbf{A}^\top \textbf{A})^{-1} \textbf{A}^{\top} \vec{b}
+                \end{equation}
+                The elements of $\hat{\vec{x}}$ represent optimal values for $\ln(I_0)$ and $R_p$ so we set the elements of $\hat{\vec{x}}$ equal to those parameters for our model:
+                \begin{align}
+                    \hat{x}_{v_B} = \ln(I_0) &\rightarrow I_0 = \e^{\hat{x}_1} \\
+                    \hat{x}_2 = R_p &\rightarrow R_p = \hat{x}_2
+                \end{align}
+                Thus, we have found parameter values for $I_0$ and $R_p$ from the least-squares system.
+            }
+    
+        \end{enumerate}

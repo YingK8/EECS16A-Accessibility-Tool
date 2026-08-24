@@ -1,4 +1,4 @@
-"""Toolchain probing — the ``latexa11y doctor`` gate.
+"""Toolchain probing — the ``latexally doctor`` gate.
 
 Why this is the first thing that was built
 ------------------------------------------
@@ -494,21 +494,23 @@ def probe(profile: Profile) -> ToolchainReport:
     )
 
     node = _binary_version("node", "--version")
-    add(
-        Check(
-            "T011",
-            "Node.js (math conversion)",
-            Status.OK if node else Status.WARN,
-            node or "not found",
-            None if node else "install Node 20+ to enable the LaTeX -> MathML -> speech chain",
-        )
-    )
+    from .mathspeech import REPO_NODE_MODULES
+
+    sre = (REPO_NODE_MODULES / "speech-rule-engine").is_dir()
+    if node and sre:
+        detail, status, hint = f"{node}, speech-rule-engine present", Status.OK, None
+    elif node:
+        detail, status = node, Status.WARN
+        hint = f"run `npm install` in {REPO_NODE_MODULES.parent} to enable spoken math"
+    else:
+        detail, status = "not found", Status.WARN
+        hint = "install Node 20+ to enable the LaTeX -> MathML -> speech chain"
+    add(Check("T011", "Node.js (math conversion)", status, detail, hint))
 
     optional = {
         "pikepdf": ("pdf", "PDF structure assertions"),
-        "textual": ("tui", "the review TUI"),
-        "fitz": ("tui", "figure previews in the TUI"),
-        "pylatexenc": ("tex", "LaTeX -> plain text for alt strings"),
+        "pymupdf": ("tui", "rendering pages for the visual diff"),
+        "latex2mathml": ("math", "LaTeX -> MathML for spoken formula alt text"),
     }
     missing_optional = {
         module: meta for module, meta in optional.items() if not python_dependency(module)
@@ -522,7 +524,7 @@ def probe(profile: Profile) -> ToolchainReport:
                 Status.WARN,
                 "missing: "
                 + ", ".join(f"{mod} ({meta[1]})" for mod, meta in missing_optional.items()),
-                f"pip install 'latexa11y[{','.join(extras)}]'",
+                f"pip install 'latexally[{','.join(extras)}]'",
                 {"missing": sorted(missing_optional)},
             )
         )

@@ -24,10 +24,10 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from ..catalog import build_catalog, load_entries, worklog_dir
-from ..catalog.worklog import Entry, read_worklog, write_worklog
-from ..config import Profile
-from ..errors import LatexA11yError
+from .catalog import build_catalog, worklog_dir
+from .catalog.worklog import read_worklog, write_worklog
+from .config import Profile
+from .errors import LatexAllyError
 
 __all__ = ["Task", "Rejection", "next_tasks", "submit", "validate_description", "AUTHORING_RULES"]
 
@@ -111,7 +111,7 @@ class Task:
             "instructions": (
                 "Write a one-sentence description. Use `long` only if the figure "
                 "genuinely cannot be conveyed in about 200 characters. Submit with: "
-                "latexa11y agent submit --id <id> --description '<text>'. Your "
+                "latexally agent submit --id <id> --description '<text>'. Your "
                 "submission is recorded as needs-review; a human approves it."
             ),
         }
@@ -230,7 +230,7 @@ def submit(
 ) -> dict:
     """Record a proposed description. Never marks it approved.
 
-    Raises :class:`LatexA11yError` when the id is unknown, and returns the
+    Raises :class:`LatexAllyError` when the id is unknown, and returns the
     rejection list without writing when validation fails.
     """
     directory = worklog_dir(profile)
@@ -240,9 +240,9 @@ def submit(
             target = path
             break
     if target is None:
-        raise LatexA11yError(
+        raise LatexAllyError(
             f"unknown figure id {identity!r}",
-            hint="run `latexa11y scan` first, or check the id from `agent next-task`",
+            hint="run `latexally scan` first, or check the id from `agent next-task`",
         )
 
     worklog = read_worklog(target)

@@ -21,7 +21,7 @@ from pathlib import Path
 
 from ..config import Profile
 from ..texlex import TexSource
-from .contrast import contrast_ratio, find_colors, resolve_named
+from .contrast import contrast_ratio, find_colors, minimum_conforming, resolve_named
 
 __all__ = ["Finding", "Severity", "check_source", "check_log", "check_pdf_structure"]
 
@@ -71,11 +71,94 @@ _TABULAR = re.compile(r"\\begin\s*\{tabular\}")
 _DATATABLE = re.compile(r"\\begin\s*\{(?:DataTable|LayoutTable)\}")
 
 
+#: An `\\input` whose target is not on disk. The single most common way a
+#: build in this corpus ends: "Emergency stop", no PDF, three minutes gone.
+#:
+#: It is an archival hazard rather than a typo. `fa17/hw/10`, `/12` and `/13`
+#: each `\\input{../../../questionBank/hw/N/q_....tex}` -- the *live* shared
+#: bank -- for questions that now exist only in the frozen per-semester
+#: snapshots (`fa19_questionBank/`, `fa23_questionBank/`, ...). The assignment
+#: compiled the year it was written and has been dead ever since; nothing
+#: noticed, because nobody rebuilds old homeworks until a conversion tool does.
+def _missing_inputs(path: Path, profile: Profile, name: str) -> list[Finding]:
+    from ..texlex.includes import IncludeGraph
+
+    # `root` is a Path on a loaded profile but a bare string on one built by
+    # hand, and a lint rule is the wrong place to die over that.
+    root = Path(profile.corpus.root).resolve()
+    graph = IncludeGraph([root])
+    try:
+        _, unresolved = graph.direct_inputs(path)
+    except OSError:
+        return []
+    from ..repair import find_replacements
+
+    semester = ""
+    try:
+        semester = path.resolve().relative_to(root).parts[0]
+    except (ValueError, IndexError):
+        pass
+    replacements = {
+        item.wanted: item
+        for item in find_replacements(
+            [(path, target) for target in dict.fromkeys(unresolved)],
+            corpus_root=root,
+            mirror_root=root,
+            semester=semester,
+        )
+    }
+
+    findings = []
+    for target in dict.fromkeys(unresolved):
+        stand_in = replacements.get(target.strip())
+        if stand_in is None:
+            message = (
+                f"\\input target {target!r} does not exist anywhere in the "
+                "corpus; any build that reaches this file stops here with "
+                "'Emergency stop' and produces no PDF"
+            )
+            hint = (
+                "write the question, or delete the \\input. Nothing in the "
+                "corpus can stand in for it."
+            )
+            severity = Severity.ERROR
+        elif stand_in.ambiguous:
+            message = (
+                f"\\input target {target!r} does not exist; the build will "
+                f"stand in {stand_in.used.name} from "
+                f"{stand_in.used.parent.parent.parent.name}, but the "
+                f"{len(stand_in.candidates)} banks that have it DISAGREE — it "
+                "may not be the question this assignment asked"
+            )
+            hint = stand_in.fix
+            severity = Severity.ERROR
+        else:
+            message = (
+                f"\\input target {target!r} does not exist; the build will "
+                f"stand in the copy from {stand_in.used.parent.parent.parent.name}"
+            )
+            hint = stand_in.fix
+            severity = Severity.WARNING
+        findings.append(
+            Finding(
+                rule="ALLY-SRC-050",
+                severity=severity,
+                message=message,
+                file=name,
+                line=None,
+                standard="broken source (not a WCAG or PDF/UA rule)",
+                hint=hint,
+            )
+        )
+    return findings
+
+
 def check_source(path: Path, profile: Profile) -> list[Finding]:
     """Lint one ``.tex`` file."""
     source = TexSource.from_path(path)
     findings: list[Finding] = []
     name = str(path)
+    findings.extend(_missing_inputs(path, profile, name))
 
     def add(rule, severity, message, position=None, standard="", hint="", **data):
         findings.append(
@@ -94,7 +177,7 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
     is_document = source.search(_DOCUMENTCLASS) is not None
     if is_document and source.search(_DOCUMENTMETADATA) is None:
         add(
-            "A11Y-SRC-001",
+            "ALLY-SRC-001",
             Severity.ERROR,
             "document has no \\DocumentMetadata, so nothing in it will be tagged",
             0,
@@ -108,7 +191,7 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
 
     for match in source.finditer(_PICTURE_BOX):
         add(
-            "A11Y-SRC-020",
+            "ALLY-SRC-020",
             Severity.ERROR,
             "picture-mode \\framebox(w,h){} carries no semantics for a screen reader",
             match.start(),
@@ -118,7 +201,7 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
 
     for match in source.finditer(_ULINE_BLANK):
         add(
-            "A11Y-SRC-021",
+            "ALLY-SRC-021",
             Severity.WARNING,
             "rule-based fill-in blank is invisible to assistive technology",
             match.start(),
@@ -128,7 +211,7 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
 
     for match in source.finditer(_EPSF):
         add(
-            "A11Y-SRC-022",
+            "ALLY-SRC-022",
             Severity.ERROR,
             "epsf image inclusion produces no Figure element and no alt text",
             match.start(),
@@ -138,7 +221,7 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
 
     for match in source.finditer(_LONGTABLE):
         add(
-            "A11Y-SRC-023",
+            "ALLY-SRC-023",
             Severity.WARNING,
             "longtable tagging is implemented for LuaTeX only",
             match.start(),
@@ -149,7 +232,7 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
     for match in source.finditer(_RAW_FONT):
         font = match.group(1)
         add(
-            "A11Y-SRC-024",
+            "ALLY-SRC-024",
             Severity.ERROR,
             f"raw \\font selection of {font!r} produces text with no Unicode mapping",
             match.start(),
@@ -167,7 +250,7 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
     if source.search(_DATATABLE) is None:
         for match in source.finditer(_TABULAR):
             add(
-                "A11Y-SRC-030",
+                "ALLY-SRC-030",
                 Severity.WARNING,
                 "tabular is neither declared a data table nor a layout table",
                 match.start(),
@@ -186,24 +269,30 @@ def _check_contrast(source: TexSource, profile: Profile, name: str) -> list[Find
     findings: list[Finding] = []
     background = resolve_named("white") or (1.0, 1.0, 1.0)
     if profile.colors.background.startswith("#"):
-        raw = profile.colors.background.lstrip("#")
-        background = tuple(int(raw[i : i + 2], 16) / 255 for i in (0, 2, 4))  # type: ignore[assignment]
+        # run.hex_to_rgb, not an inline reimplementation: this one used to skip
+        # the validation, so a malformed background silently became a wrong
+        # contrast baseline rather than an error anybody saw.
+        from ..run import hex_to_rgb
+
+        background = hex_to_rgb(profile.colors.background)
 
     # Only colours actually applied to text can fail a text-contrast rule.
     # pgfplots defines dozens of colours per document for plot lines and fills
     # (steelblue31119180 and friends); judging those against a text threshold
     # produces pure noise and buries the real findings.
-    text_colors = {
-        match.group(1)
-        for match in re.finditer(
-            r"\\(?:text)?color\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}", source.masked
-        )
-    } | {
-        match.group(1)
-        for match in re.finditer(r"\\colorlet\s*\{([^{}]+)\}", source.masked)
-    }
+    #: name -> position of its first use, so a finding can point at a line.
+    used_at: dict[str, int] = {}
+    for match in re.finditer(
+        r"\\(?:text)?color\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}", source.masked
+    ):
+        used_at.setdefault(match.group(1), match.start())
+    for match in re.finditer(r"\\colorlet\s*\{([^{}]+)\}", source.masked):
+        used_at.setdefault(match.group(1), match.start())
+    text_colors = set(used_at)
 
+    defined_here = set()
     for definition in find_colors(source.masked, source.line_of):
+        defined_here.add(definition.name)
         if definition.rgb is None:
             continue
         if text_colors and definition.name not in text_colors:
@@ -217,7 +306,7 @@ def _check_contrast(source: TexSource, profile: Profile, name: str) -> list[Find
         if ratio < threshold:
             findings.append(
                 Finding(
-                    rule="A11Y-SRC-010",
+                    rule="ALLY-SRC-010",
                     severity=Severity.ERROR,
                     message=(
                         f"colour {definition.name!r} has contrast {ratio:.2f}:1 against "
@@ -226,11 +315,43 @@ def _check_contrast(source: TexSource, profile: Profile, name: str) -> list[Find
                     file=name,
                     line=definition.line,
                     standard="WCAG 2.1 SC 1.4.3 (AA)",
-                    hint=(
-                        f"replacement suggested in the course profile: "
-                        f"{profile.colors.replace.get(definition.name, 'darken the colour')}"
-                    ),
+                    hint=_darken_hint(definition.rgb, background, threshold),
                     data={"color": definition.name, "ratio": round(ratio, 2)},
+                )
+            )
+
+    # A colour never defined here, only used: \color{red}. xcolor supplies the
+    # value, so there is no \definecolor to read and the loop above cannot see
+    # it -- which let the corpus's \edit{} macro and its tally boxes set body
+    # text in pure red at 4.00:1 with the checker reporting nothing at all.
+    # Reported once per name, at first use: `red` appears dozens of times in a
+    # document and forty identical findings are forty reasons to ignore the rule.
+    for used, position in used_at.items():
+        if used in defined_here:
+            continue  # the loop above already judged it, with its real value
+        rgb = resolve_named(used)
+        if rgb is None:
+            continue  # unknown to xcolor by name, or an expression like red!60
+        threshold = (
+            profile.colors.min_contrast_large
+            if used in profile.colors.large_text_colors
+            else profile.colors.min_contrast_normal
+        )
+        ratio = contrast_ratio(rgb, background)
+        if ratio < threshold:
+            findings.append(
+                Finding(
+                    rule="ALLY-SRC-010",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"built-in colour {used!r} has contrast {ratio:.2f}:1 against "
+                        f"the page, below the {threshold}:1 minimum"
+                    ),
+                    file=name,
+                    line=source.line_of(position),
+                    standard="WCAG 2.1 SC 1.4.3 (AA)",
+                    hint=_darken_hint(rgb, background, threshold),
+                    data={"color": used, "ratio": round(ratio, 2), "builtin": True},
                 )
             )
 
@@ -245,7 +366,7 @@ def _check_contrast(source: TexSource, profile: Profile, name: str) -> list[Find
 # These are not this package's bugs and not the author's mistakes: they are
 # current limitations of latex-lab that turn a working document into a build
 # FAILURE the moment tagging is switched on. Both were found by building the
-# real corpus and then repeating the build with latexa11y removed entirely --
+# real corpus and then repeating the build with latexally removed entirely --
 # the errors were byte-identical, so tagging alone is responsible.
 #
 # They are worth detecting in source because the alternative is a three-minute
@@ -253,27 +374,45 @@ def _check_contrast(source: TexSource, profile: Profile, name: str) -> list[Find
 # line that is perfectly valid LaTeX, in a shared question file the person
 # converting an assignment has probably never opened.
 
-#: enumitem's STARRED counter in a per-instance label, e.g. `\roman*`.
+#: An enumitem label that latex-lab will get wrong.
 #:
-#: Bisected rather than guessed. The trigger is not `label=` and not enumitem:
-#: it is the starred counter in an optional argument on the environment, and it
-#: breaks as soon as latex-lab's `math` module or `phase-III` is loaded. Both
-#: are essential here, and every other combination was tested:
+#: Bisected rather than guessed, and re-measured on TeX Live 2025 / LaTeX2e
+#: 2024-11-01 pl2, where the picture is worse than it was:
 #:
 #:   phase-I / phase-II / tagpdf alone .............. renders (i) (ii), 0 errors
 #:   phase-II + table / graphic / firstaid .......... renders (i) (ii), 0 errors
-#:   phase-II + math ................................ renders ()  (),  2 errors
-#:   phase-III (any combination) .................... renders ()  (),  2 errors
-#:   \setlist[enumerate,1]{label=(\roman*)} ......... renders (i) (ii), 0 errors
-#:   \renewcommand{\labelenumi}{(\roman{enumi})} .... renders (i) (ii), 0 errors
+#:   phase-II + math ................................ WRONG, 2 errors
+#:   phase-III (any combination) .................... WRONG, 2 errors
+#:   phase-IV ....................................... renders (i) (ii) -- but
+#:       produces NO structure tree at all on this format, so it is not a route
+#:       to a tagged PDF and not a fix.
 #:
-#: The last two are the fixes, and both are verified to render identically to the
-#: untagged original. Note the *rendering*: this is not only a build failure. The
-#: labels come out EMPTY -- `() first () second` -- so a document that ignored
-#: the errors would ship visibly wrong list numbering.
-_ENUMITEM_STARRED = re.compile(
+#: What "wrong" means, measured on `[label=...]` under phase-III:
+#:
+#:   label=\arabic*.  -> "0. one"  "0. two"   2 errors
+#:   label=\roman*:   -> ": one"   ": two"    2 errors
+#:   label=\arabic{enumi}. -> "0. one" "0. two"   ZERO errors
+#:
+#: The counter reads zero for every item. `\roman{0}` and `\alph{0}` expand to
+#: nothing, which is why the starred forms look like a missing label; `\arabic`
+#: shows the zero. **The non-starred form corrupts the numbering silently** --
+#: no error, no warning, a PDF that opens and paginates and is simply wrong. It
+#: is the more dangerous of the two and used to go undetected here.
+#:
+#: The `\setlist` workaround this rule used to recommend NO LONGER WORKS:
+#: `\setlist[enumerate,1]{label=(\roman*)}` renders "(i) (ii)" untagged and
+#: "1. 2." under phase-III -- the label is dropped and the default silently
+#: takes over. Only `\renewcommand{\labelenumi}{(\roman{enumi})}` still
+#: renders identically to the untagged original.
+_ENUMITEM_LABEL = re.compile(
     r"\\begin\s*\{(?:enumerate|itemize|description)\}\s*\[[^\]]*"
-    r"\\(?:arabic|roman|Roman|alph|Alph|value)\s*\*"
+    r"\\(?:arabic|roman|Roman|alph|Alph|value)\s*(?:\*|\{)"
+)
+
+#: The same damage, set up in the preamble instead of on the environment.
+_SETLIST_LABEL = re.compile(
+    r"\\setlist\b[^\n]*?\blabel\s*=[^\n]*?"
+    r"\\(?:arabic|roman|Roman|alph|Alph|value)\s*(?:\*|\{)"
 )
 
 #: `leftmargin=*` fails the same way (3 errors), and for the same reason.
@@ -285,6 +424,25 @@ _ENUMITEM_STAR_MARGIN = re.compile(
 #: A tabular-family environment nested inside a matrix environment. Measured on
 #: sp26/hw/13: `\begin{bmatrix}\begin{array}{r}` gives "Paragraph ended before
 #: ... was complete", "Misplaced \crcr" and four more, and no PDF.
+#: Inline math opened with `\(` and closed with `$`. Untagged pdfLaTeX accepts
+#: it -- `$` ends math mode whichever token started it -- so the corpus has
+#: carried it for years without a single error. latex-lab's grabber scans for a
+#: literal `\)`, runs past the intended end, and swallows the closing brace of
+#: the enclosing `\ans{...}`: "Argument of \__math_grab_inline:w has an extra }".
+#: `\\[^)]` consumes an escape pair, so `\$` inside the formula is not mistaken
+#: for a delimiter, and it can never cross the `\)` that would end the group
+#: legitimately.
+_MISMATCHED_INLINE_MATH = re.compile(r"\\\((?:\\[^)]|[^\\$])*?\$")
+
+#: A forced line break straight after a question or solution macro. Harmless
+#: while those macros are inline; once `question_tags` makes them emit a real
+#: H2 the heading closes the paragraph first, and `\newline` then has nothing
+#: to end: "LaTeX Error: There's no line here to end." The largest of the
+#: tagging blockers in this corpus by an order of magnitude.
+_BREAK_AFTER_HEADING = re.compile(
+    r"\\(?:qns|q|qitem|sol|ans|solans)\s*\{(?:[^{}]|\{[^{}]*\})*\}\s*(?:\\newline\b|\\\\)"
+)
+
 _ARRAY_IN_MATRIX = re.compile(
     r"\\begin\s*\{[bBpvV]?matrix\}(?:(?!\\end\s*\{[bBpvV]?matrix\}).){0,400}?"
     r"\\begin\s*\{(?:array|tabular)\}",
@@ -308,12 +466,36 @@ _BREAK_AFTER_DISPLAY = re.compile(
 )
 
 
+def _darken_hint(
+    rgb: tuple[float, float, float],
+    background: tuple[float, float, float],
+    threshold: float,
+) -> str:
+    """Name the exact colour the runner would propose, not a vague "darken it".
+
+    The previous wording read a fixed replacement out of the profile, which
+    overshot the floor badly -- #3399E6 was answered with #0645AD, nearly twice
+    the required contrast and visibly harder to read. This is the same
+    computation the runner does, so the hint and the run cannot disagree.
+    """
+    proposed = minimum_conforming(rgb, background=background, target=threshold)
+    if proposed is None:  # pragma: no cover - callers only reach here on failure
+        return "already meets the floor"
+    ratio = contrast_ratio(
+        tuple(int(proposed[1:][i : i + 2], 16) / 255 for i in (0, 2, 4)), background
+    )
+    return (
+        f"darken to {proposed} ({ratio:.2f}:1) -- the smallest change to this "
+        f"colour that reaches {threshold}:1, hue and saturation unchanged"
+    )
+
+
 def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
     findings: list[Finding] = []
     for match in _BREAK_AFTER_DISPLAY.finditer(source.masked):
         findings.append(
             Finding(
-                rule="A11Y-SRC-042",
+                rule="ALLY-SRC-042",
                 severity=Severity.ERROR,
                 message=(
                     "line break immediately after display math; under tagging "
@@ -332,35 +514,36 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
             )
         )
     for pattern, detail in (
-        (_ENUMITEM_STARRED, "a starred counter such as \\roman* in the label"),
+        (_ENUMITEM_LABEL, "a counter in the list's own label option"),
+        (_SETLIST_LABEL, "a counter in a \\setlist label"),
         (_ENUMITEM_STAR_MARGIN, "a starred length such as leftmargin=*"),
     ):
         for match in pattern.finditer(source.masked):
             findings.append(
                 Finding(
-                    rule="A11Y-SRC-040",
+                    rule="ALLY-SRC-040",
                     severity=Severity.ERROR,
                     message=(
-                        f"enumitem list options use {detail}; under tagging this "
-                        "fails with 'Missing number, treated as zero' AND renders "
-                        "the labels empty"
+                        f"enumitem list options use {detail}; under tagging the "
+                        "counter reads zero for every item, so the numbering is "
+                        "wrong -- and with a non-starred counter it is wrong "
+                        "with no error in the log"
                     ),
                     file=name,
                     line=source.line_of(match.start()),
                     standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                     hint=(
-                        "move the option to the preamble as "
-                        "\\setlist[enumerate,1]{label=(\\roman*)}, or drop enumitem "
-                        "for this list and use \\renewcommand{\\labelenumi}"
-                        "{(\\roman{enumi})} before it -- both verified to render "
-                        "identically to the untagged original"
+                        "use \\renewcommand{\\labelenumi}{(\\roman{enumi})} "
+                        "before the list. It is the only form that still renders "
+                        "identically to the untagged original: \\setlist labels "
+                        "are silently ignored under phase-III on TeX Live 2025"
                     ),
                 )
             )
     for match in _ARRAY_IN_MATRIX.finditer(source.masked):
         findings.append(
             Finding(
-                rule="A11Y-SRC-041",
+                rule="ALLY-SRC-041",
                 severity=Severity.ERROR,
                 message=(
                     "array or tabular nested inside a matrix environment; the "
@@ -375,6 +558,45 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 ),
             )
         )
+    for match in _MISMATCHED_INLINE_MATH.finditer(source.masked):
+        findings.append(
+            Finding(
+                rule="ALLY-SRC-043",
+                severity=Severity.ERROR,
+                message=(
+                    "inline math opened with \\( and closed with $; tagging fails "
+                    "with 'Argument of \\__math_grab_inline:w has an extra }'"
+                ),
+                file=name,
+                line=source.line_of(match.start()),
+                standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
+                hint=(
+                    "close it with \\) to match the opening delimiter; untagged "
+                    "pdfLaTeX accepts the mismatch, so this has never been an "
+                    "error before and will not show up in an ordinary build"
+                ),
+            )
+        )
+    for match in _BREAK_AFTER_HEADING.finditer(source.masked):
+        findings.append(
+            Finding(
+                rule="ALLY-SRC-044",
+                severity=Severity.ERROR,
+                message=(
+                    "forced line break immediately after a question macro; with "
+                    "question H2 tags on the heading has already ended the "
+                    "paragraph and this fails with \"There's no line here to end\""
+                ),
+                file=name,
+                line=source.line_of(match.start()),
+                standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
+                hint=(
+                    "delete the \\newline -- the heading supplies the break "
+                    "itself; turning question tags off also clears it, at the "
+                    "cost of the H2 that makes questions navigable"
+                ),
+            )
+        )
     return findings
 
 
@@ -384,42 +606,42 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
 
 _LOG_PATTERNS: tuple[tuple[str, str, str, str, str], ...] = (
     (
-        "A11Y-LOG-002",
+        "ALLY-LOG-002",
         r"Parent-Child",
         Severity.ERROR,
         "invalid tag nesting reported by tagpdf",
         "a structure element appears somewhere the PDF parent-child rules forbid",
     ),
     (
-        "A11Y-LOG-003",
+        "ALLY-LOG-003",
         r"There are still open structures on the stack",
         Severity.ERROR,
         "structure stack left open at end of document",
         "a \\tagstructbegin without its matching end; the tag tree is corrupt",
     ),
     (
-        "A11Y-LOG-004",
+        "ALLY-LOG-004",
         r"nested marked content found",
         Severity.ERROR,
         "marked content was nested, which PDF forbids",
         "usually an element opened inside a Figure or an unbalanced push/pop",
     ),
     (
-        "A11Y-LOG-005",
+        "ALLY-LOG-005",
         r"paragraph hook count wrong",
         Severity.ERROR,
         "paragraph tagging desynchronised",
         "a package changed \\par behaviour behind the tagging hooks",
     ),
     (
-        "A11Y-LOG-006",
+        "ALLY-LOG-006",
         r"LaTeX-lab package '([^']+)' not found",
         Severity.ERROR,
         "a requested testphase module is not installed",
-        "the build continued and produced an UNTAGGED PDF; run latexa11y doctor",
+        "the build continued and produced an UNTAGGED PDF; run latexally doctor",
     ),
     (
-        "A11Y-LOG-007",
+        "ALLY-LOG-007",
         r"WARNING: mathml missing for hash",
         Severity.WARNING,
         "an equation has no MathML and will fall back to its /Alt string",
@@ -437,7 +659,7 @@ def check_log(log_path: Path) -> list[Finding]:
     if not log_path.is_file():
         return [
             Finding(
-                "A11Y-LOG-000",
+                "ALLY-LOG-000",
                 Severity.ERROR,
                 "no build log found",
                 file=str(log_path),
@@ -451,7 +673,7 @@ def check_log(log_path: Path) -> list[Finding]:
     if match is None or int(match.group(1)) == 0:
         findings.append(
             Finding(
-                "A11Y-LOG-001",
+                "ALLY-LOG-001",
                 Severity.ERROR,
                 "tagging did not run: no structure objects were written",
                 file=str(log_path),
@@ -465,7 +687,7 @@ def check_log(log_path: Path) -> list[Finding]:
     else:
         findings.append(
             Finding(
-                "A11Y-LOG-100",
+                "ALLY-LOG-100",
                 Severity.INFO,
                 f"tagging wrote {match.group(1)} structure objects",
                 file=str(log_path),
@@ -494,6 +716,13 @@ def check_log(log_path: Path) -> list[Finding]:
 
 _PLACEHOLDER = re.compile(r"<<ALT:|\bTODO\b|\bFIXME\b|\bPLACEHOLDER\b", re.IGNORECASE)
 _FILENAME = re.compile(r"\.(?:png|jpg|jpeg|pdf|eps|svg)\s*$", re.IGNORECASE)
+#: latex-lab's *default* math alt text is the LaTeX source, wrapped in a fixed
+#: template (`latex-lab-math.ltx`, \l__math_content_template_tl). It is enabled
+#: automatically the moment PDF/UA-1 is declared, so a document acquires an /Alt
+#: on every Formula without anyone asking for one -- and that /Alt is announced
+#: as "backslash f-r-a-c one". It satisfies veraPDF. Catching it is the whole
+#: point of ALLY-PDF-041.
+_RAW_LATEX = re.compile(r"LaTeX formula (?:starts|ends)|[\\$]")
 
 
 def _bookmark_navigation(structure, name: str) -> list[Finding]:
@@ -518,7 +747,7 @@ def _bookmark_navigation(structure, name: str) -> list[Finding]:
     if dead:
         findings.append(
             Finding(
-                "A11Y-PDF-023",
+                "ALLY-PDF-023",
                 Severity.ERROR,
                 f"{len(dead)} of {len(targets)} bookmarks have no destination "
                 f"and do not navigate (e.g. {dead[0]!r})",
@@ -536,7 +765,7 @@ def _bookmark_navigation(structure, name: str) -> list[Finding]:
     if resolved and not positional:
         findings.append(
             Finding(
-                "A11Y-PDF-024",
+                "ALLY-PDF-024",
                 Severity.WARNING,
                 "every bookmark uses a page-level destination, so none scrolls "
                 "to its heading",
@@ -553,7 +782,7 @@ def _bookmark_navigation(structure, name: str) -> list[Finding]:
         if len(pages) == 1:
             findings.append(
                 Finding(
-                    "A11Y-PDF-025",
+                    "ALLY-PDF-025",
                     Severity.ERROR,
                     f"all {len(resolved)} bookmarks point at page {pages.pop()} of "
                     f"{structure.page_count}; the outline cannot navigate",
@@ -580,12 +809,12 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
     if not structure.tagged:
         return [
             Finding(
-                "A11Y-PDF-001",
+                "ALLY-PDF-001",
                 Severity.ERROR,
                 "PDF has no structure tree; it is not a tagged PDF",
                 file=name,
                 standard="PDF/UA-1",
-                hint="check \\DocumentMetadata and run latexa11y doctor",
+                hint="check \\DocumentMetadata and run latexally doctor",
             )
         ]
 
@@ -593,7 +822,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
         if not figure.alt:
             findings.append(
                 Finding(
-                    "A11Y-PDF-002",
+                    "ALLY-PDF-002",
                     Severity.ERROR,
                     "Figure element has no /Alt",
                     file=name,
@@ -605,7 +834,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
         if _PLACEHOLDER.search(figure.alt):
             findings.append(
                 Finding(
-                    "A11Y-PDF-003",
+                    "ALLY-PDF-003",
                     Severity.ERROR,
                     f"Figure /Alt is an unfilled placeholder: {figure.alt[:60]!r}",
                     file=name,
@@ -619,7 +848,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
         if _FILENAME.search(figure.alt):
             findings.append(
                 Finding(
-                    "A11Y-PDF-004",
+                    "ALLY-PDF-004",
                     Severity.ERROR,
                     f"Figure /Alt is a file name: {figure.alt[:60]!r}",
                     file=name,
@@ -630,7 +859,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
         if figure.actual_text:
             findings.append(
                 Finding(
-                    "A11Y-PDF-005",
+                    "ALLY-PDF-005",
                     Severity.WARNING,
                     "Figure carries /ActualText as well as /Alt",
                     file=name,
@@ -639,12 +868,39 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
                 )
             )
 
+    for formula in structure.of_tag("Formula"):
+        if not formula.alt:
+            findings.append(
+                Finding(
+                    "ALLY-PDF-040",
+                    Severity.ERROR,
+                    "Formula element has no /Alt",
+                    file=name,
+                    standard="PDF/UA-1, Matterhorn 17-003",
+                    hint="run the math conversion step so every formula carries speech text",
+                )
+            )
+        elif _RAW_LATEX.search(formula.alt):
+            findings.append(
+                Finding(
+                    "ALLY-PDF-041",
+                    Severity.ERROR,
+                    f"Formula /Alt is LaTeX source, not speech: {formula.alt[:60]!r}",
+                    file=name,
+                    standard="WCAG 2.1 A SC 1.1.1, PDF/UA-1",
+                    hint=(
+                        "this is latex-lab's default template; a reader announces it "
+                        "character by character while veraPDF reports the file clean"
+                    ),
+                )
+            )
+
     levels = structure.heading_levels
     if levels:
         if levels[0] != 1:
             findings.append(
                 Finding(
-                    "A11Y-PDF-010",
+                    "ALLY-PDF-010",
                     Severity.ERROR,
                     f"first heading is H{levels[0]}, not H1",
                     file=name,
@@ -655,7 +911,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
             if current > previous + 1:
                 findings.append(
                     Finding(
-                        "A11Y-PDF-011",
+                        "ALLY-PDF-011",
                         Severity.ERROR,
                         f"heading level skips from H{previous} to H{current}",
                         file=name,
@@ -666,7 +922,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
     else:
         findings.append(
             Finding(
-                "A11Y-PDF-012",
+                "ALLY-PDF-012",
                 Severity.WARNING,
                 "document has no headings, so it cannot be navigated by structure",
                 file=name,
@@ -677,7 +933,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
     if not structure.title:
         findings.append(
             Finding(
-                "A11Y-PDF-020",
+                "ALLY-PDF-020",
                 Severity.ERROR,
                 "no document title in the metadata",
                 file=name,
@@ -688,7 +944,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
     if not structure.lang:
         findings.append(
             Finding(
-                "A11Y-PDF-021",
+                "ALLY-PDF-021",
                 Severity.ERROR,
                 "document language is not set",
                 file=name,
@@ -699,7 +955,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
     if require_bookmarks and not structure.outline:
         findings.append(
             Finding(
-                "A11Y-PDF-022",
+                "ALLY-PDF-022",
                 Severity.WARNING,
                 "PDF has no bookmark outline",
                 file=name,
@@ -720,13 +976,37 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
         if content.untagged_text:
             findings.append(
                 Finding(
-                    "A11Y-PDF-030",
+                    "ALLY-PDF-030",
                     Severity.ERROR,
                     f"page {page + 1} draws text outside any marked content",
                     file=name,
                     line=page + 1,
                     standard="Matterhorn checkpoint 01",
                     data={"sample": content.untagged_text[:120]},
+                )
+            )
+        for region in content.regions:
+            if region.tag != "Artifact" or region.subtype != "Layout" or not region.text:
+                continue
+            findings.append(
+                Finding(
+                    "ALLY-PDF-032",
+                    Severity.WARNING,
+                    (
+                        f"decorative region on page {page + 1} contains text: "
+                        f"{region.text[:60]!r}"
+                    ),
+                    file=name,
+                    line=page + 1,
+                    standard="WCAG 1.1.1",
+                    hint=(
+                        "the artifact mechanism hides this from readers that walk "
+                        "the tag tree, but a reader that extracts text by position "
+                        "-- macOS Preview among them -- announces it anyway, and "
+                        "tagpdf's artifact API cannot carry /ActualText to stop it; "
+                        "describe the figure instead of marking it decorative"
+                    ),
+                    data={"text": region.text[:100]},
                 )
             )
         figure_ids = {
@@ -738,7 +1018,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
             if any(ancestor in figure_ids for ancestor in region.ancestors):
                 findings.append(
                     Finding(
-                        "A11Y-PDF-031",
+                        "ALLY-PDF-031",
                         Severity.ERROR,
                         (
                             f"readable <{region.tag}> nested inside a Figure on page "

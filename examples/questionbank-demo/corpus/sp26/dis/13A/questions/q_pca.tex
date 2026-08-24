@@ -1,0 +1,347 @@
+\qns{Using PCA to Detect Fraudulent Transactions (Adapted from EECS 16B Spring 2023 Final)}\\
+	PCA has many different uses when applied to real-world data. One potential application is making classification of data much easier.
+	
+	Suppose we are given some data, where each datapoint represents a transaction. Each one is labeled either normal or fraudulent. We will utilize PCA to develop a useful classifier.
+
+	We plot the data in two dimensions, where each dimension is some unspecified feature that will aid us in classifying the points:
+
+	\begin{figure}[H]
+        \centering
+        \begin{Described}{Scatter plot on x and y axes running about minus 4 to 4, with four transactions marked: circles at (-3, -1) and (0, -2), and diamonds at (2, 0) and (1, 3).}
+\begin{tikzpicture}
+            \node (origin) at (0, 0) {};
+            \node (top) at ($(origin) + (0, 4)$) {};
+            \node (bottom) at ($(origin) + (0, -4)$) {};
+            \node (left) at ($(origin) + (-4, 0)$) {};
+            \node (right) at ($(origin) + (4, 0)$) {};
+            \draw [->] (bottom) -- (top);
+            \draw [->] (left) -- (right);
+    
+            \node at (-3, -2.2) (leftendpoint) {};
+            \node at (3, 2.2) (rightendpoint) {};
+            %\node at ($(origin) + (0.8, 1.3)$) {$y=\alpha x$};
+            \node at ($(origin) + (3.9, -0.3)$) {$x$};
+            \node at ($(origin) + (0.3, 4.0)$) {$y$};
+    
+            %\draw[line width=0.75mm] (leftendpoint) -- (rightendpoint);
+    
+            \node[circle, fill=black!60!green, inner sep=1.5pt] at ($({-3/1.0}, {-1/1.0})$) (dp1) {};
+            \node[circle, fill=black!60!green, inner sep=1.5pt] at ($({0/1.0}, {-2/1.0})$) (dp2) {};
+            \node[diamond, fill=red, inner sep=1.5pt] at ($({1/1.0}, {3/1.0})$) (dp3) {};
+			\node[diamond, fill=red, inner sep=1.5pt] at ($({2/1.0}, {0/1.0})$) (dp4) {};
+    
+            \node at ($({1/1.0}, 0.1)$) (dp1x) {};
+            \node at ($(-0.1, {-2/1.0})$) (dp1y) {};
+            \node at ($({1/1.0}, 0.3)$) {$1$};
+            \node at ($(-0.3, {-2/1.0})$) {$-2$};
+            %\draw[dotted] (dp1) -- (dp1x);
+            %\draw[dotted] (dp1) -- (dp1y);
+    
+            \node at ($({2/1.0}, -0.1)$) (dp2x) {};
+            \node at ($(-0.1, {3/1.0})$) (dp2y) {};
+            \node at ($({2/1.0}, -0.3)$) {$2$};
+            \node at ($(-0.3, {3/1.0})$) {$3$};
+            %\draw[dotted] (dp2) -- (dp2x);
+            %\draw[dotted] (dp2) -- (dp2y);
+    
+            \node at ($({-3/1.0}, 0.1)$) (dp3x) {};
+            \node at ($(0.1, {-1/1.0})$) (dp3y) {};
+            \node at ($({-3/1.0}, 0.3)$) {$-3$};
+            \node at ($(-0.3, {-1/1.0 -0.3} )$) {$-1$};
+            %\draw[dotted] (dp3) -- (dp3x);
+            %\draw[dotted] (dp3) -- (dp3y);
+    
+    
+            \node[inner sep=0pt] at ($(leftendpoint)!(dp1)!(rightendpoint)$) (pdp1) {};
+            \node[inner sep=0pt] at ($(leftendpoint)!(dp2)!(rightendpoint)$) (pdp2) {};
+            \node[inner sep=0pt] at ($(leftendpoint)!(dp3)!(rightendpoint)$) (pdp3) {};
+    
+            %\draw[red] (dp1) -- (pdp1);
+            %\draw[red] (dp2) -- (pdp2);
+            %\draw[red] (dp3) -- (pdp3);
+        \end{tikzpicture}
+\end{Described}
+        \caption{Plot of Transactions in 2-D}
+	\end{figure}
+
+	Thus, we have a total of 4 transactions, $\bmqty{-3 \\ -1}$ and $\bmqty{0 \\ -2}$ are normal, while $\bmqty{2 \\ 0}$ and $\bmqty{1 \\ 3}$ are fraudulent.
+	\begin{enumerate}
+		%Part A:
+		
+		\qitem Suppose we now construct a data matrix, where the \textit{data points are columns}. 
+
+			\begin{equation}
+				X = \bmqty{-3 & 0 & 2 & 1 \\ -1 & -2 & 0 & 3}
+			\end{equation}
+
+			Using this data matrix, \textbf{calculate its first principal component $\vec{u}_1$}.
+
+			\begin{hint}
+			\begin{enumerate}
+
+				\item You may also make use of the fact that $XX^T$ is given by:
+				\begin{align}
+					XX^{\top} &= \bmqty{-3 & 0 & 2 & 1 \\ -1 & -2 & 0 & 3}\bmqty{-3 & 0 & 2 & 1 \\ -1 & -2 & 0 & 3}^{\top} \\
+						&= \bmqty{14 & 6 \\ 6 & 14}
+				\end{align}
+				\item You may also make use of the characteristic polynomial of $XX^T$:
+				\begin{equation}
+					\lambda^2 - 28\lambda + 160 = (\lambda - 20)(\lambda - 8) = 0
+				\end{equation}
+			\end{enumerate}
+			\end{hint}
+			
+			\begin{hint} Remember that your principal component should be of unit norm. \end{hint}
+
+		\ans{
+			% From PCA, we know that our first principal component of a matrix with column data is the first column vector of $U$ in the SVD of $X$. Thus, we use the SVD method of calculation (find the eigenvector corresponding to the largest eigenvalue of $XX^{\top}$ and normalize to yield $\vec{u}_1$).
+
+			% \begin{align}
+			% 	XX^{\top} &= \bmqty{-3 & 0 & 2 & 1 \\ -1 & -2 & 0 & 3}\bmqty{-3 & 0 & 2 & 1 \\ -1 & -2 & 0 & 3}^{\top} \\
+			% 		 &= \bmqty{14 & 6 \\ 6 & 14}
+			% \end{align}
+
+			% From setting $\mathrm{det}(XX^{\top} - \lambda I) = 0$, we should find our characteristic polynomial to be 
+			
+			% \begin{equation}
+			% 	\lambda^2 - 28\lambda + 160 = 0
+			% \end{equation}
+
+			Our eigenvalues are $\lambda_1 = 20$ and $\lambda_2 = 8$. Thus, the eigenvector corresponding to our largest eigenvalue $\lambda_1 = 20$ is $\vec{v}_1 = \bmqty{1 \\ 1}$ from inspection.
+			
+			Thus, our principal component vector is given as the normalized eigenvector: i.e. $\vec{u}_1 = \bmqty{\frac{1}{\sqrt{2}} \\ \frac{1}{\sqrt{2}}}$.
+        }
+
+		%Part B:
+		
+		\qitem	It's difficult to come up with a useful classifier in two dimensions. Let's use PCA dimensionality reduction to help.
+			
+			Using your answer in part (a), \textbf{project your two-dimensional data points onto one dimension. Express your answer as the vector $\vec{z} \in \mathbb{R}^{1 \times 4}$.}
+
+		\ans{
+			To project our 2-d data into 1-d, we project our data matrix onto the first principal component as follows:
+			
+			\begin{equation}
+				\vec{z} = \vec{u}_1^{\top}X = \bmqty{\frac{1}{\sqrt{2}} \\ \frac{1}{\sqrt{2}}} \bmqty{-3 & 0 & 2 & 1 \\ -1 & -2 & 0 & 3} = \bmqty{-\frac{4}{\sqrt{2}} & -\frac{2}{\sqrt{2}} & \frac{2}{\sqrt{2}} & \frac{4}{\sqrt{2}}}
+			\end{equation}
+		}
+		
+		%Part C:
+		
+		\qitem	Now, plot each of these points, on the line below. Indicate the value and label (normal as circle and fraudulent as diamond) for each point.
+			
+			\textit{Note: your plot doesn't have to be to scale.}
+
+			\begin{figure}[H]
+				\centering
+				\begin{Described}{Blank horizontal number line labelled z, with only the origin marked 0 and no points plotted.}
+\begin{tikzpicture}
+					\node (origin) at (0, 0) {|};
+            		%\node (top) at ($(origin) + (0, 4)$) {};
+            		%\node (bottom) at ($(origin) + (0, -4)$) {};
+            		\node (left) at ($(origin) + (-4, 0)$) {};
+            		\node (right) at ($(origin) + (4, 0)$) {};
+					\node at ($(origin) + (3.9, -0.3)$) {$z$};
+					\node at ($(origin) + (0, -0.3)$) {0};
+            		%\draw [->] (bottom) -- (top);
+            		\draw [<->] (left) -- (right);
+
+				\end{tikzpicture}
+\end{Described}
+				\caption{Plot of Transactions in 1-D}
+			\end{figure}
+
+		\ans{
+			\begin{figure}[H]
+				\centering
+				\begin{Described}{Number line labelled z with the origin marked 0 and four points: circles at minus four over root two and minus two over root two, diamonds at two over root two and four over root two.}
+\begin{tikzpicture}
+					\node (origin) at (0, 0) {|};
+            		%\node (top) at ($(origin) + (0, 4)$) {};
+            		%\node (bottom) at ($(origin) + (0, -4)$) {};
+            		\node (left) at ($(origin) + (-4, 0)$) {};
+            		\node (right) at ($(origin) + (4, 0)$) {};
+					\node at ($(origin) + (3.9, -0.3)$) {$z$};
+					\node at ($(origin) + (0, -0.3)$) {0};
+            		%\draw [->] (bottom) -- (top);
+            		\draw [<->] (left) -- (right);
+
+					\node[circle, fill=black!60!green, inner sep=1.5pt] at ($(origin) + (-4/1.414, 0)$) (dp1) {};
+					\node at ($(origin) + (-4/1.414 -0.1, -0.5)$) {$\frac{-4}{\sqrt{2}}$};
+					\node[circle, fill=black!60!green, inner sep=1.5pt] at ($(origin) + (-2/1.414, 0)$) (dp1) {};
+					\node at ($(origin) + (-2/1.414 -0.1, -0.5)$) {$\frac{-2}{\sqrt{2}}$};
+					\node[diamond, fill=red, inner sep=1.5pt] at ($(origin) + (2/1.414, 0)$) (dp1) {};
+					\node at ($(origin) + (2/1.414 -0.1, -0.5)$) {$\frac{2}{\sqrt{2}}$};
+					\node[diamond, fill=red, inner sep=1.5pt] at ($(origin) + (4/1.414, 0)$) (dp1) {};
+					\node at ($(origin) + (4/1.414 -0.1, -0.5)$) {$\frac{4}{\sqrt{2}}$};
+				\end{tikzpicture}
+\end{Described}
+				\caption{Plot of Transactions in 1-D}
+			\end{figure}
+		}
+
+		%Part D:
+		
+		\qitem	Suppose you are given some transaction datapoint, $\vec{x}_i$ and you project it to be one-dimensional, i.e. $z_i$. \textbf{Based on your plot from part (c), come up with an inequality in terms of $z_i$ to identify if that transaction is fraudulent.}
+			
+			\textit{Note: There can be more than one answer, but please only give one.}
+
+		\ans{
+			$\vec{z}_i > 0$ is a possible answer. In fact any answer in between $\vec{z}_i \geq -\frac{2}{\sqrt{2}}$ and $\vec{z}_i \geq \frac{2}{\sqrt{2}}$ is valid.
+		}
+
+		%Part E:
+		
+		\qitem	It can often be informative to compare our original data with its PCA reconstructions. \textbf{Using PCA, reconstruct $\vec{z}$ back into 2-D as the matrix $\wt{X} \in \mathbb{R}^{2 \times 4}$.}
+
+		\ans{
+			Using the reconstruction principle of PCA, we lift the 1D data back into 2 dimensions by doing the following:
+			\begin{equation}
+				\wt{X} = \vec{u}_1\vec{u}_1^{\top}X = \bmqty{-2 & -1 & 1 & 2 \\ -2 & -1 & 1 & 2}
+			\end{equation}
+		}
+
+		%Part F:
+		
+		\qitem	Finally, we visualize our PCA reconstruction. \textbf{On the graph below, draw your first principal component direction (extend it as a solid line in both directions). Draw your reconstructioned points from $\wt{X}$, with dotted lines connecting them with the corresponding point in $X$. } You may draw on the plot on the next page.
+
+			\begin{figure}[H]
+				\centering
+				\begin{Described}{Scatter plot on x and y axes running about minus 4 to 4, with four transactions marked: circles at (-3, -1) and (0, -2), and diamonds at (2, 0) and (1, 3).}
+\begin{tikzpicture}
+					\node (origin) at (0, 0) {};
+					\node (top) at ($(origin) + (0, 4)$) {};
+					\node (bottom) at ($(origin) + (0, -4)$) {};
+					\node (left) at ($(origin) + (-4, 0)$) {};
+					\node (right) at ($(origin) + (4, 0)$) {};
+					\draw [->] (bottom) -- (top);
+					\draw [->] (left) -- (right);
+			
+					\node at (-3, -2.2) (leftendpoint) {};
+					\node at (3, 2.2) (rightendpoint) {};
+					%\node at ($(origin) + (0.8, 1.3)$) {$y=\alpha x$};
+					\node at ($(origin) + (3.9, -0.3)$) {$x$};
+					\node at ($(origin) + (0.3, 4.0)$) {$y$};
+			
+					%\draw[line width=0.75mm] (leftendpoint) -- (rightendpoint);
+			
+					\node[circle, fill=black!60!green, inner sep=1.5pt] at ($({-3/1.0}, {-1/1.0})$) (dp1) {};
+					\node[circle, fill=black!60!green, inner sep=1.5pt] at ($({0/1.0}, {-2/1.0})$) (dp2) {};
+					\node[diamond, fill=red, inner sep=1.5pt] at ($({1/1.0}, {3/1.0})$) (dp3) {};
+					\node[diamond, fill=red, inner sep=1.5pt] at ($({2/1.0}, {0/1.0})$) (dp4) {};
+			
+					\node at ($({1/1.0}, 0.1)$) (dp1x) {};
+					\node at ($(-0.1, {-2/1.0})$) (dp1y) {};
+					\node at ($({1/1.0}, 0.3)$) {$1$};
+					\node at ($(-0.3, {-2/1.0})$) {$-2$};
+					%\draw[dotted] (dp1) -- (dp1x);
+					%\draw[dotted] (dp1) -- (dp1y);
+			
+					\node at ($({2/1.0}, -0.1)$) (dp2x) {};
+					\node at ($(-0.1, {3/1.0})$) (dp2y) {};
+					\node at ($({2/1.0}, -0.3)$) {$2$};
+					\node at ($(-0.3, {3/1.0})$) {$3$};
+					%\draw[dotted] (dp2) -- (dp2x);
+					%\draw[dotted] (dp2) -- (dp2y);
+			
+					\node at ($({-3/1.0}, 0.1)$) (dp3x) {};
+					\node at ($(0.1, {-1/1.0})$) (dp3y) {};
+					\node at ($({-3/1.0}, 0.3)$) {$-3$};
+					\node at ($(-0.3, {-1/1.0 -0.3} )$) {$-1$};
+					%\draw[dotted] (dp3) -- (dp3x);
+					%\draw[dotted] (dp3) -- (dp3y);
+			
+			
+					\node[inner sep=0pt] at ($(leftendpoint)!(dp1)!(rightendpoint)$) (pdp1) {};
+					\node[inner sep=0pt] at ($(leftendpoint)!(dp2)!(rightendpoint)$) (pdp2) {};
+					\node[inner sep=0pt] at ($(leftendpoint)!(dp3)!(rightendpoint)$) (pdp3) {};
+			
+					%\draw[red] (dp1) -- (pdp1);
+					%\draw[red] (dp2) -- (pdp2);
+					%\draw[red] (dp3) -- (pdp3);
+				\end{tikzpicture}
+\end{Described}
+				\caption{Plot of Transactions in 2-D}
+			\end{figure}
+
+		\ans{
+
+			Using the answer from part (d), students should end up with the following graph:
+			\begin{figure}[H]
+				\centering
+				\begin{Described}{The same four transactions, with a solid line through the origin along y = x and reconstructed points on it at (-2, -2), (-1, -1), (1, 1) and (2, 2), each joined to its original point by a dotted line.}
+\begin{tikzpicture}
+					\node (origin) at (0, 0) {};
+					\node (top) at ($(origin) + (0, 4)$) {};
+					\node (bottom) at ($(origin) + (0, -4)$) {};
+					\node (left) at ($(origin) + (-4, 0)$) {};
+					\node (right) at ($(origin) + (4, 0)$) {};
+					\draw [->] (bottom) -- (top);
+					\draw [->] (left) -- (right);
+			
+					\node at (-4, -4) (leftendpoint) {};
+					\node at (4, 4) (rightendpoint) {};
+					%\node at ($(origin) + (0.8, 1.3)$) {$y=\alpha x$};
+					\node at ($(origin) + (3.9, -0.3)$) {$x$};
+					\node at ($(origin) + (0.3, 4.0)$) {$y$};
+			
+					\draw[line width=0.75mm] (leftendpoint) -- (rightendpoint);
+			
+					\node[circle, fill=black!60!green, inner sep=1.5pt] at ($({-3/1.0}, {-1/1.0})$) (dp1) {};
+					\node[circle, fill=black!60!green, inner sep=1.5pt] at ($({0/1.0}, {-2/1.0})$) (dp2) {};
+					\node[diamond, fill=red, inner sep=1.5pt] at ($({2/1.0}, {0/1.0})$) (dp3) {};
+					\node[diamond, fill=red, inner sep=1.5pt] at ($({1/1.0}, {3/1.0})$) (dp4) {};
+					
+
+					\node[label= {\tiny $\left( -2, -2\right)$}] at (-2, -2) (r1) {};
+					\node[label= {\tiny $\left( -1, -1\right)$}] at (-1, -1) (r2) {};
+					\node[label= {\tiny $\left( 1, 1\right)$}] at (1, 1) (r3) {};
+					\node[label= {\tiny $\left( 2, 2\right)$}] at (2, 2) (r4) {};
+
+					\draw[dotted] (dp1) -- (r1);
+					\draw[dotted] (dp2) -- (r2);
+					\draw[dotted] (dp3) -- (r3);
+					\draw[dotted] (dp4) -- (r4);
+			
+					\node at ($({1/1.0}, 0.1)$) (dp1x) {};
+					\node at ($(-0.1, {-2/1.0})$) (dp1y) {};
+					\node at ($({1/1.0}, -0.3)$) {$1$};
+					\node at ($(-0.3, {-2/1.0})$) {$-2$};
+					%\draw[dotted] (dp1) -- (dp1x);
+					%\draw[dotted] (dp1) -- (dp1y);
+			
+					\node at ($({2/1.0}, -0.1)$) (dp2x) {};
+					\node at ($(-0.1, {3/1.0})$) (dp2y) {};
+					\node at ($({2/1.0}, -0.3)$) {$2$};
+					\node at ($(-0.3, {1/1.0})$) {$1$};
+					\node at ($(-0.3, {2/1.0})$) {$2$};
+					\node at ($(-0.3, {3/1.0})$) {$3$};
+					%\draw[dotted] (dp2) -- (dp2x);
+					%\draw[dotted] (dp2) -- (dp2y);
+			
+					\node at ($({-3/1.0}, 0.1)$) (dp3x) {};
+					\node at ($(0.1, {-1/1.0})$) (dp3y) {};
+					\node at ($({-3/1.0}, 0.3)$) {$-3$};
+					\node at ($({-2/1.0}, 0.3)$) {$-2$};
+					\node at ($({-1/1.0}, 0.3)$) {$-1$};
+					\node at ($(-0.3, {-3/1.0} )$) {$-3$};
+					\node at ($(-0.3, {-1/1.0} )$) {$-1$};
+					%\draw[dotted] (dp3) -- (dp3x);
+					%\draw[dotted] (dp3) -- (dp3y);
+			
+			
+					\node[inner sep=0pt] at ($(leftendpoint)!(dp1)!(rightendpoint)$) (pdp1) {};
+					\node[inner sep=0pt] at ($(leftendpoint)!(dp2)!(rightendpoint)$) (pdp2) {};
+					\node[inner sep=0pt] at ($(leftendpoint)!(dp3)!(rightendpoint)$) (pdp3) {};
+			
+					%\draw[red] (dp1) -- (pdp1);
+					%\draw[red] (dp2) -- (pdp2);
+					%\draw[red] (dp3) -- (pdp3);
+				\end{tikzpicture}
+\end{Described}
+				\caption{Plot of Transactions in 2-D}
+			\end{figure}
+		}
+
+
+\end{enumerate}

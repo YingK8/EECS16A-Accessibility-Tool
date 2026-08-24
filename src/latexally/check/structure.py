@@ -35,11 +35,22 @@ class StructNode:
     depth: int
     alt: str | None = None
     actual_text: str | None = None
-    expansion: str | None = None
     lang: str | None = None
     title: str | None = None
     #: Marked-content ids owned directly by this element.
     mcids: list[int] = field(default_factory=list)
+    #: ``/K`` in document order: ``("mc", i)`` for ``mcids[i]``, ``("el", n)``
+    #: for structure node ``n``. Reading order is the *interleaving* of the two
+    #: -- a paragraph with inline math owns mcids 7, 9, 11 while its Formula
+    #: children own 8, 10, 12, and announcing all the prose and then all the
+    #: formulas is a different document from the one on the page.
+    order: list[tuple[str, int]] = field(default_factory=list)
+    #: ``(page index, mcid)`` for each entry of ``mcids``. An MCID is unique
+    #: only *within a page*, so the bare number cannot be resolved to text: page
+    #: 1's mcid 6 and page 3's mcid 6 are different content. The owning page
+    #: comes from the element's ``/Pg``, inherited from the nearest ancestor
+    #: that carries one.
+    pages: list[int | None] = field(default_factory=list)
     #: Index into the flat node list of this node's parent.
     parent: int | None = None
 
@@ -78,7 +89,6 @@ class PdfStructure:
     lang: str | None = None
     page_count: int = 0
     marked: bool = False
-    suspects: list[str] = field(default_factory=list)
 
     def of_tag(self, *tags: str) -> list[StructNode]:
         wanted = set(tags)
@@ -169,7 +179,8 @@ def read_structure(path: Path | str) -> PdfStructure:
             for key, value in raw_role_map.items():
                 role_map[str(key).lstrip("/")] = str(value).lstrip("/")
 
-        _walk(struct_root.get("/K"), 0, None, role_map, result.nodes, set())
+        page_of = {page.obj.objgen: number for number, page in enumerate(pdf.pages)}
+        _walk(struct_root.get("/K"), 0, None, role_map, result.nodes, set(), page_of)
 
     return result
 
@@ -187,6 +198,8 @@ def _walk(
     role_map: dict[str, str],
     out: list[StructNode],
     seen: set[int],
+    page_of: dict[Any, int] | None = None,
+    page: int | None = None,
 ) -> None:
     """Recursively collect structure elements from a ``/K`` value.
 
@@ -201,12 +214,14 @@ def _walk(
 
     if isinstance(node, pikepdf.Array):
         for kid in node:
-            _walk(kid, depth, parent, role_map, out, seen)
+            _walk(kid, depth, parent, role_map, out, seen, page_of, page)
         return
 
     if isinstance(node, int):
         if parent is not None:
             out[parent].mcids.append(int(node))
+            out[parent].pages.append(page)
+            out[parent].order.append(("mc", len(out[parent].mcids) - 1))
         return
 
     if not isinstance(node, pikepdf.Dictionary):
@@ -216,6 +231,10 @@ def _walk(
     if "/S" not in node:
         if parent is not None and "/MCID" in node:
             out[parent].mcids.append(int(node["/MCID"]))
+            # An /MCR names its own page; that wins over the inherited one.
+            own = _page_index(node.get("/Pg"), page_of)
+            out[parent].pages.append(page if own is None else own)
+            out[parent].order.append(("mc", len(out[parent].mcids) - 1))
         return
 
     # Guard against cyclic /K graphs in malformed files.
@@ -235,14 +254,33 @@ def _walk(
         depth=depth,
         alt=_decode(node.get("/Alt")),
         actual_text=_decode(node.get("/ActualText")),
-        expansion=_decode(node.get("/E")),
         lang=_decode(node.get("/Lang")),
         title=_decode(node.get("/T")),
         parent=parent,
     )
     out.append(element)
     index = len(out) - 1
-    _walk(node.get("/K"), depth + 1, index, role_map, out, seen)
+    if parent is not None:
+        out[parent].order.append(("el", index))
+    # /Pg is inheritable: an element without one belongs to its ancestor's page.
+    own = _page_index(node.get("/Pg"), page_of)
+    _walk(
+        node.get("/K"),
+        depth + 1,
+        index,
+        role_map,
+        out,
+        seen,
+        page_of,
+        page if own is None else own,
+    )
+
+
+def _page_index(pg: Any, page_of: dict[Any, int] | None) -> int | None:
+    """Resolve a ``/Pg`` reference to a zero-based page index."""
+    if pg is None or not page_of:
+        return None
+    return page_of.get(getattr(pg, "objgen", None))
 
 
 def _named_destinations(pdf) -> dict:

@@ -8,7 +8,7 @@ internals experts and (b) LLM agents that need something actionable to react to.
 from __future__ import annotations
 
 
-class LatexA11yError(Exception):
+class LatexAllyError(Exception):
     """Base class for every error this package raises deliberately."""
 
     def __init__(self, message: str, *, hint: str | None = None) -> None:
@@ -22,33 +22,33 @@ class LatexA11yError(Exception):
         return self.message
 
 
-class ToolchainError(LatexA11yError):
+class ToolchainError(LatexAllyError):
     """The TeX/PDF toolchain cannot produce a conforming document."""
 
 
-class ConfigError(LatexA11yError):
+class ConfigError(LatexAllyError):
     """A course profile or config file is missing or malformed."""
 
 
-class SourceError(LatexA11yError):
+class SourceError(LatexAllyError):
     """A .tex file could not be read or scanned."""
 
 
-class EditConflictError(LatexA11yError):
+class EditConflictError(LatexAllyError):
     """Two edits target overlapping byte ranges of the same file."""
 
 
-class CatalogError(LatexA11yError):
+class CatalogError(LatexAllyError):
     """The description catalog is inconsistent or unparseable."""
 
 
-class MissingDependency(LatexA11yError):
+class MissingDependency(LatexAllyError):
     """An optional dependency is required for the requested operation."""
 
     def __init__(self, package: str, extra: str, purpose: str) -> None:
         super().__init__(
             f"{purpose} requires the optional dependency {package!r}",
-            hint=f"install it with:  pip install 'latexa11y[{extra}]'",
+            hint=f"install it with:  pip install 'latexally[{extra}]'",
         )
         self.package = package
         self.extra = extra

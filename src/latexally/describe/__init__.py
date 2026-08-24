@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import re
 
-from ..scan.figures import FigureRef
+from ..scan import FigureRef
 from ..texlex import TexSource
 from .circuitikz import describe_circuit
-from .common import Skeleton, latex_to_text, parse_options
+from .common import Skeleton, latex_to_text
 from .pgfplots import describe_axis
 
 __all__ = ["Skeleton", "describe", "describe_reference"]

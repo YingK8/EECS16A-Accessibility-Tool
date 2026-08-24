@@ -41,7 +41,7 @@ __all__ = [
 # `slots=True`, where a class attribute is a slot descriptor rather than the
 # default value -- so `EnginePolicy.legacy_testphase` returns a
 # `member_descriptor` and any fallback written as `value or EnginePolicy.field`
-# silently yields something un-iterable. That crashed `latexa11y doctor` for
+# silently yields something un-iterable. That crashed `latexally doctor` for
 # anyone who ran it without a profile, which is the very first thing a new user
 # does.
 DEFAULT_TESTPHASE: tuple[str, ...] = (
@@ -88,6 +88,21 @@ def builtin_profile_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "profiles"
 
 
+def _only_builtin_profile() -> str | None:
+    """The one shipped profile, when there is exactly one.
+
+    With a single course installed, ``-p eecs16a`` on every command is noise
+    that can only be typed correctly or wrongly. Add a second profile and this
+    stops guessing, which is the right answer then: silently picking one of two
+    courses would convert the wrong corpus without saying so.
+    """
+    directory = builtin_profile_dir()
+    if not directory.is_dir():
+        return None
+    profiles = sorted(directory.glob("*.yaml"))
+    return profiles[0].stem if len(profiles) == 1 else None
+
+
 @dataclass(slots=True)
 class CourseIdentity:
     number: str = "COURSE"
@@ -96,11 +111,6 @@ class CourseIdentity:
     short_university: str = ""
     semester: str = ""
     language: str = "en-US"
-
-    def pdf_title(self, document_title: str) -> str:
-        """The ``dc:title`` string. Matterhorn 06-003 requires it be non-empty."""
-        parts = [part for part in (self.number, document_title) if part]
-        return " — ".join(parts) if parts else "Untitled document"
 
 
 @dataclass(slots=True)
@@ -189,9 +199,6 @@ class HeadingMap:
     #: ``\qitem`` numbers itself and needs a synthesised "Part (a)" string.
     autonumbered: dict[str, str] = field(default_factory=dict)
 
-    def level_of(self, macro: str) -> int | None:
-        return self.macros.get(macro)
-
 
 @dataclass(slots=True)
 class FigurePolicy:
@@ -216,10 +223,9 @@ class ColorPolicy:
     #: WCAG 2.1 SC 1.4.3 Level AA thresholds.
     min_contrast_normal: float = 4.5
     min_contrast_large: float = 3.0
-    #: Colour names to force-replace, e.g. because the course default fails AA.
-    replace: dict[str, str] = field(default_factory=dict)
-    #: What the course currently defines, for display and for showing the
-    #: before/after contrast. Never used to decide anything.
+    #: What the course actually defines. The single source of truth: every
+    #: replacement is derived from these by darkening the original just enough
+    #: to clear the floor, never chosen from a fixed palette.
     originals: dict[str, str] = field(default_factory=dict)
     #: Colour names known to be applied to large text only.
     large_text_colors: tuple[str, ...] = ()
@@ -233,7 +239,10 @@ class EnginePolicy:
     #: Minimum LaTeX format date that supports `tagging=on` and `pdfstandard=ua-*`.
     min_format_date: str = "2025-06-01"
     pdf_standard: str = "ua-1"
-    pdf_version: str = "2.0"
+    #: Paired with pdf_standard, not chosen independently: PDF/UA-1 is defined
+    #: against ISO 32000-1, which is PDF 1.7. Raise this to 2.0 only alongside
+    #: pdf_standard=ua-2.
+    pdf_version: str = "1.7"
     #: testphase modules used on older toolchains, in declaration order.
     legacy_testphase: tuple[str, ...] = DEFAULT_TESTPHASE
     latexmk_args: tuple[str, ...] = DEFAULT_LATEXMK_ARGS
@@ -251,7 +260,6 @@ class Profile:
     colors: ColorPolicy = field(default_factory=ColorPolicy)
     engine: EnginePolicy = field(default_factory=EnginePolicy)
     #: Where catalogs and worklogs live, relative to the corpus root.
-    catalog_dir: str = "a11y"
     source_path: Path | None = None
 
     def iter_files(self, scope: str | None = None) -> Iterator[Path]:
@@ -283,6 +291,8 @@ def load_profile(
     ``path`` may be a filesystem path or a builtin profile name such as
     ``eecs16a``. ``corpus_root`` overrides ``corpus.root`` from the CLI.
     """
+    if path is None:
+        path = _only_builtin_profile()
     if path is None:
         data: dict[str, Any] = {}
         source: Path | None = None
@@ -387,7 +397,6 @@ def load_profile(
         colors=ColorPolicy(
             min_contrast_normal=float(colors_data.get("min_contrast_normal", 4.5)),
             min_contrast_large=float(colors_data.get("min_contrast_large", 3.0)),
-            replace={str(k): str(v) for k, v in (colors_data.get("replace") or {}).items()},
             originals={
                 str(k): str(v) for k, v in (colors_data.get("originals") or {}).items()
             },
@@ -400,7 +409,7 @@ def load_profile(
             name=str(engine_data.get("name", "pdflatex")),
             min_format_date=str(engine_data.get("min_format_date", "2025-06-01")),
             pdf_standard=str(engine_data.get("pdf_standard", "ua-1")),
-            pdf_version=str(engine_data.get("pdf_version", "2.0")),
+            pdf_version=str(engine_data.get("pdf_version", "1.7")),
             legacy_testphase=_as_tuple(
                 engine_data.get("legacy_testphase"), "engine.legacy_testphase"
             )
@@ -410,7 +419,6 @@ def load_profile(
             min_runs=int(engine_data.get("min_runs", 3)),
             timeout_seconds=int(engine_data.get("timeout_seconds", 300)),
         ),
-        catalog_dir=str(data.get("catalog_dir", "a11y")),
         source_path=source,
     )
     return profile

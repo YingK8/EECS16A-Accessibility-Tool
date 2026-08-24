@@ -25,10 +25,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Iterable, Iterator
+from typing import Iterable
 
 import yaml
 
+from .check.contrast import minimum_conforming
 from .config import Profile
 from .errors import ConfigError
 
@@ -40,12 +41,6 @@ __all__ = [
     "AltChoice",
     "Output",
     "RunConfig",
-    "Assignment",
-    "discover_assignments",
-    "find_driver",
-    "VARIANTS",
-    "VARIANT_LABELS",
-    "find_drivers",
     "normalise_hex",
 ]
 
@@ -59,6 +54,7 @@ ARTIFACTS: tuple[tuple[str, str, str], ...] = (
     ("pdf", "PDFs", "the converted documents"),
     ("logs", "Build logs", "LaTeX output, kept for diagnosis"),
     ("tex", "Converted sources", "the .tex the PDFs were built from"),
+    ("math", "Spoken math", "generated MathML, speech tables and the hash cache"),
     ("descriptions", "Alt-text log", "the Markdown worklogs staff fill in"),
     ("baseline", "Originals", "untouched builds, for the before/after comparison"),
 )
@@ -161,6 +157,16 @@ STANDARD_TOGGLES: tuple[Toggle, ...] = (
         "\\parskip rather than adding to it.",
     ),
     Toggle(
+        "math_speech",
+        "Spoken math (Formula /Alt)",
+        True,
+        "none",
+        "Converts every tagged formula to a spoken string, so a reader hears "
+        "\"the fraction with numerator x squared minus 1\" rather than "
+        "latex-lab's default, which is the LaTeX source read out as "
+        "backslashes. Needs Node and the [math] extra.",
+    ),
+    Toggle(
         "unicode_map",
         "Extractable text (ToUnicode)",
         True,
@@ -181,6 +187,7 @@ class Standards:
     retrofit: bool = True
     bookmarks: bool = True
     question_tags: bool = True
+    math_speech: bool = True
     unicode_map: bool = True
 
     @classmethod
@@ -241,9 +248,30 @@ class ColorChoice:
             )
 
     def replacements(self, profile: Profile) -> dict[str, str]:
+        """Name -> hex for every colour this run changes.
+
+        Derived, not looked up: each of the profile's originals is darkened
+        just enough to clear its floor, and one that already conforms is not
+        in the result at all. ``overrides`` -- what the runner asked the user
+        to confirm -- wins over the derivation, including when the user chose
+        to keep the original, which is recorded as an override to itself.
+        """
         if self.mode == "house":
             return {}
-        return {**profile.colors.replace, **self.overrides}
+        derived = {
+            name: proposed
+            for name, original in profile.colors.originals.items()
+            if (proposed := minimum_conforming(
+                hex_to_rgb(original),
+                background=hex_to_rgb(profile.colors.background),
+                target=(
+                    profile.colors.min_contrast_large
+                    if name in profile.colors.large_text_colors
+                    else profile.colors.min_contrast_normal
+                ),
+            ))
+        }
+        return {**derived, **self.overrides}
 
     def set(self, name: str, value: str) -> None:
         """Override one colour. ``value`` is normalised to ``#RRGGBB``."""
@@ -256,8 +284,8 @@ class ColorChoice:
         if self.mode == "house":
             return "course originals kept (may fail WCAG 1.4.3)"
         count = len(self.replacements(profile))
-        custom = f", {len(self.overrides)} customised" if self.overrides else ""
-        return f"conforming palette ({count} remapped{custom})"
+        custom = f", {len(self.overrides)} confirmed by hand" if self.overrides else ""
+        return f"{count} colours darkened to the floor{custom}"
 
     def as_dict(self) -> dict:
         return {"mode": self.mode, "overrides": dict(self.overrides)}
@@ -280,7 +308,7 @@ class AltChoice:
                      editing the .tex sees what still needs writing.
     ``off``          skip figure scanning entirely.
 
-    Placeholders are safe only because they are *build-failing*: latexa11y-core
+    Placeholders are safe only because they are *build-failing*: latexally-core
     raises a hard LaTeX error on any placeholder string under strict mode. That
     is the whole reason the option can exist. The previous generation of this
     tooling injected the same markers with no such guard, and an unfilled one
@@ -332,12 +360,14 @@ class Output:
     ``mirror``   the corpus is strictly read-only. Converted .tex, PDFs, logs and
                  worklogs all go under :attr:`root`, preserving the corpus's
                  relative layout.
-    ``in-place`` the corpus .tex files are edited directly. Guarded: the build
-                 engine refuses unless the corpus git worktree is clean, so there
-                 is always something to diff against and revert to.
+    ``in-place`` identical, except the finished PDF is written beside the
+                 document it was built from instead of into ``root/pdf``. The
+                 corpus ``.tex`` is still never edited -- the mode used to mean
+                 exactly that, and the PDF is the only thing anybody wanted out
+                 of it.
     """
 
-    root: Path = Path("a11y-out")
+    root: Path = Path("ally-out")
     write_mode: str = "mirror"
     keep_pdf: bool = True
     keep_logs: bool = True
@@ -372,7 +402,7 @@ class Output:
         Absolute matters, and not for tidiness. The engine runs pdflatex with
         ``cwd`` set to the directory being built and ``-output-directory`` set
         from here; a relative value is then resolved against *that* directory,
-        not against the one the user typed it in. ``-o a11y-out`` quietly wrote
+        not against the one the user typed it in. ``-o ally-out`` quietly wrote
         the PDF inside the mirrored source tree, and the log lookup that
         followed found nothing.
 
@@ -403,6 +433,10 @@ class Output:
     def tex_dir(self) -> Path:
         return self.path_for("tex")
 
+    def math_dir(self) -> Path:
+        """Generated MathML, speech tables and the conversion cache."""
+        return self.path_for("math")
+
     def worklog_dir(self) -> Path:
         return self.path_for("descriptions")
 
@@ -423,7 +457,7 @@ class Output:
     def from_dict(cls, data: dict | None) -> "Output":
         data = data or {}
         return cls(
-            root=Path(str(data.get("root", "a11y-out"))),
+            root=Path(str(data.get("root", "ally-out"))),
             write_mode=str(data.get("write_mode", "mirror")),
             keep_pdf=bool(data.get("keep_pdf", True)),
             keep_logs=bool(data.get("keep_logs", True)),
@@ -489,9 +523,9 @@ class RunConfig:
 
     def to_yaml(self) -> str:
         header = (
-            "# latexa11y run configuration.\n"
-            "#   latexa11y run --config <this file>      replay it exactly\n"
-            "#   latexa11y run                           edit it in the TUI\n"
+            "# latexally run configuration.\n"
+            "#   latexally run --config <this file>      replay it exactly\n"
+            "#   latexally run                           edit it in the TUI\n"
             "# `write` is deliberately not stored: committing to a corpus is a\n"
             "# decision made at the moment of running, never inherited from a file.\n"
         )
@@ -511,218 +545,6 @@ class RunConfig:
         if not path.is_file():
             raise ConfigError(
                 f"no such run config: {path}",
-                hint="run `latexa11y run` once; it writes run.yaml beside its output",
+                hint="run `latexally run` once; it writes run.yaml beside its output",
             )
         return cls.from_yaml(path.read_text(encoding="utf-8"))
-
-
-# ---------------------------------------------------------------------- #
-# discovery
-# ---------------------------------------------------------------------- #
-
-
-@dataclass(slots=True)
-class Assignment:
-    """One compilable unit of course material."""
-
-    #: Corpus-relative directory, e.g. ``sp26/hw/9``.
-    path: str
-    #: Profile-declared kind: homework, discussion, exam, note…
-    kind: str
-    #: Driver file name within that directory, e.g. ``sol9.tex``.
-    driver: str | None
-    tex_files: int = 0
-    #: Every buildable variant, ``{"solution": "sol9.tex", "problem": "prob9.tex"}``.
-    drivers: dict[str, str] = field(default_factory=dict)
-
-    @property
-    def buildable(self) -> bool:
-        return self.driver is not None
-
-    @property
-    def name(self) -> str:
-        return self.path.rsplit("/", 1)[-1]
-
-    def variants_for(self, wanted: Iterable[str] | None = None) -> dict[str, str]:
-        """The variants to build, ``{variant: driver}``, in declared order.
-
-        An empty or absent selection means *everything this assignment has* --
-        the honest default, since a course ships both files and a student only
-        ever sees the blank one.
-        """
-        available = self.drivers or ({"document": self.driver} if self.driver else {})
-        wanted = tuple(wanted or ())
-        if not wanted:
-            return dict(available)
-        chosen = {name: available[name] for name in wanted if name in available}
-        # Never build nothing because a filter matched nothing: an assignment
-        # with only an unconventional driver still has to convert.
-        return chosen or (
-            {"document": available["document"]} if "document" in available else {}
-        )
-
-    def as_dict(self) -> dict:
-        return {
-            "path": self.path,
-            "kind": self.kind,
-            "driver": self.driver,
-            "drivers": dict(self.drivers),
-            "tex_files": self.tex_files,
-            "buildable": self.buildable,
-        }
-
-
-#: The variants of one assignment, in the order a person thinks about them.
-#: An EECS 16A assignment is not one document: `sol9.tex` and `prob9.tex` pull
-#: in the SAME body and differ only in how `\sol` is defined -- printed in blue,
-#: or swallowed. Discussions add `dis09A.tex` (student handout) and `ans09A.tex`
-#: (answers only). Converting just one of them leaves the other, which students
-#: actually receive, untagged.
-VARIANT_LABELS: tuple[tuple[str, str], ...] = (
-    ("solution", "with solutions"),
-    ("problem", "blank, as students receive it"),
-    ("answer", "answers only"),
-)
-VARIANTS: tuple[str, ...] = tuple(name for name, _ in VARIANT_LABELS)
-
-#: Filename prefix -> variant. Overridable per course via ``corpus.variants``.
-DEFAULT_VARIANT_PREFIXES: dict[str, str] = {
-    "sol": "solution",
-    "prob": "problem",
-    "dis": "problem",
-    "ans": "answer",
-}
-
-
-def find_drivers(
-    directory: Path, prefixes: dict[str, str] | None = None
-) -> dict[str, str]:
-    """Every buildable variant in an assignment directory, ``{variant: file}``.
-
-    A driver is a file carrying ``\\begin{document}``; the rest of an assignment
-    is ``\\input`` fragments that do not compile alone. Variants are recognised
-    by the naming convention the corpus uses -- ``<prefix><name>.tex`` -- and
-    anything that opens a document without matching one is returned under
-    ``document`` so it is still built rather than silently skipped.
-    """
-    prefixes = prefixes or DEFAULT_VARIANT_PREFIXES
-    name = directory.name
-    found: dict[str, str] = {}
-
-    for prefix, variant in prefixes.items():
-        for candidate in (f"{prefix}{name}.tex", f"{prefix}.tex"):
-            if variant not in found and (directory / candidate).is_file():
-                found[variant] = candidate
-
-    if not found:
-        # No convention match: fall back to whatever really opens a document.
-        # Sorted, so the choice is deterministic rather than filesystem-ordered.
-        for path in sorted(directory.glob("*.tex")):
-            try:
-                head = path.read_text(encoding="utf-8", errors="replace")[:20_000]
-            except OSError:  # pragma: no cover
-                continue
-            if "\\begin{document}" in head:
-                found["document"] = path.name
-                break
-    return found
-
-
-def find_driver(directory: Path, prefixes: dict[str, str] | None = None) -> str | None:
-    """The single most representative driver: solutions if there is one."""
-    found = find_drivers(directory, prefixes)
-    for variant in (*VARIANTS, "document"):
-        if variant in found:
-            return found[variant]
-    return None
-
-
-def _kind_of(relative: str, kinds: dict[str, str]) -> str:
-    """Classify by the profile's pattern map, longest pattern winning.
-
-    Longest-first matters: ``sp26/hw`` must beat a bare ``hw`` when a profile
-    declares both, otherwise the answer depends on dict order.
-    """
-    parts = relative.split("/")
-    for pattern in sorted(kinds, key=len, reverse=True):
-        needle = pattern.strip("/").split("/")
-        if any(parts[i : i + len(needle)] == needle for i in range(len(parts))):
-            return kinds[pattern]
-    return "other"
-
-
-def discover_assignments(
-    profile: Profile,
-    scope: str | None = None,
-    *,
-    kinds: dict[str, str] | None = None,
-) -> list[Assignment]:
-    """Every assignment directory in a scope, classified and driver-resolved.
-
-    Works off ``profile.iter_files``, so profile excludes apply -- which is the
-    whole point in a corpus where 17k of 17.6k .tex files are frozen per-semester
-    snapshots nobody reads.
-    """
-    root = profile.corpus.root.resolve()
-    kinds = kinds if kinds is not None else profile.corpus.kinds
-
-    counts: dict[str, int] = {}
-    for path in profile.iter_files(scope):
-        if path.suffix.lower() != ".tex":
-            continue
-        try:
-            relative = path.resolve().relative_to(root)
-        except ValueError:
-            continue
-        parent = relative.parent.as_posix()
-        counts[parent] = counts.get(parent, 0) + 1
-
-    prefixes = profile.corpus.variants or DEFAULT_VARIANT_PREFIXES
-    found: list[Assignment] = []
-    for relative, count in sorted(counts.items()):
-        directory = root / relative
-        drivers = find_drivers(directory, prefixes)
-        found.append(
-            Assignment(
-                path=relative,
-                kind=_kind_of(relative, kinds),
-                driver=next(iter(drivers.values()), None),
-                tex_files=count,
-                drivers=drivers,
-            )
-        )
-    return found
-
-
-def group_by_kind(assignments: Iterable[Assignment]) -> dict[str, list[Assignment]]:
-    """Assignments bucketed by kind, for the TUI's scope picker."""
-    grouped: dict[str, list[Assignment]] = {}
-    for assignment in assignments:
-        grouped.setdefault(assignment.kind, []).append(assignment)
-    return dict(sorted(grouped.items()))
-
-
-def iter_selected(profile: Profile, config: RunConfig) -> Iterator[Assignment]:
-    """The assignments a config names, resolved against the corpus.
-
-    Raises rather than skipping a path that does not exist: a run that silently
-    converts four of the five things you asked for is worse than one that stops.
-    """
-    root = profile.corpus.root.resolve()
-    kinds = profile.corpus.kinds
-    prefixes = profile.corpus.variants or DEFAULT_VARIANT_PREFIXES
-    for relative in config.assignments:
-        directory = (root / relative).resolve()
-        if not directory.is_dir():
-            raise ConfigError(
-                f"no such assignment directory: {relative}",
-                hint=f"paths are relative to the corpus root {root}",
-            )
-        drivers = find_drivers(directory, prefixes)
-        yield Assignment(
-            path=relative,
-            kind=_kind_of(relative, kinds),
-            driver=next(iter(drivers.values()), None),
-            tex_files=len(list(directory.glob("*.tex"))),
-            drivers=drivers,
-        )

@@ -1,0 +1,62 @@
+% Demonstration built from REAL EECS 16A questionBank material, not from
+% invented figures. Four question files were copied verbatim out of the corpus
+% into corpus/ below, and `latexally apply` wrapped each figure in Described
+% with a hand-written description. Nothing else in them was touched.
+%
+%   corpus/questionBank/sec/13/q_polynomial_fir_convolution.tex   1 figure
+%   corpus/questionBank/sec/13/q_freq_resp_dag_diagram.tex        2 figures
+%   corpus/sp26/dis/13A/questions/q_pca.tex                       4 figures
+%   corpus/sp26/dis/13A/questions/q_diode_ls.tex                  1 figure
+%
+% Build both variants from this ONE source; build.sh supplies the class option:
+%   pdflatex "\PassOptionsToClass{sol}{latexally-assignment}\input{demo-questionbank}"
+%   pdflatex "\PassOptionsToClass{prob}{latexally-assignment}\input{demo-questionbank}"
+
+\DocumentMetadata{
+  lang       = en-US,
+  pdfversion = 2.0,
+  testphase  = {phase-III,math,table,graphic,firstaid},
+}
+\documentclass{latexally-assignment}
+
+\usepackage{amsmath,amssymb}
+\usepackage{float}
+\usepackage{tikz}
+\usetikzlibrary{calc,shapes.geometric,positioning}
+\usepackage[american]{circuitikz}
+
+% The corpus macros these four files use, reproduced from questionBank/ee16.sty
+% and questionBank/sp26/sp26.sty so the demo does not need the whole course
+% preamble chain. Same meanings, nothing more.
+\providecommand{\bmqty}[1]{\begin{bmatrix}#1\end{bmatrix}}
+\providecommand{\e}{\mathop{\mathrm{e}}\nolimits}
+\providecommand{\wt}[1]{\widetilde{#1}}
+\NewDocumentEnvironment{hint}{+b}{\itshape (HINT: #1)}{}
+
+\setcoursenumber{EECS 16A}
+\setcoursename{Designing Information Devices and Systems I}
+\setsemester{Spring 2026}
+
+\begin{document}
+
+\def\title{Described figures from the question bank}
+\maketitle
+
+\vspace{0.5em}
+Every figure below carries a description in the PDF structure tree. A screen
+reader announces "graphic" and then that description; it never reaches the
+drawing underneath. Hovering shows nothing --- \texttt{/Alt} is not a tooltip.
+
+\begin{qunlist}
+
+  \input{corpus/questionBank/sec/13/q_polynomial_fir_convolution.tex}
+  \newpage
+  \input{corpus/questionBank/sec/13/q_freq_resp_dag_diagram.tex}
+  \newpage
+  \input{corpus/sp26/dis/13A/questions/q_pca.tex}
+  \newpage
+  \input{corpus/sp26/dis/13A/questions/q_diode_ls.tex}
+
+\end{qunlist}
+
+\end{document}

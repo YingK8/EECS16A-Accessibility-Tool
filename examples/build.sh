@@ -12,15 +12,15 @@
 # Open any of them and look at the bookmark pane.
 #
 # This script builds ONLY the self-contained demonstrations that ship with the
-# repository. Converting real course material is `latexa11y build`, which lives
+# repository. Converting real course material is `latexally build`, which lives
 # in Python where it can be tested:
 #
-#   latexa11y -p eecs16a run                      pick scope and options
-#   latexa11y -p eecs16a build sp26/hw/9 --write  or say it directly
+#   latexally run                      pick scope and options
+#   latexally build sp26/hw/9 --write  or say it directly
 #
 # An earlier version of this script also converted a real assignment, using a
 # `sed` expression that was the only definition anywhere of what conversion
-# means. Four defects were hiding in it -- see src/latexa11y/build/__init__.py.
+# means. Four defects were hiding in it -- see src/latexally/build/__init__.py.
 
 set -euo pipefail
 
@@ -55,7 +55,7 @@ build_demo() {  # build_demo <jobname> <class-option> <source>
   for _ in $(runs); do
     pdflatex -interaction=nonstopmode -file-line-error \
              -output-directory="$OUT" -jobname="$job" \
-             "\\PassOptionsToClass{$option}{latexa11y-assignment}\\input{$src}" \
+             "\\PassOptionsToClass{$option}{latexally-assignment}\\input{$src}" \
              > /dev/null 2>&1 || true
   done
   report "$job" || true
@@ -76,4 +76,4 @@ echo
 echo "PDFs are in $OUT"
 echo
 echo "To convert your own material, with a before/after fidelity number:"
-echo "    latexa11y -p eecs16a run"
+echo "    latexally run"

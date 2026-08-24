@@ -30,6 +30,7 @@ _MC_OPERATOR = re.compile(
     re.DOTALL,
 )
 _MCID = re.compile(rb"/MCID\s+(\d+)")
+_ARTIFACT_TYPE = re.compile(rb"/Type\s*/(\w+)")
 #: Literal strings in text-showing operators. Good enough to detect *presence*
 #: of glyphs; it is not a font-aware text extractor and does not claim to be.
 _LITERAL = re.compile(rb"\(((?:[^()\\]|\\.)*)\)")
@@ -43,6 +44,10 @@ class MarkedRegion:
     mcid: int | None
     start: int
     end: int
+    #: For an Artifact, its `/Type`: Pagination, Layout, Page, Background.
+    #: The distinction matters -- a running head is text and is *correctly* an
+    #: artifact, while a Layout artifact is decorative and should be silent.
+    subtype: str = ""
     #: Enclosing regions, outermost first, as (tag, mcid) pairs.
     ancestors: tuple[tuple[str, int | None], ...] = ()
     text: str = ""
@@ -67,7 +72,13 @@ class PageContent:
     untagged_text: str = ""
 
     def readable_text(self) -> str:
-        """Everything a screen reader would announce as prose, in stream order."""
+        """Unsuppressed prose on this page, in *paint* order.
+
+        Paint order, not reading order -- the tag tree decides the latter and
+        this function never looks at it. Use it to assert that something is
+        absent, where order cannot matter; for what a reader actually says, and
+        in what sequence, use ``check.speech.spoken_utterances``.
+        """
         return normalise(
             " ".join(
                 region.text
@@ -166,9 +177,11 @@ def read_page_content(path: Path | str, page_number: int = 0) -> PageContent:
         if match.group("op"):
             props = match.group("props") or b""
             mcid_match = _MCID.search(props)
+            subtype_match = _ARTIFACT_TYPE.search(props)
             region = MarkedRegion(
                 tag=match.group("tag").decode("latin-1"),
                 mcid=int(mcid_match.group(1)) if mcid_match else None,
+                subtype=subtype_match.group(1).decode("latin-1") if subtype_match else "",
                 start=match.end(),
                 end=-1,
                 ancestors=tuple((r.tag, r.mcid) for r in stack),

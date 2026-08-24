@@ -1,0 +1,155 @@
+\qns{Frequency Response from a DAG Block Diagram [Adapted from EE 120]}
+% Adapted by Ken Zheng for EECS 16A Fall 2025 Discussion
+
+    Consider a DT LTI system with input $x[n]$ and output $y[n]$ that is implemented by the following block diagram:
+    \begin{figure}[h!]
+      \centering
+      \begin{Described}{Block diagram: input x of n enters a summing junction whose output is y of n. That output is tapped, passed through a delay block D and then a gain of minus 0.5, and fed back into the summing junction.}
+\begin{circuitikz}
+          \node (x) at (0, 0) {$x[n]$};
+          \node[circle, draw] (sum) at (2, 0) {$+$};
+          % FIXME: find a better way to draw the triangle
+          % \node[triangleblock, shape border rotate=90, inner sep=-1mm] (gain) at (3, -1.5) {$-0.5$};
+          % \node at (3, -1.5) {$-0.5$};
+          \node[draw, inner sep=5pt] (delay) at (6, -1.5) {$D$};
+          \node (y) at (9, 0) {$y[n]$};
+          \draw[->] (x.east) -- (sum.west);
+          \draw[->] (sum.east) -- (y.west);
+          \draw[->] (7.5, 0) -- (7.5, -1.5) -- (delay.east);
+          % \draw[-, thick] (delay.west) -- (gain.east);
+          % \draw[->, thick] (gain.west) -- (2, -1.5) -- (sum.south);
+          \draw[->] (delay.west) to [amp, t=$-0.5$, blocks/scale=1.5] (2, -1.5) to (sum.south);
+      \end{circuitikz}
+\end{Described}
+  \end{figure}
+\begin{enumerate}
+        \item Find the LCCDE that describes this system. 
+        
+        \ans{
+            The difference equation describing this system is
+              \begin{equation*}
+                y[n] = x[n] - 0.5y[n-1]
+              \end{equation*}
+        }
+
+        \item Find the frequency response $H(\omega)$ of this system. 
+            
+        \ans{
+            Using the eigenfunction property by setting $x[n] = e^{i\omega n}$ and $y[n] = H(\omega) e^{i\omega n}$,
+            \begin{align*}
+            H(\omega) e^{i\omega n} &= e^{i\omega n} - 0.5 H(\omega) e^{i\omega (n-1)} \\
+            &= e^{i\omega n} - 0.5 H(\omega) e^{-i\omega}e^{i\omega n} \\
+            \left(1 + 0.5 e^{-i\omega}\right) e^{i\omega n} H(\omega) &= e^{i\omega n} \\
+            H(\omega) &= \frac{e^{i\omega n}}{\left(1 + 0.5 e^{-i\omega}\right)e^{i\omega n}} \\
+                &= \frac{1}{1 + 0.5 e^{-i\omega}}
+            \end{align*} 
+        } 
+
+        \vspace{4cm}
+
+        \item Is this a high pass or low pass filter?
+        
+        \ans{
+            We can think about this in two ways:
+            
+            \textbf{1. Geometric Approach:}
+
+            Recall from part (b) that the frequency response can be written as:
+            \[
+            H(\omega) = \frac{1}{1 + 0.5 e^{-i\omega}} = \frac{e^{i\omega}}{e^{i\omega} - (-0.5)}
+            \]
+            The magnitude is therefore:
+            \[
+            |H(\omega)| = \frac{1}{|e^{i\omega} - (-0.5)|}
+            \]
+            This represents the reciprocal of the distance from the point $e^{i\omega}$ on the unit circle to the point located at $-0.5$ on the real axis:
+
+            \begin{center}
+            \begin{Described}{Complex plane with real and imaginary axes and the unit circle centred at the origin. A point is marked at minus 0.5 on the real axis, with an arrow from it to the point e to the i omega on the circle.}
+\begin{tikzpicture}[scale=1.2]
+                % Axes
+                \draw[->] (-2.5,0) -- (2.5,0) node[right] {$\operatorname{Re}$};
+                \draw[->] (0,-2.5) -- (0,2.5) node[above] {$\operatorname{Im}$};
+
+                % Unit circle
+                \draw (0,0) circle (2);
+
+                % Pole at -0.5
+                \fill[black] (-1,0) circle (2pt) node[below left] {};
+                \node[black] at (-1,-0.3) {$-0.5$};
+
+                % Point on unit circle at angle ω
+                \coordinate (P) at (60:2);
+                \fill[blue] (P) circle (2pt) node[above right] {$e^{i\omega}$};
+
+                % Vector from pole to point on circle
+                % \draw[->, thick, red] (-1,0) -- (P);
+                \draw[->, thick, red] (-1,0) -- (P) node[midway, below] {$\qquad\qquad\qquad e^{i \omega} - (-0.5)$};  % Label added here
+
+
+                % Labels
+                \node at (1.8,1.8) {};
+            \end{tikzpicture}
+\end{Described}
+            \end{center}
+
+            Key observations:
+            \begin{itemize}
+                \item When $\omega = 0$, $e^{i\omega} = 1$. The distance from $1$ to $-0.5$ is $1.5$, so $|H(0)| = 1/1.5 \approx 0.667$.
+                \item When $\omega = \pi$, $e^{i\omega} = -1$. The distance from $-1$ to $-0.5$ is $0.5$, so $|H(\pi)| = 1/0.5 = 2$.
+                \item As $\omega$ moves from $0$ to $\pi$, the point $e^{i\omega}$ travels along the upper half of the unit circle from $(1,0)$ to $(-1,0)$. 
+                The distance to the point at $-0.5$ decreases monotonically, so $|H(\omega)|$ increases. Thus, we have a high-pass filter!\\
+            \end{itemize}
+
+            
+            \textbf{2. Algebraic Approach:}
+            
+            To determine the filter type, we simplify the magnitude of the frequency response first:
+
+            \[
+            |H(\omega)| = \frac{1}{\sqrt{(1 + 0.5\cos\omega)^2 + (0.5\sin\omega)^2}}
+            \]
+
+
+            Expanding \( (1 + 0.5\cos\omega)^2 \) and \( (0.5\sin\omega)^2 \):
+            \[
+            (1 + 0.5\cos\omega)^2 = 1^2 + 2(1)(0.5\cos\omega) + (0.5\cos\omega)^2 = 1 + \cos\omega + 0.25\cos^2\omega
+            \]
+            \[
+            (0.5\sin\omega)^2 = 0.25\sin^2\omega
+            \]
+
+
+            Add the two results in the square root:
+            \[
+            (1 + 0.5\cos\omega)^2 + (0.5\sin\omega)^2 = \left[1 + \cos\omega + 0.25\cos^2\omega\right] + \left[0.25\sin^2\omega\right]
+            \]
+            \[
+            = 1 + \cos\omega + 0.25\left(\cos^2\omega + \sin^2\omega\right)
+            \]
+            \[
+            = 1 + \cos\omega + 0.25(1) = 1 + \cos\omega + 0.25 = 1.25 + \cos\omega
+            \]
+
+
+            Substitute back into \( |H(\omega)| \):
+            \[
+            |H(\omega)| = \frac{1}{\sqrt{1.25 + \cos\omega}}
+            \]
+                        
+            Now we analyze the magnitude at key frequencies:
+            
+            Low frequency (\( \omega = 0 \)): 
+                \[
+                |H(0)| =  \frac{1}{\sqrt{1.25 + \cos0}} = \frac{1}{1.5} \approx 0.667 \quad (\text{attenuated})
+                \]
+            High frequency (\( \omega = \pi \)): 
+                \[
+                |H(\pi)| =  \frac{1}{\sqrt{1.25 + \cos\pi}} = 2 \quad (\text{passed})
+                \]
+
+            We can see that, again, the filter attenuates low frequencies and passes high frequencies, so it is a high-pass filter!\\
+
+            Both geometrically and algebraically, we conclude this is a \textbf{high-pass filter}. Nice!
+        }
+\end{enumerate}
