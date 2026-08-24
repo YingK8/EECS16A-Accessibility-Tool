@@ -36,6 +36,29 @@
 \RequirePackage{latexally-core}
 
 %% ---------------------------------------------------------------------------
+%% 0. Why `proof' is NOT fixed here
+%% ---------------------------------------------------------------------------
+%% Once tagging is on the LaTeX kernel defines a `proof' environment of its
+%% own, and ee16.sty:21 does \newenvironment{proof}. That is "Command \proof
+%% already defined" -- a hard error, on every document in the corpus that loads
+%% ee16, on source that has compiled for years and still compiles untagged.
+%%
+%% The obvious fix is
+%%
+%%     \AddToHook{file/ee16.sty/before}{\let\proof\relax\let\endproof\relax}
+%%
+%% and putting it HERE does not work. This package is loaded by the line the
+%% converter injects at `_preamble_insertion_point', which is after the
+%% driver's own \usepackage{ee16} -- so by the time the hook is registered,
+%% ee16.sty has already been read and the hook can never fire. **[verified]**:
+%% with the lead-block hook removed and this one present, the error comes back.
+%%
+%% It has to lead the document instead, beside \DocumentMetadata, which is
+%% what `preamble_for` emits and `split_preamble` keeps in the lead block. The
+%% pairing is a profile key, `engine.unlet_before`, because which package
+%% clashes depends entirely on whose macros they are.
+
+%% ---------------------------------------------------------------------------
 %% 0. Interword-space injection -- OFF, for visual fidelity
 %% ---------------------------------------------------------------------------
 %% Activating tagging also switches on tagpdf's `activate/spaces`, which injects
