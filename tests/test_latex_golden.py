@@ -62,14 +62,14 @@ def log(built: Path) -> str:
 
 @pytest.fixture(scope="module")
 def structure(built: Path):
-    from latexa11y.check.structure import read_structure
+    from latexally.check.structure import read_structure
 
     return read_structure(built)
 
 
 @pytest.fixture(scope="module")
 def content(built: Path):
-    from latexa11y.check.content import read_page_content
+    from latexally.check.content import read_page_content
 
     return read_page_content(built, 0)
 
@@ -103,6 +103,25 @@ def test_tagging_actually_ran(log: str):
 def test_described_region_is_not_readable(content):
     """The Described body must not appear in anything a reader announces."""
     assert FORBIDDEN not in content.readable_text()
+
+
+def test_described_region_does_not_leak_into_extracted_text(built: Path):
+    """The other half of suppression, and the half that was missing.
+
+    /Alt lives in the structure tree; readers that extract text by position
+    never look there. Until the marked content carried /ActualText, a described
+    figure was announced by the labels drawn INSIDE it -- a TikZ node reading
+    "SECRETLABEL" came straight out of a figure whose /Alt was perfectly
+    correct. macOS Preview is one such reader, so this is not a corner case.
+    """
+    pymupdf = pytest.importorskip("pymupdf", reason="extraction check needs PyMuPDF")
+
+    extracted = "".join(page.get_text() for page in pymupdf.open(built))
+
+    assert FORBIDDEN not in extracted, (
+        "the Described body is suppressed for tag-aware readers but still "
+        "extracted verbatim for everything else"
+    )
 
 
 def test_described_text_sits_in_a_suppressing_element(content):
@@ -250,7 +269,7 @@ def legacy(tmp_path_factory) -> Path:
 
 @pytest.fixture(scope="module")
 def legacy_structure(legacy: Path):
-    from latexa11y.check.structure import read_structure
+    from latexally.check.structure import read_structure
 
     return read_structure(legacy)
 
@@ -301,15 +320,15 @@ def test_legacy_bookmarks_are_clean_pdf_strings(legacy_structure):
     assert titles[0] == "Homework 9"
     assert "Question 1" in titles and "Part (a)" in titles and "Solution" in titles
     # Regression: colour commands used to leak into the outline as literal text
-    # ("a11ySolutionSolution") and counters never expanded ("Question ").
+    # ("allySolutionSolution") and counters never expanded ("Question ").
     for title in titles:
-        assert "a11y" not in title
+        assert "ally" not in title
         assert title.strip() == title and title.strip() != ""
         assert not title.rstrip().endswith(("Question", "Part ()"))
 
 
 def test_legacy_qitem_inside_enumerate_does_not_leak_figure_text(legacy):
-    from latexa11y.check.content import read_page_content
+    from latexally.check.content import read_page_content
 
     content = read_page_content(legacy, 0)
     assert "R1" not in content.readable_text()
@@ -353,8 +372,8 @@ def test_deprecated_names_still_build(deprecated: Path):
 def test_deprecated_names_say_what_to_use_instead(deprecated: Path):
     log = deprecated.with_suffix(".log").read_text(encoding="utf-8", errors="replace")
     # LaTeX wraps a long warning and prefixes each continuation line with
-    # "(latexa11y)", so the message has to be reassembled before matching.
-    flat = " ".join(log.replace("(latexa11y)", " ").split())
+    # "(latexally)", so the message has to be reassembled before matching.
+    flat = " ".join(log.replace("(latexally)", " ").split())
     import re
 
     for old, new in (
@@ -375,7 +394,7 @@ def test_deprecated_names_say_what_to_use_instead(deprecated: Path):
 
 def test_deprecated_wrappers_still_actually_suppress(deprecated: Path):
     """A shim that warns correctly but leaks the figure would be worse than none."""
-    from latexa11y.check.content import read_page_content
+    from latexally.check.content import read_page_content
 
     content = read_page_content(deprecated, 0)
     readable = content.readable_text()
@@ -384,7 +403,7 @@ def test_deprecated_wrappers_still_actually_suppress(deprecated: Path):
 
 
 def test_deprecated_wrappers_still_produce_alt(deprecated: Path):
-    from latexa11y.check.structure import read_structure
+    from latexally.check.structure import read_structure
 
     figures = read_structure(deprecated).of_tag("Figure")
     assert len(figures) == 3
@@ -398,12 +417,12 @@ def test_question_tags_option_produces_h2(tmp_path_factory):
     The opposite of the default: costs a forced \\par after each question title,
     buys a heading tag. Both behaviours are exercised so neither can regress.
     """
-    from latexa11y.check.structure import read_structure
+    from latexally.check.structure import read_structure
 
     work = tmp_path_factory.mktemp("qtags")
     source = LEGACY.read_text(encoding="utf-8").replace(
-        r"\usepackage{latexa11y-compat-ee16}",
-        "\\usepackage{latexa11y-compat-ee16}\n\\accessquestiontags",
+        r"\usepackage{latexally-compat-ee16}",
+        "\\usepackage{latexally-compat-ee16}\n\\accessquestiontags",
     )
     name = "qtags.tex"
     (work / name).write_text(source, encoding="utf-8")
@@ -418,3 +437,4 @@ def test_question_tags_option_produces_h2(tmp_path_factory):
         )
     structure = read_structure(work / "qtags.pdf")
     assert structure.heading_levels == [1, 2, 2, 2]
+

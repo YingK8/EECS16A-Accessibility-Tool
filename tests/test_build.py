@@ -14,22 +14,22 @@ from pathlib import Path
 
 import pytest
 
-from latexa11y.build import (
+from latexally.build import (
     _log_findings,
     inject,
     materialise,
     mirror_dependencies,
-    relative_dependencies,
     require_clean_worktree,
 )
-from latexa11y.config import CorpusScope, Profile
-from latexa11y.errors import LatexA11yError
-from latexa11y.run import Assignment, Output, RunConfig
-from latexa11y.texlex import TexSource
+from latexally.config import CorpusScope, Profile
+from latexally.errors import LatexAllyError
+from latexally.run import Output, RunConfig
+from latexally.discover import Assignment
+from latexally.texlex import TexSource
 
 LINES = [
     "\\DocumentMetadata{lang=en-US,pdfversion=2.0,testphase={phase-III}}",
-    "\\usepackage{latexa11y-ee16}",
+    "\\usepackage{latexally-ee16}",
 ]
 
 
@@ -90,20 +90,20 @@ def test_document_metadata_leads_the_file(corpus: Path):
 def test_packages_land_before_the_body_input(corpus: Path):
     driver = corpus / "sem" / "hw" / "3" / "sol3.tex"
     lines = inject(TexSource.from_path(driver), LINES).splitlines()
-    assert lines.index("\\usepackage{latexa11y-ee16}") < lines.index("\\input{body}")
+    assert lines.index("\\usepackage{latexally-ee16}") < lines.index("\\input{body}")
 
 
 def test_packages_land_before_begin_document_when_the_driver_has_one(tmp_path: Path):
     driver = tmp_path / "standalone.tex"
     driver.write_text("\\documentclass{article}\n\\begin{document}\nHi\n\\end{document}\n")
     lines = inject(TexSource.from_path(driver), LINES).splitlines()
-    assert lines.index("\\usepackage{latexa11y-ee16}") < lines.index("\\begin{document}")
+    assert lines.index("\\usepackage{latexally-ee16}") < lines.index("\\begin{document}")
 
 
 def test_injection_refuses_a_file_that_is_not_a_driver(tmp_path: Path):
     fragment = tmp_path / "fragment.tex"
     fragment.write_text("Just a paragraph of a question.\n")
-    with pytest.raises(LatexA11yError):
+    with pytest.raises(LatexAllyError):
         inject(TexSource.from_path(fragment), LINES)
 
 
@@ -208,7 +208,7 @@ def _git(root: Path, *args: str) -> None:
 
 
 def test_in_place_refuses_outside_a_repository(corpus: Path):
-    with pytest.raises(LatexA11yError, match="not a git repository"):
+    with pytest.raises(LatexAllyError, match="not a git repository"):
         require_clean_worktree(corpus)
 
 
@@ -221,20 +221,31 @@ def test_in_place_refuses_a_dirty_worktree(corpus: Path):
     require_clean_worktree(corpus)  # clean: allowed
 
     (corpus / "sem" / "hw" / "3" / "body.tex").write_text("edited\n")
-    with pytest.raises(LatexA11yError, match="uncommitted"):
+    with pytest.raises(LatexAllyError, match="uncommitted"):
         require_clean_worktree(corpus)
 
 
-def test_in_place_write_is_blocked_before_touching_anything(
+def test_in_place_never_edits_the_corpus_sources(
     corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path
 ):
+    """`in-place` means the PDF lands beside the original, nothing more.
+
+    It used to mean the corpus .tex was rewritten, guarded by a clean git
+    worktree. The conversion is now always mirrored whichever mode is chosen,
+    so the source is byte-identical afterwards and only the finished document
+    ever reaches the corpus.
+    """
     before = _tree_digest(corpus)
     config = RunConfig(
         output=Output(root=tmp_path / "out", write_mode="in-place"), write=True
     )
-    with pytest.raises(LatexA11yError):
-        materialise(assignment, config, profile, lines=LINES)
+
+    prepared = materialise(assignment, config, profile, lines=LINES)
+
     assert _tree_digest(corpus) == before
+    assert corpus.resolve() not in prepared.driver.resolve().parents, (
+        "the converted driver must live in the mirror, not in the corpus"
+    )
 
 
 # ---------------------------------------------------------------------- #
@@ -291,7 +302,7 @@ def test_a_missing_log_reads_empty_rather_than_crashing():
 
 
 def test_artifact_paths_are_absolute(monkeypatch, tmp_path: Path):
-    """`-o a11y-out` must not land inside the directory being built.
+    """`-o ally-out` must not land inside the directory being built.
 
     pdflatex is run with cwd set to the source/mirror directory, and resolves a
     relative -output-directory against THAT. A relative output root therefore
@@ -300,7 +311,7 @@ def test_artifact_paths_are_absolute(monkeypatch, tmp_path: Path):
     time it leaves the model.
     """
     monkeypatch.chdir(tmp_path)
-    output = Output(root=Path("a11y-out"))
+    output = Output(root=Path("ally-out"))
     for directory in (
         output.pdf_dir(),
         output.log_dir(),
@@ -323,9 +334,9 @@ def test_a_relative_override_is_absolute_too(monkeypatch, tmp_path: Path):
 def test_run_yaml_keeps_the_path_the_user_typed(monkeypatch, tmp_path: Path):
     """Absolute at use, relative on disk -- or run.yaml stops being portable."""
     monkeypatch.chdir(tmp_path)
-    output = Output(root=Path("a11y-out"))
+    output = Output(root=Path("ally-out"))
     output.set_path("descriptions", "shared/alt")
-    assert output.as_dict()["root"] == "a11y-out"
+    assert output.as_dict()["root"] == "ally-out"
     assert output.as_dict()["paths"]["descriptions"] == "shared/alt"
 
 
@@ -340,19 +351,19 @@ def test_an_outline_stuck_on_one_page_is_reported():
     Detected structurally rather than by inspecting the LaTeX: any route that
     produces this shape is broken, whoever wrote it.
     """
-    from latexa11y.check.rules import _bookmark_navigation
+    from latexally.check.rules import _bookmark_navigation
 
     class Stub:
         page_count = 13
         outline_targets = [(f"H{i}", 1, "/Fit") for i in range(12)]
 
     rules = {finding.rule for finding in _bookmark_navigation(Stub(), "x.pdf")}
-    assert "A11Y-PDF-025" in rules  # all on one page
-    assert "A11Y-PDF-024" in rules  # and none positional
+    assert "ALLY-PDF-025" in rules  # all on one page
+    assert "ALLY-PDF-024" in rules  # and none positional
 
 
 def test_a_healthy_outline_is_not_reported():
-    from latexa11y.check.rules import _bookmark_navigation
+    from latexally.check.rules import _bookmark_navigation
 
     class Stub:
         page_count = 13
@@ -362,20 +373,20 @@ def test_a_healthy_outline_is_not_reported():
 
 
 def test_a_dead_destination_is_reported():
-    from latexa11y.check.rules import _bookmark_navigation
+    from latexally.check.rules import _bookmark_navigation
 
     class Stub:
         page_count = 4
         outline_targets = [("A", 1, "/XYZ"), ("B", None, None), ("C", 3, "/XYZ")]
 
     findings = _bookmark_navigation(Stub(), "x.pdf")
-    assert [f.rule for f in findings] == ["A11Y-PDF-023"]
+    assert [f.rule for f in findings] == ["ALLY-PDF-023"]
     assert "'B'" in findings[0].message
 
 
 def test_a_single_page_document_is_not_flagged():
     """Every bookmark on page 1 of a one-page document is correct, not broken."""
-    from latexa11y.check.rules import _bookmark_navigation
+    from latexally.check.rules import _bookmark_navigation
 
     class Stub:
         page_count = 1
@@ -417,3 +428,137 @@ def test_a_second_variant_does_not_clobber_the_first(
         assert (mirror / driver).read_text().startswith("\\DocumentMetadata{"), (
             f"{driver} lost its conversion"
         )
+
+
+def test_latex_lab_default_math_alt_is_rejected():
+    """ALLY-PDF-041's whole job: reject the alt text nobody asked for.
+
+    latex-lab turns `math/alt/use` on by itself once PDF/UA-1 is declared and
+    fills /Alt from its own template. The result passes veraPDF and is read out
+    as backslashes, so the rule has to fire on the template and stay quiet on
+    real speech.
+    """
+    from latexally.check.rules import _RAW_LATEX
+
+    default = (
+        r"LaTeX formula starts \begin{equation} \frac{x^2-1}{x+1} "
+        r"\end{equation} LaTeX formula ends"
+    )
+    assert _RAW_LATEX.search(default)
+    assert _RAW_LATEX.search(r"$\mathbf{A}\vec{x}$")
+    assert not _RAW_LATEX.search(
+        "the fraction with numerator x squared minus 1, and denominator x plus 1"
+    )
+
+
+def test_inline_math_closed_with_a_dollar_is_reported(tmp_path):
+    r"""ALLY-SRC-043, found by building the real corpus.
+
+    `\(b_j$` opens with `\(` and closes with `$`. Untagged pdfLaTeX accepts it,
+    so sp26/dis/13A has carried it for years without one error; under tagging
+    latex-lab's grabber scans past the intended end and eats the closing brace
+    of the enclosing `\ans{...}`. 31 occurrences in the live corpus.
+    """
+    from latexally.check.rules import Severity, check_source
+    from latexally.config import Profile
+
+    source = tmp_path / "q.tex"
+    source.write_text(
+        "products of \\(a_i\\) and \\(b_j$ where \\(i + j = n\\):\n"
+        "a price of \\(\\frac{\\$5}{2}\\) is fine, and so is $x$ beside \\(y\\).\n"
+    )
+
+    findings = [f for f in check_source(source, Profile()) if f.rule == "ALLY-SRC-043"]
+
+    assert len(findings) == 1, "escaped \\$ and ordinary $...$ must not be flagged"
+    assert findings[0].severity == Severity.ERROR
+    assert findings[0].line == 1
+
+
+def test_a_layout_artifact_with_text_is_reported():
+    r"""ALLY-PDF-032: decorative content that a positional reader still speaks.
+
+    `Decorative` hides a region from readers that walk the tag tree, and that
+    is the conformant mechanism. Readers that extract text by position ignore
+    it, and tagpdf emits `/Artifact BMC` with no property list, so there is
+    nowhere to hang the /ActualText that stops them -- unlike `Described`,
+    which was fixed that way. Detection is the honest answer to a ceiling.
+
+    Only `/Type/Layout` counts. A running head is text, is an artifact, and is
+    entirely correct.
+    """
+    from latexally.check.content import MarkedRegion
+
+    decorative = MarkedRegion(tag="Artifact", mcid=None, start=0, end=1,
+                              subtype="Layout", text="DECORATIVELEAK")
+    running_head = MarkedRegion(tag="Artifact", mcid=None, start=0, end=1,
+                                subtype="Pagination", text="Homework 9")
+    empty = MarkedRegion(tag="Artifact", mcid=None, start=0, end=1, subtype="Layout")
+
+    flagged = [
+        region.subtype == "Layout" and bool(region.text)
+        for region in (decorative, running_head, empty)
+    ]
+
+    assert flagged == [True, False, False]
+
+
+def test_line_break_after_a_question_macro_is_reported(tmp_path):
+    r"""ALLY-SRC-044, found by building sp26/dis/11A.
+
+    `\qns{...}` followed by `\newline` is harmless while the macro is inline.
+    Once `question_tags` makes it emit a real H2 the heading closes the
+    paragraph first, so the break has nothing to end. 930 occurrences in 575
+    files -- larger than the other four tagging blockers combined.
+    """
+    from latexally.check.rules import Severity, check_source
+    from latexally.config import Profile
+
+    source = tmp_path / "q.tex"
+    source.write_text(
+        "\\qns{I bet Cal will win this year}\n"
+        "\\newline\n"
+        "As huge fans of the Big Game, you and your friend want to bet.\n"
+        "\\qns{A question that does not break}\n"
+        "Immediately followed by prose, which is fine.\n"
+    )
+
+    findings = [f for f in check_source(source, Profile()) if f.rule == "ALLY-SRC-044"]
+
+    assert len(findings) == 1, "only the macro followed by a break may be flagged"
+    assert findings[0].severity == Severity.ERROR
+    assert findings[0].line == 1
+
+
+def test_dropped_tounicode_mappings_are_reported(tmp_path):
+    r"""A silently-dropped glyph mapping must not read as a clean build.
+
+    glyphtounicode.tex spells multi-codepoint entries ``{0066 0066 0069}``.
+    Read under expl3 catcodes -- which ``\ProvidesExplPackage`` turns on, and
+    where SPACE IS IGNORED -- the spaces vanish, pdfTeX sees one number, and
+    drops the entry. 119 per document, and the only symptom is that "difficult"
+    extracts as "di<U+FB03>cult".
+    """
+    from latexally.build import _log_findings
+
+    log = tmp_path / "doc.log"
+    log.write_text(
+        "This is pdfTeX, Version 3.141592653\n"
+        "pdfTeX warning: pdflatex: ToUnicode: value out of range [0,10FFFF]: 660066\n"
+        "pdfTeX warning: pdflatex: ToUnicode: value out of range [0,10FFFF]: 660069\n"
+        "Output written on doc.pdf (1 page).\n",
+        encoding="utf-8",
+    )
+    errors, warnings = _log_findings(log)
+
+    assert errors == []
+    assert any("dropped 2 ToUnicode" in w for w in warnings)
+
+
+def test_clean_log_reports_no_tounicode_warning(tmp_path):
+    from latexally.build import _log_findings
+
+    log = tmp_path / "doc.log"
+    log.write_text("Output written on doc.pdf (1 page).\n", encoding="utf-8")
+
+    assert _log_findings(log) == ([], [])

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from latexa11y.apply.figures import DescriptionRejected, escape_description
-from latexa11y.catalog.worklog import Entry, Worklog, read_worklog, write_worklog
-from latexa11y.describe import describe
-from latexa11y.describe.common import latex_to_text, parse_options, split_top_level
-from latexa11y.texlex import TexSource
+from latexally.apply import DescriptionRejected, escape_description
+from latexally.catalog.worklog import Entry, Worklog, read_worklog, write_worklog
+from latexally.describe import describe
+from latexally.catalog.worklog import PLACEHOLDER
+from latexally.config import CorpusScope, Profile
+from latexally.describe.common import latex_to_text, parse_options, split_top_level
+from latexally.texlex import TexSource
 
 
 def _skeleton(body: str, kind: str):
@@ -196,14 +198,18 @@ def test_raster_offers_no_invented_description():
 # ---------------------------------------------------------------------- #
 
 
-def test_escape_description_handles_braces_rather_than_refusing_them():
-    # The previous tool skipped any description containing { or }, which in a
-    # linear-algebra course rules out most natural phrasings.
-    assert escape_description("the set {0, 1}") == r"the set \{0, 1\}"
+def test_escape_description_speaks_braces_rather_than_refusing_them():
+    """The previous tool refused any description containing braces, which in a
+    linear-algebra course rules out most natural phrasings."""
+    assert escape_description("the set {0, 1}") == "the set 0, 1"
 
 
-def test_escape_description_escapes_tex_specials():
-    assert escape_description("50% of R_1 & C_2") == r"50\% of R\_1 \& C\_2"
+def test_escape_description_words_tex_specials_never_escapes_them():
+    r"""tagpdf writes /Alt byte for byte, so a `\%` would be SPOKEN as
+    "backslash percent". The only safe output is prose with no specials left."""
+    spoken = escape_description("50% of R_1 & C_2")
+    assert spoken == "50 percent of R sub 1 and C sub 2"
+    assert "\\" not in spoken
 
 
 def test_escape_description_rejects_empty():
@@ -233,7 +239,7 @@ def test_worklog_round_trip_preserves_human_fields(tmp_path):
 
     text = worklog.path.read_text()
     text = text.replace(
-        "<!-- write the short description here -->", "Two capacitors joined by a switch."
+        PLACEHOLDER, "Two capacitors joined by a switch."
     ).replace("- status: todo", "- status: approved")
     worklog.path.write_text(text)
 
@@ -252,3 +258,43 @@ def test_unfilled_worklog_entry_is_not_done(tmp_path):
     # The placeholder comment must not be read back as a description.
     assert restored.description == ""
     assert not restored.is_done
+
+
+def test_descriptions_survive_a_different_output_directory(tmp_path):
+    """Human text lives with the corpus, not with one run's output folder.
+
+    Found by building the demos: `-o ally-out` made every scan report "0
+    described, 17 outstanding" while approved descriptions for six of those
+    figures sat in the corpus catalogue. The build then shipped the figures
+    with no /Alt, and the only visible symptom was a figure that said nothing.
+    """
+    from latexally.catalog import build_catalog, worklog_dir
+    from latexally.catalog.worklog import read_worklog
+
+    corpus = tmp_path / "corpus"
+    (corpus / "hw").mkdir(parents=True)
+    (corpus / "hw" / "q.tex").write_text(
+        "\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}\n"
+    )
+    profile = Profile(corpus=CorpusScope(root=corpus))
+
+    # A person describes the figure, in the corpus catalogue.
+    first = build_catalog(profile, files=[corpus / "hw" / "q.tex"])
+    identity = next(iter(first.entries))
+    shard = next(iter(first.worklogs)).name
+    base = worklog_dir(profile)
+    base.mkdir(parents=True, exist_ok=True)
+    log = read_worklog(next(iter(first.worklogs)))
+    entry = log.entries[identity]
+    entry.description = "A line rising to one comma one."
+    entry.status = "approved"
+    (base / shard).write_text(write_worklog(log, scope=log.scope))
+
+    # A later run sends its worklogs somewhere else entirely.
+    elsewhere = build_catalog(
+        profile, files=[corpus / "hw" / "q.tex"], output_root=tmp_path / "out"
+    )
+
+    carried = elsewhere.entries[identity]
+    assert carried.is_done, "approved description was lost by redirecting output"
+    assert carried.description == "A line rising to one comma one."

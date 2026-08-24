@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from latexa11y.errors import EditConflictError
-from latexa11y.texlex import EditBuffer, TexSource
+from latexally.errors import EditConflictError
+from latexally.texlex import EditBuffer, TexSource
 
 
 # ---------------------------------------------------------------------- #

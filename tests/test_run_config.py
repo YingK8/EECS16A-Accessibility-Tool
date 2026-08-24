@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from latexa11y.build import preamble_for, split_preamble
-from latexa11y.config import Profile, load_profile
-from latexa11y.errors import ConfigError, LatexA11yError, ToolchainError
-from latexa11y.run import (
+from latexally.build import preamble_for, split_preamble
+from latexally.config import Profile, load_profile
+from latexally.errors import ConfigError, LatexAllyError, ToolchainError
+from latexally.run import (
     STANDARD_TOGGLES,
     AltChoice,
     ColorChoice,
@@ -20,7 +20,7 @@ from latexa11y.run import (
     RunConfig,
     Standards,
 )
-from latexa11y.toolchain import TaggingMode
+from latexally.toolchain import TaggingMode
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def test_write_is_never_persisted():
     """Committing to a corpus is decided at run time, never inherited from a file.
 
     A run.yaml that could carry ``write: true`` would mean
-    ``latexa11y build --config shared.yaml`` writes to somebody's sources because
+    ``latexally build --config shared.yaml`` writes to somebody's sources because
     of a line they did not read.
     """
     config = RunConfig(assignments=("sp26/hw/9",), write=True)
@@ -98,7 +98,7 @@ def test_defaults_emit_metadata_retrofit_and_palette(profile):
     lines = preamble_for(RunConfig(), profile, TaggingMode.LEGACY_TESTPHASE)
     assert lines[0].startswith("\\DocumentMetadata{")
     assert "testphase=" in lines[0]
-    assert "\\usepackage{latexa11y-ee16}" in lines
+    assert "\\usepackage{latexally-ee16}" in lines
     assert "\\accesssetup{conforming-colors}" in lines
     assert "\\accessquestiontags" in lines
 
@@ -163,7 +163,7 @@ def test_question_tags_without_retrofit_is_refused(profile):
     config = RunConfig(
         standards=Standards(retrofit=False, question_tags=True, bookmarks=True)
     )
-    with pytest.raises(LatexA11yError, match="retrofit"):
+    with pytest.raises(LatexAllyError, match="retrofit"):
         preamble_for(config, profile, TaggingMode.LEGACY_TESTPHASE)
 
 
@@ -175,13 +175,25 @@ def test_no_accesssetup_without_a_package_to_define_it(profile):
             retrofit=False,
             bookmarks=False,
             question_tags=False,
+            math_speech=False,
             unicode_map=False,
         ),
         colors=ColorChoice(mode="house"),
     )
     lines = preamble_for(config, profile, TaggingMode.LEGACY_TESTPHASE)
     assert not any("accesssetup" in line for line in lines)
-    assert not any("usepackage{latexa11y" in line for line in lines)
+    # Only latexally-core and latexally-ee16 define \accesssetup; the check is
+    # that neither is missing, not that no package of ours is loaded at all.
+    assert not any("latexally-core" in line or "latexally-ee16" in line for line in lines)
+
+
+def test_math_speech_loads_its_package_independently(profile):
+    """latexally-math needs neither the retrofit nor core: it patches latex-lab."""
+    config = RunConfig(
+        standards=Standards(retrofit=False, bookmarks=False, question_tags=False),
+    )
+    lines = preamble_for(config, profile, TaggingMode.LEGACY_TESTPHASE)
+    assert "\\usepackage{latexally-math}" in lines
 
 
 def test_draft_mode_downgrades_placeholder_errors(profile):

@@ -9,7 +9,7 @@ nothing in the rest of the suite could have caught it.
 This compares rendered pixels. The reference is a plain LaTeX2e preamble holding
 the house spec verbatim -- the raw dimen assignments and font choices copied from
 the course's own ee16.sty -- against the same content typeset by
-``latexa11y-assignment``. Reproducing the spec inline rather than loading
+``latexally-assignment``. Reproducing the spec inline rather than loading
 ee16.sty keeps the test self-contained: ee16.sty is course material and does not
 live in this repository.
 
@@ -107,7 +107,7 @@ REFERENCE_PREAMBLE = r"""
 #: which is exactly what an earlier version of this test did, reporting a 50pt
 #: drift that came entirely from the fake title block.
 def _real_ee16() -> Path | None:
-    from latexa11y.config import load_profile
+    from latexally.config import load_profile
 
     try:
         profile = load_profile(REPO / "profiles" / "eecs16a.yaml")
@@ -184,8 +184,15 @@ def rendered(tmp_path_factory) -> tuple[Path, Path]:
     produced = _compile(
         work,
         "produced",
-        "\\documentclass[sol]{latexa11y-assignment}\n"
-        "\\usepackage{latexa11y-compat-ee16}\n"
+        "\\documentclass[sol]{latexally-assignment}\n"
+        "\\usepackage{latexally-compat-ee16}\n"
+        # \answerbox is a Described region, and Described paints an invisible
+        # copy of its description into the text layer for viewers that ignore
+        # tags. That is deliberate non-visible content: it changes what text
+        # extraction returns without moving a single visible mark (see
+        # test_text_layer_does_not_change_layout). This fixture measures
+        # layout, so switch it off rather than measure it as drift.
+        "\\accesssetup{text-layer=false}\n"
         "\\begin{document}\\pagestyle{empty}\n" + BODY + "\n\\end{document}\n",
     )
     return reference, produced
@@ -237,8 +244,8 @@ def test_masthead_matches_the_real_ee16(tmp_path_factory):
     produced = _compile(
         work,
         "class-masthead",
-        "\\documentclass{latexa11y-assignment}\n"
-        "\\usepackage{latexa11y-compat-ee16}\n"
+        "\\documentclass{latexally-assignment}\n"
+        "\\usepackage{latexally-compat-ee16}\n"
         "\\begin{document}\n"
         "\\def\\title{Homework 9}\n\\maketitle\n"
         "Body text under the masthead.\n"
@@ -295,8 +302,8 @@ def test_house_colors_option_restores_the_course_palette(tmp_path_factory):
     """
     work = tmp_path_factory.mktemp("housecolors")
     document = (
-        "\\documentclass[{options}]{{latexa11y-assignment}}\n"
-        "\\usepackage{{latexa11y-compat-ee16}}\n"
+        "\\documentclass[{options}]{{latexally-assignment}}\n"
+        "\\usepackage{{latexally-compat-ee16}}\n"
         "\\begin{{document}}\n"
         "\\def\\title{{Colours}}\n\\maketitle\n"
         "\\begin{{qunlist}}\\qns{{Q}}\n\\sol{{Coloured solution text.}}\n"
@@ -305,12 +312,15 @@ def test_house_colors_option_restores_the_course_palette(tmp_path_factory):
     conforming = _compile(work, "conforming", document.format(options="sol"))
     house = _compile(work, "house", document.format(options="sol,housecolors"))
 
-    # The exact ink colour, not a pixel fraction. A pixel comparison cannot see
-    # this at all: #0645AD and #0000FF differ by at most 82 in any one channel,
-    # under the 96 threshold that keeps antialiasing out of the layout numbers.
-    # Reading the span colour is both stricter and independent of thresholds.
-    assert _solution_colors(conforming) == {0x0645AD}, (
-        "the default palette is no longer the conforming blue"
+    # The exact ink colour, not a pixel fraction: reading the span colour is
+    # both stricter than a pixel count and independent of its threshold.
+    #
+    # #187AC4 is the smallest darkening of the course's #3399E6 that clears
+    # 4.5:1 (it measures 4.55:1). It replaced #0645AD, which conformed at
+    # 8.53:1 but overshot the floor so far that it read as harder than the
+    # blue it was fixing.
+    assert _solution_colors(conforming) == {0x187AC4}, (
+        "the default palette is no longer the minimum-change blue"
     )
     assert _solution_colors(house) == {0x0000FF}, (
         "[housecolors] did not restore the course's original blue"
@@ -342,7 +352,7 @@ def test_conforming_palette_actually_meets_the_contrast_floor():
     conforming palette replaces both so that one rule covers every document,
     and the replacement is checked here to be no worse than either.
     """
-    from latexa11y.check.contrast import contrast_ratio
+    from latexally.check.contrast import contrast_ratio
 
     white = (1.0, 1.0, 1.0)
     ratio = lambda hexed: contrast_ratio(
@@ -351,8 +361,58 @@ def test_conforming_palette_actually_meets_the_contrast_floor():
 
     assert ratio((0x33, 0x99, 0xE6)) < 4.5, "solutionColor should be the failing one"
     assert ratio((0x00, 0x00, 0xFF)) >= 4.5, "plain blue conforms; do not claim otherwise"
-    assert ratio((0x06, 0x45, 0xAD)) >= 4.5, "the replacement must conform"
-    # 8.53 vs 3.07: it more than doubles solutionColor's contrast, which is
-    # the job. Against plain blue it is a wash (8.53 vs 8.59) -- close enough
-    # that asserting an improvement there would be asserting noise.
-    assert ratio((0x06, 0x45, 0xAD)) > 2 * ratio((0x33, 0x99, 0xE6))
+    assert ratio((0x18, 0x7A, 0xC4)) >= 4.5, "the replacement must conform"
+    # It clears the floor and stops. Overshooting is the failure mode this
+    # replaced: #0645AD reached 8.53:1, nearly twice what was asked for, and
+    # was reported as harder to read than the colour it fixed. Assert the
+    # ceiling as well as the floor, so a future "safer" darker value fails
+    # here rather than in someone's eyes.
+    assert 4.5 <= ratio((0x18, 0x7A, 0xC4)) < 5.0
+    assert ratio((0x18, 0x7A, 0xC4)) > ratio((0x33, 0x99, 0xE6))
+
+
+# ---------------------------------------------------------------------- #
+# the invisible text layer
+# ---------------------------------------------------------------------- #
+
+_TEXT_LAYER_DOC = (
+    "\\documentclass[11pt]{article}\n"
+    "\\usepackage{latexally-core}\n"
+    "%s"
+    "\\pagestyle{empty}\n"
+    "\\begin{document}\\noindent\n"
+    "\\described{A voltage divider with two resistors in series.}"
+    "{\\framebox[3in]{\\rule{0pt}{1in}SECRETLABEL}}\n"
+    "\\end{document}\n"
+)
+
+
+def _text_layer_pair(tmp_path_factory):
+    work = tmp_path_factory.mktemp("textlayer")
+    on = _compile(work, "on", _TEXT_LAYER_DOC % "")
+    off = _compile(work, "off", _TEXT_LAYER_DOC % "\\accesssetup{text-layer=false}\n")
+    return on, off
+
+
+def test_text_layer_reaches_viewers_that_ignore_tags(tmp_path_factory):
+    """The description must be EXTRACTABLE, not merely present as /Alt.
+
+    macOS PDFKit -- Preview, Quick Look, VoiceOver-in-Preview -- ignores both
+    the tag tree and /ActualText, so a figure described only by /Alt is read to
+    those users as its own stray labels. Verified against the real viewer.
+    """
+    import pymupdf
+
+    on, off = _text_layer_pair(tmp_path_factory)
+    assert "A voltage divider" in pymupdf.open(on)[0].get_text()
+    assert "A voltage divider" not in pymupdf.open(off)[0].get_text()
+
+
+def test_text_layer_does_not_change_layout(tmp_path_factory):
+    """It must be invisible in the strict sense: not one pixel may move.
+
+    This is what lets the fidelity fixture switch the layer off and still be
+    measuring the same document.
+    """
+    on, off = _text_layer_pair(tmp_path_factory)
+    assert strongly_differing_fraction(on, off) == 0.0

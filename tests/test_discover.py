@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from latexa11y.build import relative_dependencies
-from latexa11y.config import CorpusScope, Profile
-from latexa11y.errors import ConfigError
-from latexa11y.run import (
-    RunConfig,
+from latexally.build import relative_dependencies
+from latexally.config import CorpusScope, Profile
+from latexally.errors import ConfigError
+from latexally.run import RunConfig
+from latexally.discover import (
     discover_assignments,
     find_driver,
     find_drivers,
@@ -290,7 +290,7 @@ def test_asking_for_a_version_an_assignment_lacks_yields_nothing(profile: Profil
 
 def test_an_unconventional_driver_survives_any_filter(tmp_path: Path):
     """`document` has no variant name, so a filter must not exclude it."""
-    from latexa11y.run import Assignment
+    from latexally.discover import Assignment
 
     odd = Assignment(path="x", kind="other", driver="main.tex",
                      drivers={"document": "main.tex"})
