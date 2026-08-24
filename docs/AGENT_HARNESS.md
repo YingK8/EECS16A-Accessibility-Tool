@@ -1,4 +1,4 @@
-# Driving latexa11y from an LLM agent
+# Driving latexally from an LLM agent
 
 Every command speaks `--json`; nothing is TUI-only. An agent uses exactly the
 same code paths a human does.
@@ -19,10 +19,10 @@ text shipped into a document under a legal obligation — is silent and expensiv
 
 ```bash
 # 1. Learn the rules (also embedded in every task payload).
-latexa11y -p eecs16a --json agent rules
+latexally --json agent rules
 
 # 2. Take the highest-value outstanding work.
-latexa11y -p eecs16a --json agent next-task --limit 5
+latexally --json agent next-task --limit 5
 ```
 
 A task is self-contained:
@@ -52,7 +52,7 @@ answer.
 
 ```bash
 # 3. Submit. Validation runs BEFORE the write.
-latexa11y -p eecs16a --json agent submit --id fig-b345050cb9d2 \
+latexally --json agent submit --id fig-b345050cb9d2 \
   --description 'Two capacitors C1 and C2, each from its own top node to ground, joined by switch S1.'
 ```
 
@@ -68,7 +68,7 @@ Rejections are actionable and arrive in one turn:
 Correct and resubmit. Then verify:
 
 ```bash
-latexa11y -p eecs16a --json check live
+latexally --json check live
 ```
 
 ---
@@ -78,13 +78,13 @@ latexa11y -p eecs16a --json check live
 The full loop an agent should run before reporting done:
 
 ```bash
-latexa11y --json doctor                 # can this toolchain even conform?
-latexa11y --json scan live              # refresh; outstanding count
-latexa11y --json agent next-task        # work
-latexa11y --json agent submit ...       # propose, validated
-latexa11y --json check live             # source lint
+latexally --json doctor                 # can this toolchain even conform?
+latexally --json scan live              # refresh; outstanding count
+latexally --json agent next-task        # work
+latexally --json agent submit ...       # propose, validated
+latexally --json check live             # source lint
 # after a human approves and a build runs:
-latexa11y --json check live --pdf out.pdf --log out.log
+latexally --json check live --pdf out.pdf --log out.log
 ```
 
 `check --json` returns findings with a stable `rule`, a `severity`, the
@@ -101,7 +101,7 @@ If an agent edits `.tex` itself rather than going through the worklog, use the
 same layer the tool uses — never a regex:
 
 ```python
-from latexa11y.texlex import TexSource, EditBuffer
+from latexally.texlex import TexSource, EditBuffer
 
 source = TexSource.from_path(path)          # comment- and verbatim-aware
 buffer = EditBuffer(path)

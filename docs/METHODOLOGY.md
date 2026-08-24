@@ -101,7 +101,7 @@ a class of failure this domain produces.
 
 ### 3.1 Control sequences cannot contain digits
 
-`\a11yheading` parsed as `\a` + `11yheading`, and internal `\__a11y_...` names as
+`\allyheading` parsed as `\a` + `11yheading`, and internal `\__ally_...` names as
 `\__a`. Symptom: `Command \1 unavailable in encoding T1`. Fixed by renaming every
 control sequence to a letters-only `access` prefix. File and message-module names
 keep digits — those are strings, not macro names.
@@ -147,7 +147,7 @@ Diagnosed by comparing the two **[verified]**; hence `min_runs: 3` in the profil
 
 ### 3.6 Bookmark strings are not typeset material
 
-The outline showed `a11ySolutionSolution` (a `\color` argument arriving as
+The outline showed `allySolutionSolution` (a `\color` argument arriving as
 literal text) and `Question ` (a counter that never expanded). Fixed with
 l3text's `\text_purify:n` plus explicit plain-text bookmark forms.
 
@@ -168,7 +168,7 @@ document for plot lines, and judging those was pure noise.
 | Hierarchy works | bookmark outline `Homework 9 → Question 1 → Part (a) → Solution`, tag levels `[1,2,3,4,…]` |
 | Legacy files compile | `golden_legacy.tex` uses `\def\title`, `qunlist`, `\qns`, `\qitem` in `enumerate`, `\sol` — 0 errors, 0 warnings |
 | Checker matches research | `ee16.sty` → 5× `cmdunh10`, 3× `epsf`; `sp26.sty` → 3.07:1 and 3.12:1 |
-| Contrast arithmetic | pure red 4.00:1, `0645AD` 8.53:1, `C00000` 6.48:1 |
+| Contrast arithmetic | pure red 4.00:1 → `EE0000` 4.53:1; `3399E6` 3.07:1 → `187AC4` 4.55:1 |
 | Describers | pgfplots reproduces the research report's worked example exactly |
 
 51 tests pass, including a full compile-and-assert cycle on two golden fixtures.
@@ -192,14 +192,7 @@ document for plot lines, and judging those was pure noise.
 
 Not yet built, in recommended order:
 
-1. **Math-to-speech.** Design settled by research: extract a macro dictionary
-   from `ee16.sty` and the semester styles → pass 1 with
-   `\tagpdfsetup{math/mathml/write-dummy}` to emit source + LaTeX's own MD5 per
-   formula → MathJax 4 `tex2mml` (it emits the `columnlines` attribute MathCAT
-   needs for augmented matrices; pandoc was **[verified]** to drop it) → MathCAT
-   SimpleSpeak → `/Alt`. 523,828 occurrences collapse to 35,504 unique strings,
-   so a hash-keyed cache makes this minutes, not days. Reject `axessibility`: on
-   pdfLaTeX it does not hook `$…$` at all, which is ~94% of this corpus's math.
+1. ~~**Math-to-speech.**~~ **Built** — see § 10.
 2. **veraPDF gate.** Shell out, parse `--format json`; there is no maintained
    Python binding. Map failures back to source via tagpdf `label=` keys in the
    `.aux`, not by guessing from object numbers.
@@ -218,11 +211,11 @@ pixels differing by more than 96/255:
 
 | Comparison | Difference |
 |---|---|
-| untagged original vs **tagging alone** (no latexa11y) | 2.596% |
+| untagged original vs **tagging alone** (no latexally) | 2.596% |
 | untagged original vs **full retrofit** | 2.594% |
 | **tagging alone vs full retrofit** | **0.002%** |
 
-So `latexa11y-ee16` is visually free: it changes 0.002% of pixels. The 2.6% is
+So `latexally-ee16` is visually free: it changes 0.002% of pixels. The 2.6% is
 the cost of enabling LaTeX's tagging at all — pagination shifts slightly on some
 pages — and is unavoidable on any route to a tagged PDF.
 
@@ -236,7 +229,7 @@ adjacent word pairs overlap with injection on, 0 of 3537 with it off.
 
 It is **not** caused by anything in this package —
 `\DocumentMetadata{testphase={tagpdf}}` alone reproduces it, and
-`\DocumentMetadata` with no testphase does not. `latexa11y-ee16` therefore sets
+`\DocumentMetadata` with no testphase does not. `latexally-ee16` therefore sets
 `\tagpdfsetup{activate/spaces=false}`. The trade-off is that extracted word
 boundaries rely on pdfTeX's positioning rather than explicit space glyphs;
 extraction still resolves words correctly here, and a legible page matters more.
@@ -317,7 +310,7 @@ are covered by `tests/test_latex_golden.py`.
 
 ### Interword spaces, again
 
-`latexa11y-doc.sty` needed the same `\tagpdfsetup{activate/spaces=false}` as the
+`latexally-doc.sty` needed the same `\tagpdfsetup{activate/spaces=false}` as the
 ee16 retrofit. Without it the running header, the footer and the `\Large` due-
 date line rendered as stacked, overlapping glyphs.
 
@@ -331,7 +324,7 @@ Conversion lived in `examples/build-corpus.sh`. That script was not a
 convenience wrapper: it was the *definition* of what conversion means — which
 lines get injected, in what order, with which options — expressed as a `sed`
 expression that nothing tested and nothing else could call. Moving it into
-`src/latexa11y/build/` exposed four defects that had been invisible:
+`src/latexally/build/` exposed four defects that had been invisible:
 
 | # | Defect | Why it was invisible |
 |---|---|---|
@@ -342,15 +335,15 @@ expression that nothing tested and nothing else could call. Moving it into
 
 Defect 4 is the instructive one. Fixing it immediately showed that `sp26/hw/5`
 and `sp26/hw/13` *gain* 8 and 16 errors under conversion — numbers the old
-detector had been reporting as 0. A control build with latexa11y removed
+detector had been reporting as 0. A control build with latexally removed
 entirely produced the **identical** 8 and 16, so they come from LaTeX's own
 tagging, not from this package. Two constructs are responsible, and both are now
 detected in source in milliseconds rather than after a three-minute compile:
 
-* **`A11Y-SRC-040`** — enumitem options (`\begin{enumerate}[label=(\roman*)]`)
+* **`ALLY-SRC-040`** — enumitem options (`\begin{enumerate}[label=(\roman*)]`)
   on a list latex-lab is also tagging. One "Missing number, treated as zero" per
   `\item`, and no PDF. **238 occurrences in 86 files** of the live corpus.
-* **`A11Y-SRC-041`** — `array` or `tabular` nested inside a matrix environment.
+* **`ALLY-SRC-041`** — `array` or `tabular` nested inside a matrix environment.
   "Misplaced `\crcr`" and five more. **14 occurrences in 3 files.**
 
 ### 9.2 The naming pass
@@ -380,10 +373,10 @@ region is either an artifact or it is described — which the old pairing hid.
 
 The rename was done **now because it was free**, and that was measured before
 proposing it: `grep -rl AltOnly` across the corpus returned zero `.tex` files
-and `questionBank/a11y/` did not exist, so there were no worklogs to migrate.
+and `questionBank/ally/` did not exist, so there were no worklogs to migrate.
 Every occurrence was inside this repository. The same rename after the first
 real conversion sweep would mean rewriting course sources. Deprecated aliases
-live in `latexa11y-compat-ee16.sty` — not in the core package, so the core API
+live in `latexally-compat-ee16.sty` — not in the core package, so the core API
 has exactly one spelling of each idea — and `tests/fixtures/golden_deprecated.tex`
 builds against the old vocabulary to prove nobody mid-migration is stranded.
 
@@ -391,7 +384,7 @@ builds against the old vocabulary to prove nobody mid-migration is stranded.
 
 | Bug | Symptom |
 |---|---|
-| `.gitignore`'s bare `build/` | Matches at *any* depth, so `src/latexa11y/build/` — the whole conversion engine — was silently excluded from `git add -A` and never committed. The commit looked clean. Anchored to `/build/`. |
+| `.gitignore`'s bare `build/` | Matches at *any* depth, so `src/latexally/build/` — the whole conversion engine — was silently excluded from `git add -A` and never committed. The commit looked clean. Anchored to `/build/`. |
 | `\answerbox` took an optional argument | `\answerbox{1in}` drew a default box and then typeset the literal text "1in" on the page. No error. Braces are what the legacy vocabulary uses (`\fillin{4cm}`), so it is the form the command will actually be given. Both spellings now work. |
 | `srgb_to_luminance` accepted 0..255 | Returned a plausible wrong answer: (6,69,173) on white reported 16.79:1 instead of 8.53:1. Both "pass" 4.5:1, so the mistake could only surface as a conformance claim computed from nonsense. Now rejected. |
 | The TUI hid each toggle's cost while it was off | Exactly when someone is deciding whether to pay it. |
@@ -402,8 +395,11 @@ Recorded because both were about to be written down as fact:
 
 1. **Plain blue is not the failing colour.** `#0000FF` on white is 8.59:1 and
    conforms comfortably. The 2.6:1 failure is `solutionColor` =
-   rgb(0.2, 0.6, 0.9) = `#3399E6`, defined by the discussion preambles. The
-   conforming palette replaces both so one rule covers every document.
+   rgb(0.2, 0.6, 0.9) = `#3399E6`, defined by the discussion preambles. Only
+   colours that actually fail are changed, and each is darkened just far enough
+   to clear the floor: `#3399E6` becomes `#187AC4` at 4.55:1, not the `#0645AD`
+   at 8.53:1 a fixed palette used to impose, which overshot so far that it read
+   as harder than the colour it was fixing.
 2. **The first style-fidelity test measured its own fixture.** It compared the
    class against a hand-written approximation of ee16's `\@maketitle` and
    reported a 50pt drift that came entirely from the fake masthead. The body is
@@ -416,7 +412,7 @@ Everything under one directory the user chooses, so nothing is scattered and the
 corpus stays read-only by default:
 
 ```
-a11y-out/
+ally-out/
   pdf/           converted PDFs
   logs/          build logs
   tex/           converted sources, with each driver's transitive relative
@@ -471,7 +467,7 @@ pixels. Infer nothing about a page that can be rendered.
 
 ### 9.7 A relative output directory went to the wrong place
 
-Reported from a real run: `latexa11y build ... -o a11y-out --write` crashed with
+Reported from a real run: `latexally build ... -o ally-out --write` crashed with
 `AttributeError: 'NoneType' object has no attribute 'is_file'`.
 
 The AttributeError was the symptom. The engine runs pdflatex with `cwd` set to
@@ -483,11 +479,11 @@ fell over on `None` -- replacing the build result with a traceback.
 
 Every artifact path is now absolute by the time it leaves the model, while
 `as_dict` still serialises the raw value so `run.yaml` stays portable. `run.yaml`
-records `a11y-out`; the engine receives `/Users/.../a11y-out/pdf`.
+records `ally-out`; the engine receives `/Users/.../ally-out/pdf`.
 
 **Why the tests missed it.** Every fixture passed an absolute `tmp_path`. The
 defect lived exactly in the gap between what was tested and what a person types
--- `-o a11y-out` is the obvious thing to type, and no test ever did. The
+-- `-o ally-out` is the obvious thing to type, and no test ever did. The
 regression tests now `monkeypatch.chdir` and assert on relative input.
 
 Two further defects fell out of the fix:
@@ -500,14 +496,14 @@ Two further defects fell out of the fix:
 
 ### 9.8 A third construct LaTeX's own tagging cannot handle
 
-The same run surfaced `A11Y-SRC-042`: a line break immediately after display
+The same run surfaced `ALLY-SRC-042`: a line break immediately after display
 math -- `\end{align*}` followed by `\newline` -- fails under tagging with
 "There's no line here to end" and produces no PDF. Display math ends in vertical
 mode, so there is no line for `\newline` to end; the untagged build tolerates
 it, which is why the construct is in the corpus at all.
 
 Attributed the same way as the others, and worth doing every time: two control
-builds, one with tagging alone and latexa11y entirely absent, one with the full
+builds, one with tagging alone and latexally entirely absent, one with the full
 retrofit and question H2 tags off. Both produced the **identical** two errors, so
 neither this package nor the newly-flipped default is responsible. Measured
 across the live corpus: 12 occurrences in 8 files.
@@ -586,11 +582,11 @@ by inspecting the LaTeX:
 
 | Rule | What it catches |
 |---|---|
-| `A11Y-PDF-023` | a bookmark whose destination resolves nowhere |
-| `A11Y-PDF-024` | an outline where nothing is positional, so nothing scrolls to its heading |
-| `A11Y-PDF-025` | every destination on one page of a multi-page document |
+| `ALLY-PDF-023` | a bookmark whose destination resolves nowhere |
+| `ALLY-PDF-024` | an outline where nothing is positional, so nothing scrolls to its heading |
+| `ALLY-PDF-025` | every destination on one page of a multi-page document |
 
-`A11Y-PDF-025` reports the old artefact exactly: *"all 48 bookmarks point at page
+`ALLY-PDF-025` reports the old artefact exactly: *"all 48 bookmarks point at page
 1 of 13; the outline cannot navigate."* A single-page document with every
 bookmark on page 1 is correct, and is not flagged.
 
@@ -678,7 +674,7 @@ label and falls back to `1.`:
 Only the plain LaTeX2e redefinition works. Counting errors was not enough here
 either -- the same mistake as §9.10, one level up.
 
-**`A11Y-SRC-042` missed the construct that actually broke the build.** The rule
+**`ALLY-SRC-042` missed the construct that actually broke the build.** The rule
 matched `\end{align}` and friends but not `$$ ... $$\\`, which is what
 `q_orthonormal_basis_basics.tex:85` contained. The file was reported clean and
 the build failed anyway. All three spellings of display math are matched now,
@@ -702,3 +698,72 @@ Final state of `sp26/hw/3`: both variants build with **0 errors and 0 warnings**
 10 and 5 pages, 28 bookmarks each, 2.58% and 1.56% against their originals -- and
 the list renders `(i) Give the dimension... (ii) Provide an orthonormal...` as it
 always did. The source diff is six lines.
+
+
+---
+
+## 10. Spoken math, and four bugs that were only visible against a real build
+
+The design in § 6 survived contact, with two substitutions.
+
+**MathJax was replaced by `latex2mathml`.** MathJax 4 dropped the MathML output
+jax, so `tex2mml` no longer exists as a public call; getting MathML out means
+driving `SerializedMmlVisitor` through internal imports. `latex2mathml` is one
+pip package and one function call, and it was **[verified]** to keep
+`columnlines="none solid"` on `\begin{array}{cc|c}` — the augmented-matrix
+attribute that was the whole reason MathJax was preferred over pandoc.
+
+**MathCAT was replaced by the Speech Rule Engine.** MathCAT has no published
+PyPI wheel (`libmathcat_py` is unpublished; it needs a maturin build). SRE is
+npm-only and already bundled everywhere. It is driven as a *library*, not
+through its CLI: `sre` accepts one `<math>` per invocation, which at 35,504
+unique formulas is 35,504 process spawns.
+
+### The four bugs
+
+Each was invisible in isolation and each produced a plausible-looking result.
+
+1. **The hash is over the wrong string.** latex-lab hashes
+   `\l__math_content_AF_source_tl` — the *rendered source template* — and it does
+   so in the `tagsupport/math/struct/begin` socket, one socket *later* than the
+   content plug that sets it. Hashing `\g__math_grabbed_math_tl` instead is the
+   obvious reading, and gives a different digest for every formula: every lookup
+   misses and every `/Alt` comes out empty.
+
+2. **`math/alt/use` is off unless PDF/UA-1 is declared.** latex-lab clears
+   `\l__math_content_alt_tl` after the content socket when the flag is false. On
+   TeX Live 2025, which cannot declare `ua-1`, that silently discards correct
+   speech. `latexally-math.sty` now sets the key explicitly.
+
+3. **expl3 discards literal spaces.** The generated table is read under
+   `\ExplSyntaxOn`, so `{ the fraction with … }` becomes
+   `thefractionwith…`. The `/Alt` is present, well-formed, passes every
+   structural check, and is unintelligible aloud. Speech is emitted with `~`.
+
+4. **The output directory is not on TeX's input path.** `-output-directory`
+   governs writing only; `\input` of a generated file sitting next to the `.aux`
+   fails with "File not found", which nonstop mode swallows. **[verified]** with
+   a two-line probe. The fix is one `TEXINPUTS` entry — and it matters because
+   the alternative, writing the generated table into the corpus, breaks the rule
+   that the corpus is never touched.
+
+A fifth was caught by the fixture rather than the build: latex-lab writes its
+MD5 in **uppercase** hex and inserts a space after every control sequence
+(`\frac {x^2-1}{x+1}`). A lowercase-only pattern matches nothing at all, and a
+hand-written fixture would have hidden it — `tests/fixtures/mathml_dummy.html`
+is real `write-dummy` output for that reason.
+
+### Correction to § 6
+
+§ 6 proposed extracting a macro dictionary from `ee16.sty` and scanning the
+corpus for formulas. Neither is needed. `write-dummy` reports every formula
+latex-lab *actually tagged*, with its source and hash, which covers inline
+`$…$` for free and cannot disagree with what reaches the PDF. The `$`-pairing
+scanner that `texlex` would have needed was never written.
+
+### The ceiling
+
+`/Alt` is a flat string: no math navigation, no braille, no reflow. Associated
+MathML is attached for readers that can use it. ClearSpeak also does not
+announce the augmented-matrix divider — it says "the 2 by 3 matrix" — although
+the MathML carries `columnlines`. MathCAT is the upgrade path.

@@ -2,7 +2,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 # Anchored to the repository root. A bare `build/` matches at ANY depth, which
-# silently excluded src/latexa11y/build/ -- the conversion engine -- from every
+# silently excluded src/latexally/build/ -- the conversion engine -- from every
 # `git add -A`. The commit looked clean and the package was simply absent.
 /build/
 /dist/
@@ -23,7 +23,11 @@ venv/
 *.pdf
 !docs/**/*.pdf
 
-# Runner output. `latexa11y run` defaults here; keep converted copies of course
+# Runner output. `latexally run` defaults here; keep converted copies of course
 # material out of the tool repository.
-/a11y-out/
+/ally-out/
 /examples/build/
+
+# npm: speech-rule-engine for spoken math (see src/latexally/mathspeech)
+node_modules/
+package-lock.json

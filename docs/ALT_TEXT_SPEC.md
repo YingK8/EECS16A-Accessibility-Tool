@@ -54,6 +54,43 @@ answer it *more easily* than a sighted student, it is also wrong — see rule 9.
 
 ---
 
+## What a reader actually does with `/Alt`
+
+**It never appears on hover.** `/Alt` lives in the structure tree, where
+assistive technology reads it. Acrobat exposes it in the Tags panel; Preview and
+browser viewers ignore it for display. Hover text is a different PDF object, an
+annotation's `/Contents`, which `\pdftooltip` from `pdfcomment` produces. This
+tool does not emit one.
+
+**It replaces the figure, it does not annotate it.** A described figure is one
+`/Figure` element carrying `/Alt` over a single marked-content leaf with no
+child structure — the drawing's own glyphs are inside that leaf and are not
+separately reachable. A reader following the structure tree announces "graphic",
+speaks your description, and moves on. Nothing in the figure is read. This is
+why rules 1-10 have to carry the whole question: there is no fallback to the
+drawing.
+
+**Untagged viewers do the opposite.** Preview with VoiceOver, pdf.js and other
+viewers that ignore tags fall back to the raw text layer: they speak the loose
+label glyphs and never say the alt at all.
+
+`/ActualText` does **not** rescue them. macOS PDFKit -- Preview, Quick Look and
+VoiceOver-in-Preview -- ignores it during extraction; measured against a figure
+whose `/ActualText` was correct, what came back was the drawing's own glyphs.
+
+So `Described` also paints the description into the text layer itself, in PDF
+text rendering mode 3: marks are made, no glyphs are painted. That is the one
+channel these viewers do honour, and it is what a described figure reads as
+there. It is invisible in the strict sense -- not one pixel moves -- and adds
+nothing to the tag tree, so a tag-following reader still hears the `/Alt` once
+and never sees it. Switch it off with `\accesssetup{text-layer=false}`.
+
+The drawing's own labels are still in the text layer beside it, so a tag-blind
+viewer reads both. Removing them means converting the figure's text to outlines
+at build time; this tool does not do that yet.
+
+---
+
 ## Decide the disposition first
 
 Apply in order, stop at the first hit:
@@ -150,4 +187,4 @@ they do not affect tagging.
 
 A description is done when: a disposition is recorded; the text passes rules
 1–10; a `long` description exists if rule 8 triggered; the status is `approved`;
-and `latexa11y check --pdf` reports no `A11Y-PDF-002/003/004` for it.
+and `latexally check --pdf` reports no `ALLY-PDF-002/003/004` for it.
