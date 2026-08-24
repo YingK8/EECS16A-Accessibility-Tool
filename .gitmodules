@@ -1,0 +1,3 @@
+[submodule "vendor/MathCAT"]
+	path = vendor/MathCAT
+	url = https://github.com/YingK8/MathCAT.git

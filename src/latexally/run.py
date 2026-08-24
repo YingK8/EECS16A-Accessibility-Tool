@@ -491,6 +491,11 @@ class RunConfig:
     variants: tuple[str, ...] = ()
     #: False is a dry run: nothing is written anywhere. The default, deliberately.
     write: bool = False
+    #: Documents compiled at once. Each LaTeX run is three passes of a
+    #: subprocess, so this is where the wall clock goes; the conversion work in
+    #: front of it stays serial because an assignment's variants share one
+    #: mirror directory.
+    jobs: int = 1
 
     def with_assignments(self, paths: Iterable[str]) -> "RunConfig":
         return replace(self, assignments=tuple(dict.fromkeys(paths)))
@@ -504,6 +509,9 @@ class RunConfig:
             "alt": self.alt.as_dict(),
             "output": self.output.as_dict(),
             "variants": list(self.variants),
+            # Unlike `write`, this is a how-fast and not a commitment, so a
+            # replayed run is entitled to inherit it.
+            "jobs": self.jobs,
         }
 
     @classmethod
@@ -519,6 +527,7 @@ class RunConfig:
             alt=AltChoice.from_dict(data.get("alt")),
             output=Output.from_dict(data.get("output")),
             variants=tuple(str(item) for item in (data.get("variants") or ())),
+            jobs=max(1, int(data.get("jobs") or 1)),
         )
 
     def to_yaml(self) -> str:

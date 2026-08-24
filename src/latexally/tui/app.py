@@ -1338,6 +1338,18 @@ class BuildScreen(Screen):
     def _started(self, assignment, variant: str) -> None:
         key = f"{assignment.path}|{variant}"
         self._row(key, None, None, "building…")
+        jobs = self.app.config.jobs
+        if jobs > 1:
+            # With N documents in flight there is no "the" log to follow, and
+            # following whichever one started last would interleave three
+            # unrelated pdflatex runs into one pane. The per-row status column
+            # still tracks each document, and `run.log` carries every log,
+            # banner-separated, after the run.
+            self._log_path = None
+            self.query_one("#build-status", Static).update(
+                Content(f"Building, {jobs} documents at a time…")
+            )
+            return
         slug = _slug(assignment.path, variant)
         output = self.app.config.output
         self._log_path = output.pdf_dir() / f"{slug}.log"
@@ -1450,8 +1462,9 @@ class BuildScreen(Screen):
         if failures:
             log.write(
                 Text(
-                    "`latexally check <scope>` locates constructs that tagging "
-                    "cannot compile, without rebuilding.",
+                    "`latexally doctor --tagging <scope>` locates constructs that "
+                    "tagging cannot compile, without rebuilding, and `--fix` "
+                    "rewrites the ones that can be rewritten.",
                     style="dim",
                 )
             )

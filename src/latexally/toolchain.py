@@ -486,26 +486,31 @@ def probe(profile: Profile) -> ToolchainReport:
             None
             if verapdf
             else (
-                "install from https://docs.verapdf.org/install/ — without it the "
-                "authoritative PDF/UA gate cannot run and `check` falls back to "
-                "its own structure assertions"
+                "install from https://docs.verapdf.org/install/ — `check --pdf` "
+                "runs it when present and falls back to its own structure "
+                "assertions when not, which cover far less than Matterhorn's 87 "
+                "machine-checkable conditions"
             ),
         )
     )
 
-    node = _binary_version("node", "--version")
-    from .mathspeech import REPO_NODE_MODULES
+    from .mathspeech import DRIVER, RULES_DIR
 
-    sre = (REPO_NODE_MODULES / "speech-rule-engine").is_dir()
-    if node and sre:
-        detail, status, hint = f"{node}, speech-rule-engine present", Status.OK, None
-    elif node:
-        detail, status = node, Status.WARN
-        hint = f"run `npm install` in {REPO_NODE_MODULES.parent} to enable spoken math"
+    # Three separate ways this can be half-installed, and the hint has to name
+    # which one it is: a fresh clone has the submodule empty, a fresh checkout
+    # has it populated but unbuilt, and neither is a missing Rust toolchain.
+    if DRIVER.is_file() and RULES_DIR.is_dir():
+        detail, status, hint = f"MathCAT, {DRIVER}", Status.OK, None
+    elif not RULES_DIR.is_dir():
+        detail, status = "MathCAT rules not checked out", Status.WARN
+        hint = f"run `git submodule update --init` in {DRIVER.parents[2]}"
+    elif shutil.which("cargo") is None:
+        detail, status = "cargo not found", Status.WARN
+        hint = "install Rust (https://rustup.rs) to build the math speech driver"
     else:
-        detail, status = "not found", Status.WARN
-        hint = "install Node 20+ to enable the LaTeX -> MathML -> speech chain"
-    add(Check("T011", "Node.js (math conversion)", status, detail, hint))
+        detail, status = "driver not built", Status.WARN
+        hint = f"run `cargo build --release` in {DRIVER.parents[2]}"
+    add(Check("T011", "MathCAT (math speech)", status, detail, hint))
 
     optional = {
         "pikepdf": ("pdf", "PDF structure assertions"),

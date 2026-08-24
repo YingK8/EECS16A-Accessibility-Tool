@@ -102,34 +102,89 @@
 %% The marked-content layer: what a positional text extractor substitutes.
 %%
 %% This is the half that makes spoken maths work in readers that ignore tags.
-%% It replaces latex-lab's `default' plug, which splits a formula into tagged
-%% subparts -- unnecessary here, because the whole formula already has one
-%% spoken string, and subparts would fragment it. `single' is latex-lab's own
-%% name for the no-splitting pair, so its `end' partner is used unchanged.
-%% Assigned from begindocument, not at load time: latex-lab installs its own
+%% /Alt reaches the structure tree and nothing else; macOS Preview and most
+%% built-in "read aloud" features extract by position, never look at the tree,
+%% and announce the raw glyphs unless the *marked-content* property list
+%% carries /ActualText.
+%%
+%% Which socket to hang that on is a moving target. latex-lab used to expose
+%% `math/substruct/begin', which sat between the structure element and the
+%% formula body -- exactly the seam this needs. TeX Live 2026's latex-lab has
+%% no such socket: `math/struct/begin' now opens the marked content itself,
+%% with `\tag_mc_begin:n{}', and there is no hook between that and the body.
+%% Asking for the old socket is not a silent no-op either; it raises
+%% "Socket 'tagsupport/math/substruct/begin' undeclared" twice per formula and
+%% leaves every equation spoken as glyphs.
+%%
+%% So the seam is reopened rather than reached for: `formula/begin' is
+%% reproduced with one extra step after the structure element, which closes
+%% latex-lab's empty marked content and opens ours with the speech attached.
+%% An empty BDC/EMC pair costs nothing and keeps latex-lab's own bookkeeping
+%% intact, which duplicating the struct/begin plug would not.
+%%
+%% Both spellings are needed: inline and display formulas have separate plugs
+%% that differ only in the paragraph handling latex-lab does around them.
+\cs_new_protected:Npn \__latexally_math_reopen_mc:
+  {
+    \tl_if_empty:NF \l__latexally_math_speech_tl
+      {
+        \tag_mc_end:
+        %% Braced. Speech is prose and prose has commas -- "row 1, column 2" --
+        %% and an unbraced value ends the key at the first one, so the tail is
+        %% parsed as a key of its own: "LaTeX Error: The key
+        %% '__tag/mc/0 row 1' is unknown".
+        \exp_args:Ne \tag_mc_begin:n
+          { actualtext = { \l__latexally_math_speech_tl } }
+      }
+  }
+
+%% Assigned from begindocument, not at load time: latex-lab assigns its own
 %% `default' plug during \begin{document} setup and would overwrite an earlier
 %% assignment -- silently, leaving the maths spoken as glyphs again.
+%%
+%% Written out twice rather than mapped over {inline, display}: the plug body
+%% takes #2, and a mapped version has to survive both \AddToHook's and
+%% \clist_map_inline:nn's hash doubling to say so. Two copies of six lines is
+%% the cheaper thing to read at 3am.
+%%
+%% Guarded on the socket existing, so a latex-lab that moves this seam again
+%% degrades to "/Alt only" instead of failing the build. The gap still gets
+%% reported: the extraction assertion in tests/test_speech.py is what fails.
 \AddToHook{begindocument}
   {
-    \tl_if_exist:NT \l__math_content_alt_tl
+    \socket_if_exist:nT { tagsupport/math/inline/formula/begin }
       {
         \socket_new_plug:nnn
-          { tagsupport/math/substruct/begin }
+          { tagsupport/math/inline/formula/begin }
           { latexally-speech }
           {
-            \tl_if_empty:NTF \l__latexally_math_speech_tl
-              { \tag_mc_begin:n {} }
-              {
-                %% Braced. Speech is prose and prose has commas -- "Row 1: 5
-                %% plus eta, Column 2" -- and an unbraced value ends the key at
-                %% the first one, so the tail is parsed as a key of its own:
-                %% "LaTeX Error: The key '__tag/mc/0 Row 2: Column 1' is unknown".
-                \exp_args:Ne \tag_mc_begin:n
-                  { actualtext = { \l__latexally_math_speech_tl } }
-              }
+            \tagpdfparaOff
+            \__math_luamml_structelem:
+            \tag_socket_use:n { math/content }
+            \tag_socket_use:n { math/struct/begin }
+            \__latexally_math_reopen_mc:
+            ##2
+            \tag_socket_use:n { math/end }
           }
-        \socket_assign_plug:nn { tagsupport/math/substruct/begin } { latexally-speech }
-        \socket_assign_plug:nn { tagsupport/math/substruct/end }   { single }
+        \socket_assign_plug:nn
+          { tagsupport/math/inline/formula/begin } { latexally-speech }
+      }
+    \socket_if_exist:nT { tagsupport/math/display/formula/begin }
+      {
+        \socket_new_plug:nnn
+          { tagsupport/math/display/formula/begin }
+          { latexally-speech }
+          {
+            \tagpdfparaOff
+            \__math_luamml_structelem:
+            \tag_socket_use:n { math/content }
+            \tag_socket_use:n { math/struct/begin }
+            \__latexally_math_reopen_mc:
+            ##2
+            \tag_socket_use:n { math/end }
+          }
+        \socket_assign_plug:nn
+          { tagsupport/math/display/formula/begin } { latexally-speech }
       }
   }
 

@@ -28,6 +28,8 @@ venv/
 /ally-out/
 /examples/build/
 
-# npm: speech-rule-engine for spoken math (see src/latexally/mathspeech)
-node_modules/
-package-lock.json
+# Cargo: the MathCAT speech driver (see src/latexally/mathspeech). Anchored,
+# because vendor/MathCAT has a `target/` of its own and both belong here, but a
+# bare `target/` would also swallow anything a course names that.
+/mathspeech-driver/target/
+/vendor/MathCAT/target/

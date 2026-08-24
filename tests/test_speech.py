@@ -44,7 +44,7 @@ def build(work: Path, name: str = "speech") -> Path:
     """Compile, convert the math, compile again. Returns the PDF."""
     import os
 
-    from latexally.mathspeech import convert, read_dummy, write_sources
+    from latexally.mathspeech import DRIVER, convert, read_dummy, write_sources
 
     (work / f"{name}.tex").write_text(DOCUMENT)
     env = {"TEXINPUTS": f"{TEXDIR}:{work}:", "PATH": os.environ["PATH"]}
@@ -61,7 +61,7 @@ def build(work: Path, name: str = "speech") -> Path:
 
     run()
     dummy = work / f"{name}-mathml-dummy.html"
-    if dummy.is_file() and shutil.which("node"):
+    if dummy.is_file() and DRIVER.is_file():
         formulas = read_dummy(dummy)
         if formulas:
             write_sources(convert(formulas, cache=work / "cache.json"), formulas, name, work)
@@ -218,8 +218,10 @@ def test_extracted_text_speaks_the_maths_too(built: Path):
 
     extracted = "".join(pymupdf.open(built)[0].get_text().split())
 
-    # The document's two formulas are \vec{i} and s_i.
-    assert "irightarrow" in extracted, (
+    # The document's two formulas are \vec{i} and s_i. MathCAT calls the first
+    # one "vector i"; the Speech Rule Engine used to read the accent literally,
+    # as "i rightarrow".
+    assert "vectori" in extracted, (
         "a positional extractor still sees the glyphs, not the description"
     )
     assert "ssubi" in extracted

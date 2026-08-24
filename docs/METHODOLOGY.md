@@ -193,11 +193,22 @@ document for plot lines, and judging those was pure noise.
 Not yet built, in recommended order:
 
 1. ~~**Math-to-speech.**~~ **Built** — see § 10.
-2. **veraPDF gate.** Shell out, parse `--format json`; there is no maintained
-   Python binding. Map failures back to source via tagpdf `label=` keys in the
-   `.aux`, not by guessing from object numbers.
-3. **Parallel build harness.** One `-outdir` per document is mandatory —
-   `markup.sty` writes `\jobname.annotations` and will collide.
+2. ~~**veraPDF gate.**~~ **Built** — `check/vera.py`, run by `check --pdf`. It
+   shells out and parses `--format json`; there is no maintained Python
+   binding. Failures map back to source via tagpdf `label=` keys in the `.aux`,
+   not by guessing from object numbers. Two things about the report shape cost
+   an afternoon and are worth writing down: the top level is `report`, not
+   `jobs`, and `validationResult` is a **list**, not a dict. Both mistakes
+   return an empty finding list, which reads as a clean PDF.
+3. ~~**Parallel build harness.**~~ **Built** — `--jobs N`, a
+   `ThreadPoolExecutor` over the compile phase only. The note this item used to
+   carry was wrong: *one `-outdir` per document is not mandatory.*
+   `compile_document` has always used one shared `-output-directory` and
+   distinguished documents by `-jobname`, which is what already prevents the
+   `\jobname.annotations` collision. What does have to stay serial is the
+   *conversion* phase, because an assignment's variants share one mirror
+   directory — `materialise`, `apply_descriptions` and the worklog shard all
+   read-modify-write it.
 4. **Textual TUI** over the same APIs the CLI uses.
 5. **`migrate` command** for the preamble and `.sty` rewrites in `MIGRATION.md`.
 
@@ -338,13 +349,47 @@ and `sp26/hw/13` *gain* 8 and 16 errors under conversion — numbers the old
 detector had been reporting as 0. A control build with latexally removed
 entirely produced the **identical** 8 and 16, so they come from LaTeX's own
 tagging, not from this package. Two constructs are responsible, and both are now
-detected in source in milliseconds rather than after a three-minute compile:
+detected in source in milliseconds rather than after a three-minute compile —
+and, since `latexally/rewrite.py`, fixed:
 
 * **`ALLY-SRC-040`** — enumitem options (`\begin{enumerate}[label=(\roman*)]`)
   on a list latex-lab is also tagging. One "Missing number, treated as zero" per
-  `\item`, and no PDF. **238 occurrences in 86 files** of the live corpus.
+  `\item`, and no PDF. **107 occurrences in 58 files** of the default scope;
+  667 across every `.tex` in the tree, snapshots included.
 * **`ALLY-SRC-041`** — `array` or `tabular` nested inside a matrix environment.
-  "Misplaced `\crcr`" and five more. **14 occurrences in 3 files.**
+  "Misplaced `\crcr`" and five more. **14 occurrences in 3 files** of the
+  default scope; 357 across the whole tree.
+
+Quote a count with the scope it was taken over. The two differ by a factor of
+six because the profile's default scope is the live bank plus sp26 plus the
+exam archive — 1,959 files — while the tree also holds every frozen
+per-semester snapshot, 17,677 files in all.
+
+Both fixes had to be argued with the corpus rather than reasoned out, and both
+times the corpus won:
+
+* **`ALLY-SRC-041` must not delete the array**, which is what the rule's own
+  hint said to do. 257 of the 357 sites carry a `|` in the column spec: they
+  are augmented matrices, and the array is where the divider lives. The nesting
+  is inverted instead — `\left[ … \right]` around the array. This also fixes
+  the MathML, since `latex2mathml` reads the nested form as three rows, not two.
+* **`ALLY-SRC-040` must not use `\labelenumi`**, which is what its hint said.
+  483 of 667 sites are two `enumerate`s deep or more inside their own file, and
+  every question file is `\input` inside the driver's own
+  `\begin{enumerate}[series=qn]`, so the depth is not knowable from the source
+  at all. `latexally-core` provides `\AllyEnumLabel`, which asks LaTeX at the
+  moment the list opens.
+
+A third, `ALLY-SRC-043`, is mostly not mechanisable and is worth recording as
+the case where reading the sites changed the answer. Its hint said "close it
+with `\)`". 28 of the corpus's 30 sites are not mismatched formulas at all —
+they are a literal `(` written as `\(`:
+
+    \(1) put 4 resistors in series, and let it be $R$
+    \(http://inst.eecs.berkeley.edu/~ee16a/sp19/hw-practice).
+
+Following the hint on those pulls whole paragraphs into math mode. They are
+reported and never rewritten.
 
 ### 9.2 The naming pass
 
@@ -713,11 +758,44 @@ pip package and one function call, and it was **[verified]** to keep
 `columnlines="none solid"` on `\begin{array}{cc|c}` — the augmented-matrix
 attribute that was the whole reason MathJax was preferred over pandoc.
 
-**MathCAT was replaced by the Speech Rule Engine.** MathCAT has no published
-PyPI wheel (`libmathcat_py` is unpublished; it needs a maturin build). SRE is
-npm-only and already bundled everywhere. It is driven as a *library*, not
-through its CLI: `sre` accepts one `<math>` per invocation, which at 35,504
-unique formulas is 35,504 process spawns.
+**MathCAT was replaced by the Speech Rule Engine, and then replaced it.** The
+first decision was right on the evidence available: MathCAT has no published
+PyPI wheel — `libmathcat_py` is unpublished and needs a maturin build — and no
+npm package either, while SRE is one `npm install`.
+
+What that reasoning missed is that the objection is to the *bindings*, not to
+the engine. The crate is healthy (MIT, `mathcat` on crates.io, released the day
+before this was written), it ships all 160 of its `Rules/*.yaml` inside the
+`.crate`, and a driver speaking the same JSON-Lines protocol `speech.cjs` used
+is about ninety lines of Rust. Building one costs a `rustup` in setup and
+removes Node from the toolchain entirely, since SRE was its only consumer.
+
+Two things made it worth doing:
+
+* **It is what the readers actually run.** NVDA and JAWS both speak maths with
+  MathCAT. SRE is what MathJax and ChromeVox use.
+* **Its rules are extensible, and this corpus needs one.** See below.
+
+Either way it is driven as a *library*, not through a CLI: one expression per
+invocation, at 35,504 unique formulas, is 35,504 process spawns.
+
+**MathCAT is vendored as a fork, and the fork earns its keep immediately.**
+`vendor/MathCAT` is a submodule of `YingK8/MathCAT` with `upstream` pointing at
+`daisy/MathCAT`, pinned to the tree crates.io published as 0.7.5. Having
+`Rules/` on disk makes `set_rules_dir` one call rather than an unzip out of a
+build directory — but the real reason is that **upstream MathCAT reads no
+`mtable` line attribute at all.** `grep -r columnlines vendor/MathCAT` returns
+nothing. `[A|b]` and `[A b]` are spoken identically, which on a linear-algebra
+course is the difference between a system of equations and a 2 by 3 matrix.
+
+The fork carries one rule, `augmented-matrix` in
+`Rules/Languages/en/SharedRules/general.yaml`, matching
+`contains(@columnlines, 'solid')` and placed ahead of the zero/identity/diagonal
+special cases because an augmented matrix can also be square or all-zero.
+**[verified]** on the real `write-dummy` fixture: "the 2 by 3 augmented matrix;
+row 1; column 1; 1, …". `tests/test_mathspeech.py` asserts that prefix, so a
+rebase that drops the rule fails the suite rather than silently losing the
+divider.
 
 ### The four bugs
 
@@ -761,9 +839,62 @@ latex-lab *actually tagged*, with its source and hash, which covers inline
 `$…$` for free and cannot disagree with what reaches the PDF. The `$`-pairing
 scanner that `texlex` would have needed was never written.
 
+### What the engine swap actually measured
+
+Validated against **861 unique formulas of real `write-dummy` output** from 12
+converted documents — latex-lab's own record of every formula it tagged, so it
+cannot disagree with what reaches the PDF.
+
+| | at the swap | after |
+|---|---|---|
+| spoken | 832 (96.6%) | **852 (99.0%)** |
+| refused by MathCAT | 29 | 9 |
+| `/Alt` containing a macro name | **284** | 1 |
+
+Throughput is ~690 formulas/second in one process, which is what makes 35,504
+unique formulas a thirty-second job rather than an afternoon.
+
+**The 284 were not MathCAT's fault, and would have been identical under SRE.**
+Every leaked backslash was already in the MathML: `in_mathml == in_speech ==
+284`. MathCAT adds none. What leaked were course macros `latex2mathml` has
+never heard of and passes through as literal text — `\mat` alone accounted for
+591 occurrences — so the reader heard "mat cap u is equal to". `expand_macros`
+is the fix, and it is the same shape as the `alignat` rewrite that was already
+there: a measured list, not a TeX expander.
+
+Two converter bugs were worth the dig:
+
+* **A superscripted matrix produced no `/Alt` at all.** `latex2mathml` emits an
+  `<msup>` with the wrong number of children for
+  `\begin{bmatrix}…\end{bmatrix}^{\top}`; MathCAT refuses it outright with
+  "msup should have 2 children". Every transpose in a linear-algebra course.
+  Wrapping the environment in a brace group is the whole fix.
+* **`aligned` yields invalid MathML** where `align*` reads correctly, nested
+  inside `equation*` or not. **[verified]** both ways.
+
+That MathCAT *refuses* invalid MathML rather than guessing is worth keeping in
+mind when reading these numbers: every refusal was a real defect upstream of it,
+and the missing `/Alt` is reported by `ALLY-PDF-040` rather than shipped as
+plausible nonsense.
+
+The 9 that still do not speak are not a speech problem. Seven are latex-lab
+write-dummy artifacts — `\begin{eqnarray}\if@eqnstar \else \ifx …
+\hyper@makecurrent` — expanded `hyperref` internals captured as if they were a
+formula, which they are not. The other two are a block matrix inside `\pqty`
+inside an `align*` row: two levels of `\\` that the converter cannot
+disambiguate. **Of the 854 entries that are mathematics and convert to valid
+MathML, MathCAT speaks every one.**
+
 ### The ceiling
 
-`/Alt` is a flat string: no math navigation, no braille, no reflow. Associated
-MathML is attached for readers that can use it. ClearSpeak also does not
-announce the augmented-matrix divider — it says "the 2 by 3 matrix" — although
-the MathML carries `columnlines`. MathCAT is the upgrade path.
+`/Alt` is a flat string: no math navigation, no reflow. Associated MathML is
+attached for readers that can use it.
+
+MathCAT can also emit Nemeth and UEB braille from the same MathML, and this
+does not use it. PDF/UA has no braille channel — the only place to put it would
+be another associated file, and no reader is known to consume one. Generating
+braille nobody reads is not a feature, so it is left off. If a student needs a
+Nemeth transcript, the engine is already here and it is one call.
+
+The augmented-matrix divider *is* now announced; see above. That was the one
+concrete gap this section used to record.

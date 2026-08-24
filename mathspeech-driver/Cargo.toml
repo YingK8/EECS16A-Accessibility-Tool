@@ -1,0 +1,27 @@
+# The MathML -> speech driver. Replaces the Speech Rule Engine that used to sit
+# behind `speech.cjs`; see `src/latexally/mathspeech/__init__.py` for why the
+# process boundary and the JSON-Lines protocol are shaped the way they are.
+#
+# The dependency is a `path` into the submodule rather than a crates.io version,
+# because the two would then have to be kept in agreement and could silently
+# disagree. `vendor/MathCAT` is pinned to the tree crates.io published as 0.7.5
+# (its own Cargo.toml still says 0.7.4 -- that release was cut from a dirty
+# working tree, so no commit carries the 0.7.5 number).
+
+[package]
+name = "latexally-mathspeech"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "latexally-mathspeech"
+path = "src/main.rs"
+
+[dependencies]
+libmathcat = { package = "mathcat", path = "../vendor/MathCAT" }
+serde_json = "1"
+
+[profile.release]
+opt-level = 2

@@ -23,7 +23,14 @@ from ..config import Profile
 from ..texlex import TexSource
 from .contrast import contrast_ratio, find_colors, minimum_conforming, resolve_named
 
-__all__ = ["Finding", "Severity", "check_source", "check_log", "check_pdf_structure"]
+__all__ = [
+    "Finding",
+    "Severity",
+    "check_source",
+    "check_tagging",
+    "check_log",
+    "check_pdf_structure",
+]
 
 
 class Severity:
@@ -355,7 +362,6 @@ def _check_contrast(source: TexSource, profile: Profile, name: str) -> list[Find
                 )
             )
 
-    findings.extend(_tagging_incompatibilities(source, name))
     return findings
 
 
@@ -462,7 +468,9 @@ _BREAK_AFTER_DISPLAY = re.compile(
     r"\\end\s*\{(?:align|equation|gather|multline|eqnarray|flalign)\*?\}"
     r"|\\\]"
     r"|\$\$"
-    r")\s*(?:\\newline\b|\\\\)"
+    # Named, because `rewrite.py` inserts `\mbox{}` immediately before the
+    # break and needs its offset, not the offset of the display math.
+    r")\s*(?P<brk>\\newline\b|\\\\)"
 )
 
 
@@ -488,6 +496,24 @@ def _darken_hint(
         f"darken to {proposed} ({ratio:.2f}:1) -- the smallest change to this "
         f"colour that reaches {threshold}:1, hue and saturation unchanged"
     )
+
+
+def check_tagging(path: Path, *, name: str | None = None) -> list[Finding]:
+    r"""Constructs LaTeX's tagging cannot compile. **Not** accessibility rules.
+
+    Every one of these is LaTeX that pdfLaTeX has always accepted and that
+    ``\DocumentMetadata{testphase={tagpdf}}`` rejects, so each carries
+    ``standard="latex-lab limitation"`` and none of them maps to a WCAG success
+    criterion or a Matterhorn condition.
+
+    They used to be reported by :func:`check_source`, which made ``check``
+    answer two different questions at once: "is this document accessible" and
+    "will this document build at all". They are now the tagging tier of
+    ``doctor``, which can be run -- and fixed, via ``latexally.rewrite`` -- on
+    its own, without a build and without the accessibility tiers.
+    """
+    source = TexSource.from_path(path)
+    return _tagging_incompatibilities(source, name or str(path))
 
 
 def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
@@ -533,10 +559,12 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                     line=source.line_of(match.start()),
                     standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                     hint=(
-                        "use \\renewcommand{\\labelenumi}{(\\roman{enumi})} "
-                        "before the list. It is the only form that still renders "
-                        "identically to the untagged original: \\setlist labels "
-                        "are silently ignored under phase-III on TeX Live 2025"
+                        "set the label before the list, not in its options. Not "
+                        "\\labelenumi, which names a depth: 483 of this corpus's "
+                        "667 sites are two enumerates deep or more, and every "
+                        "question file is \\input inside the driver's own list. "
+                        "latexally-core provides \\AllyEnumLabel, which asks "
+                        "LaTeX for the depth; `doctor --tagging --fix` applies it"
                     ),
                 )
             )
@@ -553,8 +581,11 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 line=source.line_of(match.start()),
                 standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                 hint=(
-                    "the inner array is almost always there for column alignment "
-                    "the matrix already provides; delete it and keep the matrix"
+                    "invert the nesting -- \\left[ ... \\right] around the "
+                    "array -- and keep the array. Measured: 257 of this corpus's "
+                    "357 sites have a | in the column spec, so they are augmented "
+                    "matrices and deleting the array deletes the divider. "
+                    "`latexally doctor --tagging --fix` does this"
                 ),
             )
         )
@@ -571,9 +602,11 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 line=source.line_of(match.start()),
                 standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                 hint=(
-                    "close it with \\) to match the opening delimiter; untagged "
-                    "pdfLaTeX accepts the mismatch, so this has never been an "
-                    "error before and will not show up in an ordinary build"
+                    "if the text between the delimiters is a formula, close it "
+                    "with \\). Read it first: 28 of this corpus's 30 sites are a "
+                    "literal ( written as \\( -- '\\(1) put 4 resistors' -- "
+                    "where reclosing the math swallows the paragraph. Untagged "
+                    "pdfLaTeX accepts either, so no ordinary build reports it"
                 ),
             )
         )

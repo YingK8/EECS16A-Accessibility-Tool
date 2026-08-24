@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import click
@@ -97,13 +98,33 @@ def main(
 
 
 @main.command()
+@click.argument("scope", required=False)
 @click.option(
     "--strict",
     is_flag=True,
     help="Treat warnings as failures. Use in CI before claiming conformance.",
 )
+@click.option(
+    # Not `--corpus`: that is already a global option naming the corpus ROOT,
+    # and one word meaning two things a flag apart is how people mistype.
+    "--tagging",
+    is_flag=True,
+    help="Scan the source for constructs LaTeX's tagging cannot compile.",
+)
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="With --tagging: rewrite what can be rewritten. Shows a diff unless --write.",
+)
+@click.option(
+    "--write",
+    is_flag=True,
+    help="With --tagging --fix: actually edit the corpus. Refuses on a dirty git worktree.",
+)
 @pass_context
-def doctor(ctx: Context, strict: bool) -> None:
+def doctor(
+    ctx: Context, scope: str | None, strict: bool, tagging: bool, fix: bool, write: bool
+) -> None:
     """Check that the toolchain can actually produce a conforming PDF.
 
     Run this before anything else. A LaTeX accessibility toolchain fails
@@ -111,6 +132,13 @@ def doctor(ctx: Context, strict: bool) -> None:
     `pdfstandard` value produces an untagged PDF with no error, which is far
     worse than a build failure when the output carries a legal obligation.
     """
+    if (fix or write) and not tagging:
+        click.echo("error: --fix and --write only apply to --tagging", err=True)
+        sys.exit(EXIT_ERROR)
+    if tagging:
+        _doctor_tagging(ctx, scope, fix=fix, write=write)
+        return
+
     report = probe(ctx.profile)
 
     if ctx.as_json:
@@ -345,6 +373,139 @@ def apply(ctx: Context, scope: str | None, write: bool, show_diff: bool) -> None
     sys.exit(EXIT_OK)
 
 
+def _doctor_tagging(ctx: Context, scope: str | None, *, fix: bool, write: bool) -> None:
+    """The source tier of `doctor`: will this corpus build under tagging?
+
+    Separate from `check` on purpose. `check` answers "is this document
+    accessible" and every rule it reports cites WCAG or Matterhorn. The
+    constructs here cite neither: they are LaTeX that pdfLaTeX has always
+    accepted and that `\\DocumentMetadata{testphase={tagpdf}}` rejects. Mixing
+    them into the accessibility report made a build blocker look like a
+    conformance failure and buried both.
+
+    Opt-in behind `--tagging` because it reads every file in scope, and the
+    environment tier above it is meant to be cheap enough to run before every
+    command.
+    """
+    from .build import require_clean_worktree
+    from .check.rules import check_tagging
+    from .rewrite import RULES, plan_rewrites
+
+    if write:
+        # The same guard `build --in-place` uses, and for the same reason: the
+        # only thing that makes 588 rewritten files revertible is git.
+        require_clean_worktree(Path(ctx.profile.corpus.root).resolve())
+
+    paths = sorted(
+        path
+        for path in _files_to_check(ctx.profile, scope)
+        if path.suffix.lower() in (".tex", ".sty", ".cls")
+    )
+    found: dict[str, int] = {}
+    fixed: dict[str, int] = {}
+    files: dict[str, set[Path]] = {}
+    skipped: list = []
+    diffs: list[str] = []
+    changed = 0
+    for path in paths:
+        try:
+            findings = check_tagging(path)
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        for finding in findings:
+            found[finding.rule] = found.get(finding.rule, 0) + 1
+            files.setdefault(finding.rule, set()).add(path)
+        if not findings:
+            continue
+        try:
+            plan = plan_rewrites(path)
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        for rule, sites in plan.counts().items():
+            fixed[rule] = fixed.get(rule, 0) + sites
+        skipped.extend((path, item) for item in plan.skipped)
+        if fix and plan.changed:
+            changed += 1
+            if write:
+                plan.write()
+            elif len(diffs) < 20:
+                diffs.append(plan.diff())
+
+    if ctx.as_json:
+        ctx.emit(
+            {
+                "scope": scope,
+                "files": len(paths),
+                "rules": [
+                    {
+                        "rule": rule,
+                        "sites": count,
+                        "files": len(files.get(rule, ())),
+                        "fixable": fixed.get(rule, 0),
+                    }
+                    for rule, count in sorted(found.items())
+                ],
+                "skipped": [
+                    {"rule": item.rule, "file": str(path), "line": item.line,
+                     "reason": item.reason}
+                    for path, item in skipped
+                ],
+                "written": changed if write else 0,
+            }
+        )
+        sys.exit(EXIT_OK if not found else EXIT_FINDINGS)
+
+    console = ctx.console
+    if not found:
+        console.print(f"[green]No tagging blockers in {len(paths)} file(s).[/green]")
+        sys.exit(EXIT_OK)
+
+    table = Table(title=f"tagging tier — {len(paths)} file(s) scanned", title_justify="left")
+    table.add_column("Rule", style="bold", no_wrap=True)
+    table.add_column("Sites", justify="right")
+    table.add_column("Files", justify="right")
+    table.add_column("Auto-fixable", justify="right")
+    for rule in sorted(found, key=lambda r: (RULES.index(r) if r in RULES else 99, r)):
+        auto = fixed.get(rule, 0)
+        table.add_row(
+            rule,
+            str(found[rule]),
+            str(len(files.get(rule, ()))),
+            f"[green]{auto}[/green]" if auto else "[yellow]0[/yellow]",
+        )
+    console.print(table)
+    console.print(
+        "\n[dim]These are latex-lab limitations, not WCAG or PDF/UA rules. "
+        "`check` reports accessibility; this reports whether the source builds "
+        "at all.[/dim]"
+    )
+
+    if skipped:
+        # Named individually rather than counted. A rewriter that silently
+        # declines is indistinguishable from one that has no cases left.
+        console.print(f"\n[yellow]Left alone ({len(skipped)}):[/yellow]")
+        seen: set[tuple[str, str]] = set()
+        for path, item in skipped:
+            key = (item.rule, item.reason)
+            if key in seen:
+                continue
+            seen.add(key)
+            console.print(f"  [dim]{item.rule}[/dim] {escape(item.reason)}")
+            console.print(f"    [dim]first at {escape(str(path))}:{item.line}[/dim]")
+
+    if fix and not write:
+        for diff in diffs:
+            console.print(escape(diff))
+        console.print(
+            f"\n[dim]{changed} file(s) would change; re-run with --write to apply[/dim]"
+        )
+    elif write:
+        console.print(f"\n[green]{changed} file(s) rewritten.[/green]")
+    else:
+        console.print("\n[dim]re-run with --fix to see the rewrites[/dim]")
+    sys.exit(EXIT_FINDINGS)
+
+
 # ---------------------------------------------------------------------- #
 # check
 # ---------------------------------------------------------------------- #
@@ -366,6 +527,7 @@ def check(
 ) -> None:
     """Validate conformance: source lint, build log, and PDF structure."""
     from .check.rules import Severity, check_log, check_pdf_structure, check_source
+    from .check.vera import check_verapdf
 
     order = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}
     findings = []
@@ -380,6 +542,9 @@ def check(
         findings.extend(check_log(Path(logfile)))
     if pdf:
         findings.extend(check_pdf_structure(Path(pdf)))
+        # The authoritative gate runs last, so its object-numbered findings sit
+        # under the source-level ones a person can act on directly.
+        findings.extend(check_verapdf(Path(pdf)))
 
     threshold = order[severity]
     findings = [item for item in findings if order[item.severity] <= threshold]
@@ -434,19 +599,17 @@ def _load_run_config(
     output: Path | None,
     write: bool,
 ) -> "RunConfig":  # noqa: F821
-    from .run import Output, RunConfig
+    from .run import RunConfig
 
     config = RunConfig.load(config_path) if config_path else RunConfig(profile=ctx.profile.name)
     if assignments:
         config = config.with_assignments(assignments)
     if output is not None:
-        config.output = Output(
-            root=output,
-            write_mode=config.output.write_mode,
-            keep_pdf=config.output.keep_pdf,
-            keep_logs=config.output.keep_logs,
-            keep_tex=config.output.keep_tex,
-        )
+        # `replace`, not a field-by-field rebuild: this used to restate five of
+        # Output's six fields and silently drop the sixth, so a per-artifact
+        # directory override set in the TUI vanished on any run that also
+        # passed -o.
+        config.output = replace(config.output, root=output)
     config.write = write
     return config
 
@@ -516,6 +679,13 @@ def _report_table(reports: list) -> Table:
     is_flag=True,
     help="Write the PDF beside the original instead of into the output directory. Refuses on a dirty git worktree.",
 )
+@click.option(
+    "--jobs",
+    "-j",
+    type=click.IntRange(1, 64),
+    default=None,
+    help="Documents to build at once. Default 1. Each is three LaTeX passes.",
+)
 @click.option("--question-tags", is_flag=True, help="Emit real H2 tags for question titles.")
 @click.option("--house-colors", is_flag=True, help="Keep the course palette, contrast and all.")
 @click.option(
@@ -531,6 +701,7 @@ def build(
     output: Path | None,
     write: bool,
     in_place: bool,
+    jobs: int | None,
     question_tags: bool,
     house_colors: bool,
     placeholders: bool,
@@ -542,17 +713,13 @@ def build(
     saved, and replayed unchanged in CI.
     """
     from .build import build_run, describe_run
-    from .run import AltChoice, ColorChoice, Output
+    from .run import AltChoice, ColorChoice
 
     config = _load_run_config(ctx, config_path, assignments, output, write)
     if in_place:
-        config.output = Output(
-            root=config.output.root,
-            write_mode="in-place",
-            keep_pdf=config.output.keep_pdf,
-            keep_logs=config.output.keep_logs,
-            keep_tex=config.output.keep_tex,
-        )
+        config.output = replace(config.output, write_mode="in-place")
+    if jobs is not None:
+        config.jobs = jobs
     if question_tags:
         config.standards.question_tags = True
     if house_colors:
@@ -702,11 +869,12 @@ def _print_failures(console: Console, failures: list) -> None:
             )
     if failures:
         # Most build failures in this corpus are constructs LaTeX's own tagging
-        # cannot handle, and `check` names the file and line in milliseconds
-        # rather than after another three-minute compile.
+        # cannot handle, and `doctor --tagging` names the file and line in
+        # milliseconds rather than after another three-minute compile.
         console.print(
-            "\n[dim]`latexally check <scope>` locates constructs that tagging "
-            "cannot compile, without rebuilding.[/dim]"
+            "\n[dim]`latexally doctor --tagging <scope>` locates constructs that "
+            "tagging cannot compile, without rebuilding, and `--fix` rewrites "
+            "the ones that can be rewritten.[/dim]"
         )
 
 

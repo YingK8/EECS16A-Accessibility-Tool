@@ -25,6 +25,7 @@ import os
 import re
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -327,6 +328,34 @@ def _alt_text_failures(pdf: Path, config: RunConfig) -> list[str]:
         for finding in findings
         if finding.severity is Severity.ERROR and finding.rule in _ALT_RULES
     ]
+
+
+def rewrite_incompatibilities(prepared: Prepared) -> dict[str, int]:
+    """Fix the constructs tagging cannot compile, in the MIRROR.
+
+    Runs before :func:`apply_descriptions` rather than beside it, so the two
+    edit passes never share an ``EditBuffer`` and a rewrite conflict can never
+    be misread as an alt-text bug.
+
+    ``prepared.driver`` is the *mirrored* driver, so every path
+    :func:`relative_dependencies` returns is a mirror path and the corpus is
+    unreachable from here -- the same guarantee :func:`apply_descriptions`
+    relies on. ``-original.tex`` is excluded for the same reason it is there:
+    it is compiled unconverted for the visual diff, and rewriting it would make
+    the comparison measure this tool against itself.
+    """
+    from ..rewrite import rewrite_files
+
+    files = [
+        path
+        for path in relative_dependencies(prepared.driver)
+        if path.suffix.lower() == ".tex" and not path.stem.endswith("-original")
+    ]
+    counts: dict[str, int] = {}
+    for plan in rewrite_files(files, write=True):
+        for rule, sites in plan.counts().items():
+            counts[rule] = counts.get(rule, 0) + sites
+    return counts
 
 
 def apply_descriptions(
@@ -822,6 +851,10 @@ class BuildReport:
     figures: int | None = None
     #: Figures wrapped in `Described` from an approved worklog entry this build.
     described: int = 0
+    #: Tagging-incompatible constructs rewritten in the mirror, rule -> sites.
+    #: Not an accessibility number: these are LaTeX constructs that pdfLaTeX
+    #: accepts and tagging does not, fixed so the document builds at all.
+    rewrites: dict[str, int] = field(default_factory=dict)
     #: Fraction of strongly-differing pixels vs the untouched original, 0..1.
     pixel_diff: float | None = None
     #: Set when the comparison could not be made, with the reason.
@@ -875,6 +908,7 @@ class BuildReport:
             "bookmarks": self.bookmarks,
             "figures": self.figures,
             "described": self.described,
+            "rewrites": self.rewrites,
             "pixel_diff": self.pixel_diff,
             "diff_note": self.diff_note,
             "injected": self.injected,
@@ -1017,22 +1051,34 @@ def compare_pdfs(original: Path, converted: Path) -> tuple[float | None, str | N
     except ImportError:
         return None, "install the [tui] extra for PyMuPDF to measure fidelity"
 
+    # `with`, because three of the four exits below are early returns and the
+    # documents used to leak on every one of them. Serially that is a handful of
+    # mmaps; at `--jobs 8` over a semester it is hundreds.
     try:
-        left, right = pymupdf.open(original), pymupdf.open(converted)
+        left = pymupdf.open(original)
     except Exception as exc:  # pragma: no cover
         return None, f"unreadable: {exc}"
-    if left.page_count != right.page_count:
-        return None, f"{left.page_count} vs {right.page_count} pages"
+    with left:
+        try:
+            right = pymupdf.open(converted)
+        except Exception as exc:  # pragma: no cover
+            return None, f"unreadable: {exc}"
+        with right:
+            if left.page_count != right.page_count:
+                return None, f"{left.page_count} vs {right.page_count} pages"
 
-    differing = total = 0
-    for index in range(left.page_count):
-        a = left[index].get_pixmap(dpi=_DIFF_DPI, colorspace=pymupdf.csGRAY).samples
-        b = right[index].get_pixmap(dpi=_DIFF_DPI, colorspace=pymupdf.csGRAY).samples
-        if len(a) != len(b):
-            return None, "page sizes differ"
-        differing += sum(1 for x, y in zip(a, b) if abs(x - y) > _DIFF_THRESHOLD)
-        total += len(a)
-    return (differing / total if total else 0.0), None
+            differing = total = 0
+            for index in range(left.page_count):
+                a = left[index].get_pixmap(dpi=_DIFF_DPI, colorspace=pymupdf.csGRAY).samples
+                b = right[index].get_pixmap(dpi=_DIFF_DPI, colorspace=pymupdf.csGRAY).samples
+                if len(a) != len(b):
+                    return None, "page sizes differ"
+                # ponytail: GIL-bound pixel loop, ~1.1 MB a page. It is the one
+                # thing `--jobs` cannot overlap; move the compare into its own
+                # serial phase after the compiles if -j stops scaling.
+                differing += sum(1 for x, y in zip(a, b) if abs(x - y) > _DIFF_THRESHOLD)
+                total += len(a)
+            return (differing / total if total else 0.0), None
 
 
 # ---------------------------------------------------------------------- #
@@ -1135,8 +1181,30 @@ def build_assignment(
     # just wrote -- never in the corpus. Without this step a run scans figures,
     # writes worklogs, and then builds a PDF whose figures still carry
     # latex-lab's default alt: the source file name, read aloud verbatim.
+    # Before the descriptions: a document that cannot compile has no figures to
+    # describe, and three of the four constructs below produce no PDF at all.
+    report.rewrites = rewrite_incompatibilities(prepared)
     report.described = apply_descriptions(prepared, config, profile)
+    return _compile_assignment(prepared, report, assignment, config, profile, variant, compare)
 
+
+def _compile_assignment(
+    prepared: Prepared,
+    report: BuildReport,
+    assignment: Assignment,
+    config: RunConfig,
+    profile: Profile,
+    variant: str,
+    compare: bool,
+) -> BuildReport:
+    """Everything from the first LaTeX run onward.
+
+    Split out of :func:`build_assignment` so :func:`build_run` can run this half
+    concurrently while the half above it -- which writes into a mirror
+    directory shared by an assignment's variants -- stays serial. The split is
+    where the shared state ends: from here down every path is keyed by
+    ``jobname``, which is unique per assignment *and* variant.
+    """
     slug = base_slug(assignment.path, variant)
     # `in-place` is a destination for the PDF, not a licence to edit the source.
     # It used to rewrite the corpus driver, guarded by a clean git worktree; the
@@ -1146,6 +1214,10 @@ def build_assignment(
         # Additive, but not harmless: a PDF of the same name may already sit
         # there. The clean-worktree guard is what makes that revertible, and it
         # is the same one this mode has always used.
+        #
+        # `build_run` checks this once up front so a run cannot get half way
+        # before noticing. This one stays for callers that reach
+        # `build_assignment` directly -- the agent API and the tests both do.
         require_clean_worktree(profile.corpus.root.resolve())
         pdf_dir = (profile.corpus.root / assignment.path).resolve()
     else:
@@ -1379,6 +1451,20 @@ def write_report(config: RunConfig, reports: list[BuildReport]) -> Path | None:
             f"{_or_dash(report.pages):>5} {_or_dash(report.bookmarks):>5} "
             f"{_or_dash(report.figures):>5}  {diff}"
         )
+    # One run-level line, not a column: this is bookkeeping about the *source*,
+    # not about any one document's accessibility, and the table above already
+    # carries nine columns.
+    fixed: dict[str, int] = {}
+    for report in reports:
+        for rule, sites in report.rewrites.items():
+            fixed[rule] = fixed.get(rule, 0) + sites
+    if fixed:
+        lines += [
+            "",
+            "auto-fixed in the mirror, corpus unchanged: "
+            + ", ".join(f"{rule} x{sites}" for rule, sites in sorted(fixed.items())),
+        ]
+
     for report in reports:
         if report.ok:
             continue
@@ -1470,7 +1556,14 @@ def build_run(
         config.output.root.mkdir(parents=True, exist_ok=True)
         (config.output.root / "run.yaml").write_text(config.to_yaml(), encoding="utf-8")
 
+    # The clean-worktree guard used to fire per document, which let documents
+    # 1..N-1 build before N discovered the corpus was dirty. It is a property of
+    # the run, so it is checked once, before anything is written.
+    if config.write and config.output.in_place:
+        require_clean_worktree(profile.corpus.root.resolve())
+
     reports: list[BuildReport] = []
+    work: list[tuple[Assignment, str, str, frozenset[str]]] = []
     for assignment in iter_selected(profile, config):
         # Every variant the assignment has, unless the run named a subset. The
         # blank handout is the document students are actually given; converting
@@ -1502,29 +1595,45 @@ def build_run(
         # over as an original by another pass.
         converted = frozenset(variants.values())
         for variant, driver in variants.items():
-            if on_start:
-                on_start(assignment, variant)
-            try:
-                report = build_assignment(
-                    assignment,
-                    config,
-                    profile,
-                    lines=lines,
-                    variant=variant,
-                    driver=driver,
-                    siblings_to_skip=converted,
-                )
-            except LatexAllyError as exc:
-                report = BuildReport(
-                    assignment=assignment.path,
-                    variant=variant,
-                    driver=driver,
-                    note=str(exc),
-                    injected=list(lines),
-                )
-            reports.append(report)
-            if on_finish:
-                on_finish(report)
+            work.append((assignment, variant, driver, converted))
+
+    def build_one(item: tuple[Assignment, str, str, frozenset[str]]) -> BuildReport:
+        assignment, variant, driver, converted = item
+        if on_start:
+            on_start(assignment, variant)
+        try:
+            report = build_assignment(
+                assignment,
+                config,
+                profile,
+                lines=lines,
+                variant=variant,
+                driver=driver,
+                siblings_to_skip=converted,
+            )
+        except LatexAllyError as exc:
+            report = BuildReport(
+                assignment=assignment.path,
+                variant=variant,
+                driver=driver,
+                note=str(exc),
+                injected=list(lines),
+            )
+        if on_finish:
+            on_finish(report)
+        return report
+
+    # `map`, never `as_completed`: combine_logs, write_report and the CLI's
+    # report table all read `reports` positionally, and build-log.txt is an
+    # artefact people diff between runs. Threads rather than processes because
+    # the work is `subprocess.run` on latexmk, which holds the GIL for none of
+    # its runtime -- and because the TUI's callbacks close over a Textual
+    # screen, which cannot be pickled.
+    if config.jobs > 1 and len(work) > 1:
+        with ThreadPoolExecutor(max_workers=config.jobs) as pool:
+            reports.extend(pool.map(build_one, work))
+    else:
+        reports.extend(build_one(item) for item in work)
     combine_logs(config, reports)
     write_report(config, reports)
     return reports

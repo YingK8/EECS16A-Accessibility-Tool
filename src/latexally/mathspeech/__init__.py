@@ -32,6 +32,23 @@ associated files, which latex-lab attaches by itself (``math/mathml/AF`` and
 *off*, so serving both audiences is the cheaper option as well as the better
 one: a screen reader speaks the ``/Alt``, and a braille or TeX-literate reader
 can still reach the notation.
+
+Which engine says it
+--------------------
+
+MathCAT, vendored at ``vendor/MathCAT`` and driven through the small Rust
+binary in ``mathspeech-driver/``. It replaced the Speech Rule Engine, which was
+chosen first only because MathCAT ships as a Rust crate with no PyPI wheel and
+no npm package -- an objection to the bindings, not to the engine. Building one
+binary answers it, and MathCAT is what NVDA and JAWS actually speak this corpus
+with.
+
+The vendoring is a *fork* (``YingK8/MathCAT``, ``upstream`` pointing at
+``daisy/MathCAT``) because upstream reads no ``mtable`` line attribute at all,
+so ``[A|b]`` and ``[A b]`` come out identically. On a linear-algebra course that
+is the difference between a system of equations and a 2 by 3 matrix, so the
+fork carries one rule that says "augmented matrix". Rebasing is
+``git -C vendor/MathCAT fetch upstream && git rebase upstream/main``.
 """
 
 from __future__ import annotations
@@ -39,14 +56,21 @@ from __future__ import annotations
 import html
 import json
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..errors import LatexAllyError, MissingDependency
 
-__all__ = ["Formula", "read_dummy", "convert", "write_sources", "REPO_NODE_MODULES"]
+__all__ = [
+    "Formula",
+    "read_dummy",
+    "convert",
+    "expand_macros",
+    "write_sources",
+    "DRIVER",
+    "RULES_DIR",
+]
 
 #: One `<div>` of the dummy file. latex-lab writes the source with `&` and `<`
 #: escaped and nothing else, so `html.unescape` is exactly the right inverse.
@@ -60,7 +84,7 @@ _ENTRY = re.compile(
 )
 
 #: Delimiters that carry no structure and must come off before conversion --
-#: left on, SRE reads "dollar sign" aloud.
+#: left on, the engine reads "dollar sign" aloud.
 _DELIMITERS: tuple[tuple[re.Pattern[str], bool], ...] = (
     (re.compile(r"\A\$\$(.*)\$\$\Z", re.DOTALL), True),
     (re.compile(r"\A\\\[(.*)\\\]\Z", re.DOTALL), True),
@@ -84,6 +108,165 @@ _STRUCTURED = re.compile(
 #: same content correctly, and the count is presentational.
 _ALIGNAT = re.compile(r"(\\(?:begin|end)\s*)\{alignat(\*?)\}(\s*\{\d+\})?")
 
+#: `bmatrix*` takes an alignment option (`[r]`) the converter cannot parse; it
+#: falls back to reading the whole thing as an `align`, so a matrix is announced
+#: as "4 equations; equation 1; ...". The alignment is presentational.
+_STARRED_MATRIX = re.compile(r"(\\(?:begin|end)\s*)\{([bBpvV]?matrix)\*\}(\s*\[[^\]]*\])?")
+
+#: Course macros the converter has never heard of, so it passes them through as
+#: literal text and the reader hears the macro *name*: "mat cap u is equal to".
+#:
+#: Measured over 861 formulas of real `write-dummy` output from 12 documents:
+#: 284 of them -- **a third** -- carried at least one, and `\mat` alone
+#: accounted for 591 occurrences. Nothing about that is engine-specific; the
+#: MathML is already wrong before any speech engine sees it.
+#:
+#: Every expansion below is the definition the corpus itself gives, taken by
+#: majority where semesters disagree. `\mat` is the one that mattered and the
+#: one worth checking: 39 of its 47 live definitions are `\mathbf{#1}`, five say
+#: `\begin{bmatrix}#1\end{bmatrix}` and three say `\begin{matrix}`. `\mathbf` is
+#: also what the usage demands -- of 12,478 calls the top twelve are `\mat{A}`,
+#: `\mat{V}`, `\mat{R}` and so on, single capitals naming a matrix. Expanding
+#: those to a bracketed environment would have MathCAT announce "the 1 by 1
+#: matrix cap a" twelve thousand times.
+#:
+#: Written as *prefix* rewrites wherever the macro takes one argument: replacing
+#: `\mat{` with `\mathbf{` never touches the braces, so it cannot mis-nest on
+#: `\mat{\vec{x}}` the way a `{([^{}]*)}` capture would.
+_MACRO_PREFIXES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\\mat\s*\{"), r"\\mathbf{"),
+    (re.compile(r"\\wt\s*\{"), r"\\tilde{"),
+)
+
+#: The argument-less ones, and the unit macros `siunitx` provides. `\SI{5}{\ohm}`
+#: is two arguments, so it is spelled out rather than prefixed.
+_MACRO_WORDS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\\SI\s*\{([^{}]*)\}\s*\{([^{}]*)\}"), r"\1 \2"),
+    (re.compile(r"\\kohm\b"), r"\\mathrm{k\\Omega}"),
+    (re.compile(r"\\ohm\b"), r"\\Omega"),
+    (re.compile(r"\\milli\s*\\?volt\b|\\millivolt\b"), r"\\mathrm{mV}"),
+    (re.compile(r"\\volt\b"), r"\\mathrm{V}"),
+    (re.compile(r"\\meter\b"), r"\\mathrm{m}"),
+    (re.compile(r"\\ampere\b"), r"\\mathrm{A}"),
+    (re.compile(r"\\second\b"), r"\\mathrm{s}"),
+    (re.compile(r"\\R\b"), r"\\mathbb{R}"),
+    (re.compile(r"\\e\b(?![a-zA-Z])"), r"\\vec{e}"),
+    (re.compile(r"\\dag\b"), r"\\dagger"),
+    (re.compile(r"\\hdots\b"), r"\\cdots"),
+    # A rule drawn across a table cell. It is decoration; in speech it is noise.
+    (re.compile(r"\\horzbar\b"), ""),
+    # Delimiter sizing. The converter leaves `\big\{` as literal text, so the
+    # reader hears "backslash brace" instead of "open brace". Purely
+    # presentational, and `\left`/`\right` are dropped for the same reason.
+    (re.compile(r"\\(?:bB)?(?:big|Big|bigg|Bigg)[lrm]?\b\s*"), ""),
+)
+
+#: `aligned` is `align`'s inline-able twin, and the converter emits invalid
+#: MathML for it -- MathCAT then refuses the whole formula and it ships with no
+#: `/Alt`. `align*` produces the reading the author meant, nested inside
+#: `equation*` or not. **[verified]** both ways.
+_ALIGNED = re.compile(r"(\\(?:begin|end)\s*)\{aligned\}")
+
+
+#: One-argument macros whose *closing* brace also has to change, so they cannot
+#: be prefix rewrites. ``\norm{\vec{v}}`` is the shape that matters: a
+#: ``{([^{}]*)}`` capture stops at the inner brace and leaves ``\norm`` behind.
+#: The `qty` family is `physics`, which this corpus's preamble loads
+#: (`\usepackage{physics}` in `sp26/preambleFa25.tex`); `norm` and `abs` are the
+#: course's own. Longest name first is not needed -- each is matched whole, with
+#: a following letter rejected, so `\normalsize` is not `\norm`.
+_MACRO_FENCES: dict[str, tuple[str, str]] = {
+    "norm": (r"\lVert ", r" \rVert"),
+    "abs": (r"\lvert ", r" \rvert"),
+    "bmqty": (r"\begin{bmatrix}", r"\end{bmatrix}"),
+    "pmqty": (r"\begin{pmatrix}", r"\end{pmatrix}"),
+    # Plain delimiters, not `\left(`/`\right)`: a `\left ... \right` pair
+    # cannot cross a `\\` row break, and two of this corpus's `\pqty` calls
+    # span one. Sized delimiters are presentational; the speech is identical.
+    "pqty": ("(", ")"),
+    "bqty": ("[", "]"),
+    "vqty": ("|", "|"),
+    "qty": ("(", ")"),
+}
+
+#: A matrix environment carrying a superscript or subscript. **This is the one
+#: that costs the most.** ``latex2mathml`` emits an ``<msup>`` with the wrong
+#: number of children for ``\begin{bmatrix}…\end{bmatrix}^{\top}``, and MathCAT
+#: refuses it outright -- "msup should have 2 children" -- so a transposed
+#: matrix gets no ``/Alt`` at all. On a linear-algebra course that is not an
+#: edge case. Wrapping the environment in a brace group is enough to make the
+#: MathML well-formed, and changes nothing about what it means.
+_SCRIPTED_MATRIX = re.compile(
+    r"\\begin\s*\{([bBpvV]?matrix)\}(.*?)\\end\s*\{\1\}(?=\s*[\^_])",
+    re.DOTALL,
+)
+
+
+def _expand_fence(body: str, name: str, opener: str, closer: str) -> str:
+    r"""Replace ``\name{…}`` with ``opener … closer``, matching braces properly.
+
+    Scans rather than pattern-matches because the argument nests:
+    ``\norm{\vec{v}}`` and ``\bmqty{\mathbf{S}}`` are both real corpus shapes.
+    """
+    marker = "\\" + name
+    out: list[str] = []
+    index = 0
+    while True:
+        found = body.find(marker, index)
+        # `\normal` must not match `\norm`.
+        while found != -1 and body[found + len(marker) : found + len(marker) + 1].isalpha():
+            found = body.find(marker, found + 1)
+        if found == -1:
+            out.append(body[index:])
+            return "".join(out)
+        cursor = found + len(marker)
+        while cursor < len(body) and body[cursor] in " \t\n":
+            cursor += 1
+        if cursor >= len(body) or body[cursor] != "{":
+            out.append(body[index : found + len(marker)])
+            index = found + len(marker)
+            continue
+        depth = 0
+        end = cursor
+        while end < len(body):
+            char = body[end]
+            if char == "\\":
+                end += 2
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            end += 1
+        if depth != 0:  # unbalanced source; leave it for ALLY-PDF-041 to report
+            out.append(body[index : found + len(marker)])
+            index = found + len(marker)
+            continue
+        out.append(body[index:found])
+        out.append(opener + body[cursor + 1 : end] + closer)
+        index = end + 1
+
+
+def expand_macros(body: str) -> str:
+    """Expand the course macros ``latex2mathml`` would otherwise read as text.
+
+    Not a TeX expander and not trying to be: this is the same shape as
+    :data:`_ALIGNAT`, a fixed list of constructs measured to break the
+    converter on this corpus. Anything not on the list still reaches the reader
+    as the macro's name, which ``ALLY-PDF-041`` reports.
+    """
+    for pattern, replacement in _MACRO_PREFIXES:
+        body = pattern.sub(replacement, body)
+    for name, (opener, closer) in _MACRO_FENCES.items():
+        if "\\" + name in body:
+            body = _expand_fence(body, name, opener, closer)
+    for pattern, replacement in _MACRO_WORDS:
+        body = pattern.sub(replacement, body)
+    body = _ALIGNED.sub(r"\1{align*}", body)
+    return _SCRIPTED_MATRIX.sub(r"{\\begin{\1}\2\\end{\1}}", body)
+
 
 def _unwrap(tex: str) -> tuple[str, bool]:
     """Strip bare math delimiters. Returns ``(body, is_display)``.
@@ -102,9 +285,14 @@ def _unwrap(tex: str) -> tuple[str, bool]:
     return body, False
 
 
-DRIVER = Path(__file__).with_name("speech.cjs")
-#: `npm install` at the repository root, three levels up from this module.
-REPO_NODE_MODULES = Path(__file__).resolve().parents[3] / "node_modules"
+#: The repository root, three levels up from this module.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+#: `cargo build --release` in `mathspeech-driver/`.
+DRIVER = REPO_ROOT / "mathspeech-driver" / "target" / "release" / "latexally-mathspeech"
+#: MathCAT loads its rules from disk. They are in the submodule, not unzipped
+#: out of a build directory, which is the whole reason for vendoring rather
+#: than depending on the published crate.
+RULES_DIR = REPO_ROOT / "vendor" / "MathCAT" / "Rules"
 
 
 @dataclass(slots=True)
@@ -156,31 +344,52 @@ def _to_mathml(formula: Formula) -> str:
         raise MissingDependency("latex2mathml", "math", "Math descriptions") from error
     body, display = _unwrap(formula.tex)
     body = _ALIGNAT.sub(r"\1{align\2}", body)
+    body = _STARRED_MATRIX.sub(r"\1{\2}", body)
+    body = expand_macros(body)
     return latex_to_mathml(body, display="block" if display else "inline")
 
 
+#: Bumped whenever anything upstream of the speech string changes -- the macro
+#: table, the engine, its preferences, the fork's rules. It is stored in the
+#: cache and checked on read, because the cache key cannot see any of them.
+RECIPE = "mathcat-0.7.5+augmented-matrix/clearspeak/macros-1"
+
+#: Not a valid MD5, so it can never collide with a formula's hash.
+_RECIPE_KEY = "#recipe"
+
+
 def _speak(pairs: list[tuple[str, str]], *, domain: str, timeout: int) -> dict[str, str]:
-    """Hand every MathML string to one SRE process and read the speech back."""
+    """Hand every MathML string to one MathCAT process and read the speech back.
+
+    One process for the whole batch, not one per formula: MathCAT loads 160
+    rule files at startup, which at 35,504 unique formulas is the difference
+    between seconds and hours. The JSON-Lines protocol is what makes that safe
+    -- a formula MathCAT chokes on comes back as one ``error`` record instead of
+    taking the batch down with it.
+    """
     if not pairs:
         return {}
-    if shutil.which("node") is None:
+    if not DRIVER.is_file():
         raise LatexAllyError(
-            "node not found; math speech cannot be generated",
-            hint="install Node 20+; `latexally doctor` reports this as T011",
+            "the math speech driver is not built",
+            hint=(
+                f"run `cargo build --release` in {DRIVER.parents[2]}; "
+                "`latexally doctor` reports this as T011"
+            ),
         )
-    if not (REPO_NODE_MODULES / "speech-rule-engine").is_dir():
+    if not RULES_DIR.is_dir():
         raise LatexAllyError(
-            "speech-rule-engine is not installed",
-            hint=f"run `npm install` in {REPO_NODE_MODULES.parent}",
+            "MathCAT's rules are missing",
+            hint=f"run `git submodule update --init` in {REPO_ROOT}",
         )
     payload = "\n".join(json.dumps({"hash": h, "mathml": m}) for h, m in pairs)
     result = subprocess.run(
-        ["node", str(DRIVER), domain],
+        [str(DRIVER), str(RULES_DIR), domain],
         input=payload,
         capture_output=True,
         text=True,
         timeout=timeout,
-        cwd=REPO_NODE_MODULES.parent,
+        cwd=REPO_ROOT,
     )
     if result.returncode != 0:
         raise LatexAllyError(
@@ -201,7 +410,7 @@ def convert(
     formulas: list[Formula],
     *,
     cache: Path | None = None,
-    domain: str = "clearspeak",
+    domain: str = "ClearSpeak",
     timeout: int = 900,
 ) -> dict[str, tuple[str, str]]:
     """``hash -> (mathml, speech)`` for every formula that converted.
@@ -217,7 +426,22 @@ def convert(
     """
     known: dict[str, tuple[str, str]] = {}
     if cache is not None and cache.is_file():
-        known = {k: tuple(v) for k, v in json.loads(cache.read_text()).items()}  # type: ignore[misc]
+        try:
+            stored = json.loads(cache.read_text())
+        except (OSError, json.JSONDecodeError):
+            stored = {}
+        # The key is latex-lab's hash of the *source*, which is exactly what
+        # makes the cache survive edits and renames -- and exactly why it cannot
+        # notice that the conversion itself changed. Expanding `\mat` to
+        # `\mathbf` altered a third of this corpus's speech without altering one
+        # hash, so a rerun would have served the old strings forever. The
+        # recipe stamp is the cheap fix: a mismatch discards the file.
+        if stored.get(_RECIPE_KEY) == RECIPE:
+            known = {
+                k: tuple(v)  # type: ignore[misc]
+                for k, v in stored.items()
+                if k != _RECIPE_KEY
+            }
 
     pending = [f for f in formulas if f.hash not in known]
     mathml: dict[str, str] = {}
@@ -236,7 +460,9 @@ def convert(
 
     if cache is not None:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({k: list(v) for k, v in known.items()}, indent=1))
+        payload: dict[str, object] = {_RECIPE_KEY: RECIPE}
+        payload.update({k: list(v) for k, v in known.items()})
+        cache.write_text(json.dumps(payload, indent=1))
     return known
 
 

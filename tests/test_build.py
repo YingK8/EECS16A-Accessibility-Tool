@@ -122,6 +122,78 @@ def test_mirror_leaves_the_corpus_byte_identical(
     assert _tree_digest(corpus) == before
 
 
+def test_rewrites_land_in_the_mirror_and_never_in_the_corpus(
+    corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path
+):
+    r"""The tagging fixes obey the same rule the descriptions do.
+
+    `\] \\` is ALLY-SRC-042: under tagging it fails with "There's no line here
+    to end" and produces no PDF at all. It has to be fixed for the document to
+    build, and it has to be fixed in the mirror.
+    """
+    from latexally.build import rewrite_incompatibilities
+
+    body = corpus / "sem" / "hw" / "3" / "body.tex"
+    body.write_text("\\begin{document}\n\\[\nx\n\\] \\\\\nHello.\n\\end{document}\n")
+    before = _tree_digest(corpus)
+
+    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    prepared = materialise(assignment, config, profile, lines=LINES)
+    counts = rewrite_incompatibilities(prepared)
+
+    assert counts == {"ALLY-SRC-042": 1}
+    assert "\\mbox{}\\\\" in (prepared.work_dir / "body.tex").read_text()
+    assert _tree_digest(corpus) == before, "the corpus must be byte-identical"
+
+
+def test_the_unconverted_baseline_is_not_rewritten(
+    corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path
+):
+    """It exists to be compiled as-is; rewriting it measures the tool against
+    itself."""
+    from latexally.build import rewrite_incompatibilities
+
+    body = corpus / "sem" / "hw" / "3" / "body.tex"
+    body.write_text("\\begin{document}\n\\[\nx\n\\] \\\\\nHello.\n\\end{document}\n")
+    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    prepared = materialise(assignment, config, profile, lines=LINES)
+    rewrite_incompatibilities(prepared)
+
+    if prepared.original is not None:
+        assert "\\mbox{}" not in prepared.original.read_text()
+
+
+def test_a_parallel_run_reports_in_the_order_it_was_asked_for(
+    corpus: Path, profile: Profile, tmp_path: Path
+):
+    """`pool.map`, never `as_completed`.
+
+    combine_logs, write_report and the CLI's report table all read `reports`
+    positionally, and build-log.txt is an artefact people diff between runs. A
+    dry run returns before any LaTeX, so this exercises the whole scheduler
+    with no engine installed.
+    """
+    from latexally.build import build_run
+
+    for name in ("1", "2", "4", "5"):
+        directory = corpus / "sem" / "hw" / name
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "sol3.tex").write_text(
+            "\\documentclass{article}\n\\input{body}\n"
+        )
+        (directory / "body.tex").write_text("\\begin{document}\nHi.\n\\end{document}\n")
+
+    wanted = ("sem/hw/1", "sem/hw/2", "sem/hw/3", "sem/hw/4", "sem/hw/5")
+    serial = RunConfig(assignments=wanted, output=Output(root=tmp_path / "a"), jobs=1)
+    parallel = RunConfig(assignments=wanted, output=Output(root=tmp_path / "b"), jobs=4)
+
+    one = [(r.assignment, r.variant) for r in build_run(serial, profile)]
+    many = [(r.assignment, r.variant) for r in build_run(parallel, profile)]
+
+    assert many == one
+    assert [name for name, _ in one] == list(wanted)
+
+
 def test_mirror_writes_a_converted_driver(
     corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path
 ):
@@ -457,10 +529,12 @@ def test_inline_math_closed_with_a_dollar_is_reported(tmp_path):
     `\(b_j$` opens with `\(` and closes with `$`. Untagged pdfLaTeX accepts it,
     so sp26/dis/13A has carried it for years without one error; under tagging
     latex-lab's grabber scans past the intended end and eats the closing brace
-    of the enclosing `\ans{...}`. 31 occurrences in the live corpus.
+    of the enclosing `\ans{...}`. 30 occurrences in the live corpus.
+
+    Reported by `check_tagging`, not `check_source`: it is a LaTeX limitation,
+    not an accessibility failure, so it belongs to `doctor`'s corpus tier.
     """
-    from latexally.check.rules import Severity, check_source
-    from latexally.config import Profile
+    from latexally.check.rules import Severity, check_tagging
 
     source = tmp_path / "q.tex"
     source.write_text(
@@ -468,7 +542,7 @@ def test_inline_math_closed_with_a_dollar_is_reported(tmp_path):
         "a price of \\(\\frac{\\$5}{2}\\) is fine, and so is $x$ beside \\(y\\).\n"
     )
 
-    findings = [f for f in check_source(source, Profile()) if f.rule == "ALLY-SRC-043"]
+    findings = [f for f in check_tagging(source) if f.rule == "ALLY-SRC-043"]
 
     assert len(findings) == 1, "escaped \\$ and ordinary $...$ must not be flagged"
     assert findings[0].severity == Severity.ERROR
@@ -510,9 +584,12 @@ def test_line_break_after_a_question_macro_is_reported(tmp_path):
     Once `question_tags` makes it emit a real H2 the heading closes the
     paragraph first, so the break has nothing to end. 930 occurrences in 575
     files -- larger than the other four tagging blockers combined.
+
+    Report-only: the heading supplies the break, so the fix is to delete the
+    `\newline` -- and deleting a break moves the page, which is the one thing
+    this tool promises not to do. It stays a finding for a human.
     """
-    from latexally.check.rules import Severity, check_source
-    from latexally.config import Profile
+    from latexally.check.rules import Severity, check_tagging
 
     source = tmp_path / "q.tex"
     source.write_text(
@@ -523,7 +600,7 @@ def test_line_break_after_a_question_macro_is_reported(tmp_path):
         "Immediately followed by prose, which is fine.\n"
     )
 
-    findings = [f for f in check_source(source, Profile()) if f.rule == "ALLY-SRC-044"]
+    findings = [f for f in check_tagging(source) if f.rule == "ALLY-SRC-044"]
 
     assert len(findings) == 1, "only the macro followed by a break may be flagged"
     assert findings[0].severity == Severity.ERROR

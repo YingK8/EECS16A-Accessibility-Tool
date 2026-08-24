@@ -44,12 +44,24 @@ directory.
 
 ### Spoken math (Optional)
 
-Adds speech text to LaTeX formulas.
+Adds speech text to LaTeX formulas. The engine is [MathCAT][mathcat], the
+library NVDA and JAWS speak maths with; it is a Rust crate, vendored as a
+submodule so the fork can carry course-specific rules.
 
 ```bash
-brew install node
-npm install
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # once
+git submodule update --init
+cargo build --release --manifest-path mathspeech-driver/Cargo.toml
 ```
+
+`doctor` reports this as T011. To take an upstream release:
+
+```bash
+git -C vendor/MathCAT fetch upstream
+git -C vendor/MathCAT rebase upstream/main
+```
+
+[mathcat]: https://github.com/daisy/MathCAT
 
 ### Verification
 
@@ -185,9 +197,11 @@ conditions of one standard that itself omits requirements WCAG imposes. Colour
 contrast is the clearest example. PDF/UA says nothing about it, and WCAG 1.4.3
 is among the most commonly failed criteria in this corpus.
 
-**veraPDF is not currently invoked by this tool.** `doctor` probes for it (T010)
-and warns when absent; wiring the gate is
-[`docs/METHODOLOGY.md`](docs/METHODOLOGY.md) § Next phase, item 2.
+`check --pdf` runs veraPDF when it is on PATH and reports each failure as
+`ALLY-VERA-<clause>-<test>`, joined back to the tagpdf label in the `.aux` so a
+failure names a construct rather than an object number. Without it, `check`
+falls back to its own structure assertions, which cover far less; `doctor` T010
+says which of the two you are getting.
 
 ### Scope
 
@@ -270,32 +284,6 @@ pins it.
 
 ---
 
-## Status
-
-Verified end to end against the real corpus: toolchain gate, the interactive
-runner and its `build` equivalent, the conversion engine, template layer, legacy
-shim, figure scanning across the include graph, deterministic describers,
-worklogs, apply, checker, and agent API.
-
-Not yet implemented: the **veraPDF gate** and a **parallel build harness**. See
-`docs/METHODOLOGY.md` § Next phase.
-
-Spoken math has a ceiling worth knowing: the speech is a flat string, so it
-offers no math navigation and no braille. Associated MathML serves readers that
-can use it, and MathCAT is the upgrade path if a student reports the gap.
-
-Four constructs in the live corpus fail under LaTeX's own tagging with latexally
-absent. `check` locates all four without rebuilding:
-
-| Rule | Construct | In the live corpus |
-|---|---|---|
-| `ALLY-SRC-040` | enumitem options on a tagged list | 238 in 86 files |
-| `ALLY-SRC-041` | `array`/`tabular` inside a matrix | 14 in 3 files |
-| `ALLY-SRC-042` | line break immediately after display math | 12 in 8 files |
-| `ALLY-SRC-043` | inline math opened with `\(` and closed with `$` | 31 in 31 files |
-
----
-
 ## References
 
 **Regulation**
@@ -321,13 +309,13 @@ absent. `check` locates all four without rebuilding:
 13. `latexmk`. Build driver. <https://ctan.org/pkg/latexmk>
 14. pikepdf. Structure-tree and content-stream reading. No high-level tagged-PDF API, so `check/structure.py` walks `/K` by hand. <https://pikepdf.readthedocs.io/>
 15. latex2mathml. LaTeX to MathML. <https://pypi.org/project/latex2mathml/>
-16. Speech Rule Engine. MathML to ClearSpeak. <https://speechruleengine.org/>
-17. veraPDF. PDF/UA validator. Probed by `doctor` T010. <https://verapdf.org/>
+16. MathCAT. MathML to ClearSpeak speech; the engine NVDA and JAWS use. MIT, vendored at `vendor/MathCAT`. <https://github.com/daisy/MathCAT>
+17. veraPDF. PDF/UA validator, run by `check --pdf`. Probed by `doctor` T010. <https://verapdf.org/>
 
 **Evaluated and rejected**
 
 18. MathJax. v4 dropped the MathML output jax. <https://www.mathjax.org/>
-19. MathCAT. Better speech than SRE, no published PyPI wheel. <https://github.com/daisy/MathCAT>
+19. Speech Rule Engine. The first engine used here, replaced by MathCAT. Its ClearSpeak is good, but MathCAT is what the readers this corpus is read with actually run, and its rules are extensible. <https://speechruleengine.org/>
 20. PyMuPDF. Good renderer, bad structure reader: `xref_get_key` returns `None` or raises on `/Alt` and `/ActualText`. <https://github.com/pymupdf/PyMuPDF/issues/4764>
 21. `axessibility`. On pdfLaTeX it does not hook `$…$`, which is ~94% of this corpus's math. <https://ctan.org/pkg/axessibility>
 22. Blackboard Ally. Institutional scorecard, not a validator: 0 to 1 scores with no published WCAG or PDF/UA mapping. <https://blackboard.github.io/rest-apis/ally/api>

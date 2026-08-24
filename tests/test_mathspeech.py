@@ -9,12 +9,12 @@ sequence.
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
 
 from latexally.mathspeech import (
+    DRIVER,
     _ALIGNAT,
     Formula,
     _escape_tex_string,
@@ -186,7 +186,7 @@ def test_write_sources_emits_both_files_keyed_by_the_latex_lab_hash(tmp_path: Pa
     assert second.hash not in speech
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="speech needs Node")
+@pytest.mark.skipif(not DRIVER.is_file(), reason="speech needs the MathCAT driver built")
 def test_conversion_produces_speech_and_keeps_augmented_matrix_columns(tmp_path: Path):
     pytest.importorskip("latex2mathml", reason="math descriptions need the [math] extra")
     formulas = read_dummy(FIXTURE)
@@ -195,25 +195,26 @@ def test_conversion_produces_speech_and_keeps_augmented_matrix_columns(tmp_path:
 
     _, inline_speech = results[by_source(formulas, r"\frac").hash]
     assert inline_speech == (
-        "the fraction with numerator x squared minus 1 and denominator x plus 1"
+        "the fraction with numerator; x squared minus 1; and denominator x plus 1"
     )
+    # The semicolons are MathCAT's prosody, not markup: with `TTS=None` it emits
+    # pauses as punctuation rather than as SSML a reader would spell out.
     assert "$" not in inline_speech and "\\" not in inline_speech
     matrix_mathml, matrix_speech = results[by_source(formulas, "array").hash]
     assert "columnlines" in matrix_mathml, "the augmented-matrix divider must survive"
-    assert "matrix" in matrix_speech.lower()
+    # The divider is *spoken*, not merely carried in the MathML /AF. Upstream
+    # MathCAT reads no mtable line attribute, so this asserts the one rule the
+    # `vendor/MathCAT` fork adds -- and fails loudly if a rebase drops it.
+    assert matrix_speech.startswith("the 2 by 3 augmented matrix"), matrix_speech
     _, align_speech = results[by_source(formulas, "align*").hash]
-    assert align_speech.startswith("2 lines"), align_speech
+    assert align_speech.startswith("2 equations"), align_speech
     assert "ampersand" not in align_speech
-
-    # ponytail: clearspeak says "the 2 by 3 matrix" and does not announce the
-    # augmented divider. The MathML /AF carries it; upgrade to MathCAT if a
-    # student reports the gap.
 
     assert (tmp_path / "cache.json").is_file()
     assert convert(formulas, cache=tmp_path / "cache.json") == results
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="speech needs Node")
+@pytest.mark.skipif(not DRIVER.is_file(), reason="speech needs the MathCAT driver built")
 @pytest.mark.parametrize(
     "name,tex",
     [
@@ -241,3 +242,99 @@ def test_every_environment_the_corpus_uses_speaks_without_markup(name: str, tex:
     assert "ampersand" not in speech, f"{name} read an alignment tab aloud: {speech!r}"
     assert "dollar" not in speech
     assert "\\" not in speech and "$" not in speech
+
+
+# ---------------------------------------------------------------------- #
+# course macros the converter has never heard of
+# ---------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        # 591 of the 700 macro occurrences measured in real write-dummy output.
+        (r"\mat{A}", r"\mathbf{A}"),
+        # A prefix rewrite, so a nested argument cannot mis-nest.
+        (r"\mat{\vec{x}}", r"\mathbf{\vec{x}}"),
+        (r"\wt{H}", r"\tilde{H}"),
+        # Both ends change, so these are brace-scanned rather than matched.
+        (r"\norm{\vec{v}}", r"\lVert \vec{v} \rVert"),
+        (r"\bmqty{\mat{S}}", r"\begin{bmatrix}\mathbf{S}\end{bmatrix}"),
+        (r"\SI{1}{\kohm}", r"1 \mathrm{k\Omega}"),
+        (r"\R", r"\mathbb{R}"),
+        # Sizing is presentational; left in, the reader hears "backslash brace".
+        (r"\big\{x\big\}", r"\{x\}"),
+        # `aligned` yields invalid MathML; `align*` says what the author meant.
+        (r"\begin{aligned}y&=1\end{aligned}", r"\begin{align*}y&=1\end{align*}"),
+    ],
+)
+def test_expand_macros(source: str, expected: str):
+    from latexally.mathspeech import expand_macros
+
+    assert expand_macros(source) == expected
+
+
+def test_a_longer_macro_is_not_mistaken_for_a_shorter_one():
+    r"""`\normalsize` is not `\norm`, and `\bigcup` is not `\big`."""
+    from latexally.mathspeech import expand_macros
+
+    assert expand_macros(r"\normalsize x") == r"\normalsize x"
+    assert expand_macros(r"\bigcup A") == r"\bigcup A"
+
+
+def test_a_superscripted_matrix_is_wrapped_before_conversion():
+    r"""The single most expensive converter bug on this corpus.
+
+    `latex2mathml` emits an `<msup>` with the wrong number of children for
+    `\begin{bmatrix}...\end{bmatrix}^{\top}`, MathCAT refuses it -- "msup should
+    have 2 children" -- and a transposed matrix ships with no `/Alt` at all. On
+    a linear-algebra course that is not an edge case. A brace group is enough.
+    """
+    from latexally.mathspeech import expand_macros
+
+    wrapped = expand_macros(r"\begin{bmatrix}1 & 2\end{bmatrix}^{\top}")
+
+    assert wrapped == r"{\begin{bmatrix}1 & 2\end{bmatrix}}^{\top}"
+    # Unscripted, it must be left exactly as it was.
+    assert expand_macros(r"\begin{bmatrix}1 & 2\end{bmatrix}") == (
+        r"\begin{bmatrix}1 & 2\end{bmatrix}"
+    )
+
+
+@pytest.mark.skipif(not DRIVER.is_file(), reason="speech needs the MathCAT driver built")
+def test_a_transposed_matrix_actually_speaks():
+    """The end of that chain, through the real converter and real engine."""
+    pytest.importorskip("latex2mathml", reason="math descriptions need the [math] extra")
+    formula = Formula("H", r"$\begin{bmatrix}1 & 2\end{bmatrix}^{\top}$")
+
+    results = convert([formula])
+
+    assert formula.hash in results, "a transposed matrix produced no speech at all"
+    speech = results[formula.hash][1]
+    assert "matrix" in speech and "top" in speech, speech
+
+
+def test_the_cache_is_discarded_when_the_conversion_recipe_changes(tmp_path: Path):
+    r"""The cache key cannot see the thing most likely to change.
+
+    It is latex-lab's hash of the *source*, which is what makes it survive
+    edits, renames and semester rollovers. It also means a change to the
+    conversion -- expanding `\mat` to `\mathbf` altered a third of this
+    corpus's speech -- moves no hash at all, so a rerun would serve the old
+    strings forever.
+    """
+    import json
+
+    from latexally.mathspeech import RECIPE
+
+    formulas = read_dummy(FIXTURE)
+    cache = tmp_path / "cache.json"
+    first = convert(formulas, cache=cache)
+    assert json.loads(cache.read_text())["#recipe"] == RECIPE
+
+    stored = json.loads(cache.read_text())
+    stored["#recipe"] = "some-older-pipeline"
+    stored[next(iter(first))] = ["<math/>", "stale speech nobody should hear"]
+    cache.write_text(json.dumps(stored))
+
+    assert convert(formulas, cache=cache) == first

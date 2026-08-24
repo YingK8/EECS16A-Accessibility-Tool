@@ -768,4 +768,42 @@
       }
   }
 
+%% ---------------------------------------------------------------------- %%
+%% Enumerate labels that survive tagging
+%% ---------------------------------------------------------------------- %%
+%%
+%% enumitem's `label=\roman*' resolves its counter when the list is set. Under
+%% `testphase={tagpdf}' that resolution happens against a counter that has not
+%% been stepped, so every item reads (i) -- and with a non-starred counter it is
+%% wrong with nothing in the log to say so.
+%%
+%% The usual answer, `\renewcommand{\labelenumi}{...}', names a depth. That is
+%% wrong for most of this corpus: 483 of 667 label options are at least two
+%% enumerates deep inside their own file, and every question file is \input
+%% inside the driver's own \begin{enumerate}[series=qn], so even a top-level
+%% list in a question is enumii or deeper by the time it is set. The depth
+%% cannot be read off the source at all.
+%%
+%% So LaTeX is asked for it instead. `latexally rewrite' turns
+%%
+%%     \begin{enumerate}[label=(\roman*)]
+%% into
+%%     \AllyEnumLabel{(\roman{\allyenum})}%
+%%     \begin{enumerate}
+%%
+%% \@enumdepth is LaTeX2e's own counter of how many enumerates are open, so
+%% these are plain LaTeX2e rather than expl3: `@' is already a letter here.
+
+%% The counter name of the list being typeset RIGHT NOW: enumi, enumii, ...
+%% Expandable, because it is used inside \roman{...}, which expands its
+%% argument through \csname c@...\endcsname.
+\newcommand\allyenum{enum\romannumeral\@enumdepth}
+
+%% Set the label of the enumerate that is ABOUT to open. \begin{enumerate}
+%% freezes its label into \@itemlabel as it starts, so this has to run first --
+%% hence \@enumdepth+1, the depth the list will have once it is open.
+\newcommand\AllyEnumLabel[1]{%
+  \expandafter\renewcommand
+  \csname labelenum\romannumeral\numexpr\@enumdepth+1\relax\endcsname{#1}}
+
 \endinput

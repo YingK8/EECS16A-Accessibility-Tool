@@ -121,6 +121,30 @@ def latex_to_text(fragment: str | None) -> str:
     Deliberately conservative: it never guesses at complex expressions, and the
     worklog always shows the original source next to the result so a human can
     correct it.
+
+    Why this is not handed to MathCAT
+    ---------------------------------
+
+    It looks like a hand-rolled duplicate of the math-speech pipeline and it is
+    not: a *label* and a *formula* want opposite readings, and routing labels
+    through a speech engine measurably makes them worse. Measured on the same
+    engine that produces every ``/Alt`` in this package:
+
+    ==================  ==============  ============================================
+    Source              here            MathCAT
+    ==================  ==============  ============================================
+    ``$V_{C_1}$``       ``VC1``         "cap v sub cap c sub 1, end sub"
+    ``$V_{BB,min}$``    ``VBB,min``     "cap v sub, cap b cap b, comma, min end sub"
+    ``time (s)``        ``time (s)``    "time of s" -- ``(s)`` read as a function
+    ==================  ==============  ============================================
+
+    The first two are part names, and a part name is not spelled out. The third
+    is not maths at all, and an engine given prose will still parse it as maths.
+
+    The overlap that would justify the swap -- ``\\frac``, ``\\sqrt`` and the
+    other genuinely formula-shaped constructs -- does not occur: **0 of the
+    2,447 figure labels in the live corpus contain one.** Equations reach the
+    reader through ``mathspeech``, which is where an engine belongs.
     """
     if not fragment:
         return ""
