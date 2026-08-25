@@ -25,9 +25,10 @@ import os
 import re
 import shutil
 import subprocess
+from fnmatch import fnmatch
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from ..config import Profile
 from ..errors import LatexAllyError, ToolchainError
@@ -827,6 +828,7 @@ def require_clean_worktree(root: Path) -> None:
         check=False,
     )
     dirty = [line for line in status.stdout.splitlines() if line.strip()]
+    dirty = [line for line in dirty if not _ours(line)]
     if dirty:
         listed = "\n    ".join(dirty[:8])
         more = f"\n    …and {len(dirty) - 8} more" if len(dirty) > 8 else ""
@@ -834,9 +836,38 @@ def require_clean_worktree(root: Path) -> None:
             f"the corpus has {len(dirty)} uncommitted change(s):\n    {listed}{more}",
             hint=(
                 "commit or stash them first, so this tool's edits are reviewable "
-                "on their own — or use the default mirror mode"
+                "on their own — `latexally revert` undoes a previous run, and "
+                "the default mirror mode never touches the corpus at all"
             ),
         )
+
+
+def _ours(status_line: str) -> bool:
+    r"""Is this dirty entry a file this tool created, rather than somebody's work?
+
+    The guard exists to keep a person's unfinished edits from being tangled
+    with the tool's, and a file the tool wrote itself is neither unfinished nor
+    theirs. Without this the documented workflow is impossible after its first
+    step: ``--edit`` writes ``descriptions.yaml`` beside the sources so a TA can
+    fill it in, and the moment they do, the next run refuses to start because
+    the worklog it just asked them to edit is an untracked file in the corpus.
+
+    Only **untracked** entries qualify. A modified tracked ``.tex`` is not
+    waved through even when a previous run is what modified it: at that point
+    the corpus holds converted sources, and the honest next move is
+    ``latexally revert`` or a commit -- not a second conversion layered on the
+    first.
+
+    The patterns come from :mod:`latexally.revert`, so the set of files the
+    tool will step over is by construction the same set it knows how to take
+    away again.
+    """
+    if not status_line.startswith("??"):
+        return False
+    from ..revert import artifact_globs
+
+    name = PurePosixPath(status_line[3:].strip().strip('"')).name
+    return any(fnmatch(name, pattern) for pattern in artifact_globs())
 
 
 # ---------------------------------------------------------------------- #

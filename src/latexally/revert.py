@@ -38,10 +38,10 @@ from .config import Profile
 from .errors import LatexAllyError
 from .run import ARTIFACTS, RunConfig
 
-__all__ = ["RevertPlan", "plan_revert", "do_revert"]
+__all__ = ["RevertPlan", "artifact_globs", "plan_revert", "do_revert"]
 
 
-def _artifact_globs() -> tuple[str, ...]:
+def artifact_globs() -> tuple[str, ...]:
     """Glob patterns for everything this tool writes into a corpus folder.
 
     Built from the suffixes the build engine itself stamps on its output, so a
@@ -161,7 +161,7 @@ def plan_revert(
     # candidate: a corpus-wide revert matches thousands of files and that is
     # thousands of subprocesses.
     tracked = _tracked(root, None if target == root else target)
-    for pattern in _artifact_globs():
+    for pattern in artifact_globs():
         for path in target.rglob(pattern):
             # Deleted only if git has never seen it. A `latexally-core.sty` a
             # course committed itself is theirs, and `git checkout` owns it.

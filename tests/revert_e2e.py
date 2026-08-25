@@ -46,11 +46,18 @@ from latexally.revert import do_revert, plan_revert
 from latexally.run import Output, RunConfig
 
 BANK = Path(__file__).resolve().parents[2] / "questionBank"
-#: One real assignment, chosen because its body \\inputs questions from the
-#: shared bank two directories away -- which is the normal case, not the
-#: exception, and the case a folder-local tool would get wrong.
+#: The default is one real assignment, chosen because its body \\inputs
+#: questions from the shared bank two directories away -- which is the normal
+#: case, not the exception, and the case a folder-local tool would get wrong.
+#: Override both from the command line to walk through any other folder:
+#:
+#:     uv run python tests/revert_e2e.py sp26/hw/10
+#:     uv run python tests/revert_e2e.py sp26/hw/10 sol10.tex
 ASSIGNMENT = "sp26/hw/13"
 DRIVER = "prob13.tex"
+#: Kept after a run instead of deleted, so the walkthrough can be inspected.
+#: Printed at the end; the next run clears it.
+KEEP = False
 
 _START = time.time()
 
@@ -161,6 +168,16 @@ def main() -> int:
           next((line for line in bare.stdout.splitlines() if line.startswith("!")), ""))
     check((folder / f"{Path(DRIVER).stem}.pdf").is_file(), "and produced a PDF")
 
+    if KEEP:
+        say("--keep: stopping before revert. Look at:")
+        say(f"   {folder}")
+        for path in sorted(folder.iterdir()):
+            say(f"     {path.name}")
+        for path in worklogs:
+            say(f"   {root / path}")
+        say(f"   undo it with: latexally --corpus {root} revert {ASSIGNMENT} --write")
+        return 1 if failures else 0
+
     do_revert(plan_revert(config, profile))
 
     # What a bare pdflatex leaves under the document's OWN jobname belongs to
@@ -185,5 +202,29 @@ def main() -> int:
     return 1 if failures else 0
 
 
+def _driver_for(assignment: str) -> str:
+    """The problem variant if the profile knows one, else any driver there.
+
+    Saves the caller naming a file: `sp26/hw/10` is the thing they have in
+    mind, and which of `prob10.tex` / `sol10.tex` drives it is the tool's
+    question to answer, not theirs.
+    """
+    profile = load_profile("eecs16a")
+    for item in iter_selected(profile, RunConfig(assignments=(assignment,))):
+        drivers = item.drivers
+        for variant in ("problem", "solution", "answer", "document"):
+            if variant in drivers:
+                return drivers[variant]
+        if drivers:
+            return sorted(drivers.values())[0]
+        if item.driver:
+            return item.driver
+    raise SystemExit(f"no driver found in {assignment}")
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        ASSIGNMENT = sys.argv[1].strip("/")
+        DRIVER = sys.argv[2] if len(sys.argv) > 2 else _driver_for(ASSIGNMENT)
+    KEEP = "--keep" in sys.argv
     raise SystemExit(main())

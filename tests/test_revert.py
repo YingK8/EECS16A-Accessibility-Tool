@@ -269,3 +269,53 @@ def test_revert_reports_rather_than_hides_what_it_could_not_restore(
 
     with pytest.raises(LatexAllyError, match="still modified"):
         do_revert(plan)
+
+
+# ---------------------------------------------------------------------- #
+# the guard that lets the fill-in loop work
+# ---------------------------------------------------------------------- #
+
+
+def test_the_clean_worktree_guard_steps_over_the_tool_s_own_files(
+    sample: list[Path], tmp_path: Path
+):
+    """Otherwise the documented workflow dies at its second step.
+
+    `--edit` writes `descriptions.yaml` beside the sources so a TA can fill it
+    in. The moment they do, the next run has an untracked file in the corpus --
+    the very file it asked them to edit -- and the guard used to refuse to
+    start.
+    """
+    from latexally.build import require_clean_worktree
+
+    root = _repo_from(sample, tmp_path / "corpus")
+    require_clean_worktree(root)  # clean
+
+    folder = sorted(p for p in root.rglob("*") if p.is_dir() and ".git" not in p.parts)[0]
+    (folder / WORKLOG_NAME).write_text("fig-1:\n  alt_text: written by a TA\n")
+    (folder / "latexally-core.sty").write_text("% installed by copy_back")
+    (folder / "sem-hw-1-problem-accessible.pdf").write_bytes(b"%PDF-1.7\n")
+    require_clean_worktree(root)  # still clean: all three are ours
+
+
+def test_the_guard_still_refuses_somebody_else_s_work(
+    sample: list[Path], tmp_path: Path
+):
+    """The guard's actual job, which the exemption above must not erode.
+
+    A modified `.tex` is never waved through, not even one a previous run
+    modified: at that point the honest next move is `revert` or a commit, not a
+    second conversion layered on the first.
+    """
+    from latexally.build import require_clean_worktree
+
+    root = _repo_from(sample, tmp_path / "corpus")
+    victim = sorted(root.rglob("*.tex"))[0]
+    victim.write_text(victim.read_text() + "\n% mine\n")
+    with pytest.raises(LatexAllyError, match="uncommitted change"):
+        require_clean_worktree(root)
+
+    _git(root, "checkout", "--", str(victim.relative_to(root)))
+    (root / "notes.txt").write_text("also mine")
+    with pytest.raises(LatexAllyError, match="uncommitted change"):
+        require_clean_worktree(root)
