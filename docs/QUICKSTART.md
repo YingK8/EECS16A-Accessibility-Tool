@@ -169,9 +169,18 @@ where you are standing.
 | `r` | Revert — undo a run: restore your `.tex` with git and delete what the tool wrote. Shows the list first; `y` confirms |
 | `q` | quit; nothing is built |
 
-**Nothing starts ticked**, and `n` stays greyed — with the reason under the
-list — until you tick something. A scope of forty directories used to build all
-forty because Enter was the obvious key.
+**It opens on the folder you started it from.** The first question is
+`everything in sp26/hw/10` or `choose`, and the first answer is already
+selected with the folder's assignments ticked — the same thing `latexally scan`
+means by the same words. Pick `choose` and the scope row and path field appear
+for browsing the rest of the corpus; anything already ticked stays ticked.
+
+Started from outside the corpus — this repository, or CI — there is no "here"
+to offer, so that option says so and the browsing controls open instead.
+
+**In `choose` mode nothing starts ticked**, and `n` stays greyed — with the
+reason under the list — until you tick something. A scope of forty directories
+used to build all forty because Enter was the obvious key.
 
 **Ticks survive a change of scope.** A scope is a place to look, not a new
 question, so you can tick two discussions under `sp26`, walk to `exams`, tick

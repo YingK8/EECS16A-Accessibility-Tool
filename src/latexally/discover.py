@@ -298,3 +298,28 @@ def iter_selected(profile: Profile, config: RunConfig) -> Iterator[Assignment]:
             tex_files=len(list(directory.glob("*.tex"))),
             drivers=drivers,
         )
+
+
+def scope_from_cwd(profile: Profile) -> str | None:
+    """The scope implied by the working directory, or None for all of it.
+
+    The directory you run from is the thing you mean. Standing in
+    ``sp26/hw/10`` and typing ``latexally scan`` should scan that assignment,
+    not nine years of corpus -- and it should not need a flag to say so, which
+    is what ``--here`` was and why it is gone.
+
+    None outside the corpus, which is the honest answer for the two ordinary
+    cases: driving the corpus from the tool's own checkout, and CI. An explicit
+    scope argument still wins over this everywhere.
+    """
+    root = profile.corpus.root.resolve()
+    try:
+        cwd = Path.cwd().resolve()
+    except OSError:  # pragma: no cover - deleted working directory
+        return None
+    if cwd == root:
+        return ""
+    try:
+        return cwd.relative_to(root).as_posix()
+    except ValueError:
+        return None

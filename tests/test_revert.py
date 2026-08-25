@@ -340,7 +340,7 @@ def test_the_working_directory_is_the_scope(sample: list[Path], tmp_path: Path, 
     command to make the tool mean the folder you are standing in is a flag that
     should not exist -- the working directory already carries that fact.
     """
-    from latexally.cli import _where
+    from latexally.discover import scope_from_cwd
 
     root = _repo_from(sample, tmp_path / "corpus")
     profile = _profile(root)
@@ -350,24 +350,24 @@ def test_the_working_directory_is_the_scope(sample: list[Path], tmp_path: Path, 
     )[0]
 
     monkeypatch.chdir(folder)
-    assert _where(profile) == folder.relative_to(root).as_posix()
+    assert scope_from_cwd(profile) == folder.relative_to(root).as_posix()
 
     # At the top of the corpus, "" -- the whole corpus, not "no scope".
     monkeypatch.chdir(root)
-    assert _where(profile) == ""
+    assert scope_from_cwd(profile) == ""
 
 
 def test_outside_the_corpus_means_the_whole_corpus(tmp_path: Path, monkeypatch):
     """Driving the corpus from the tool's own checkout, and CI. Both are
     outside it, and both mean everything -- not an error."""
-    from latexally.cli import _where
+    from latexally.discover import scope_from_cwd
 
     root = tmp_path / "corpus"
     (root / "hw").mkdir(parents=True)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
-    assert _where(_profile(root)) is None
+    assert scope_from_cwd(_profile(root)) is None
 
 
 def test_worklogs_are_filed_by_semester_and_kind(sample: list[Path], tmp_path: Path):

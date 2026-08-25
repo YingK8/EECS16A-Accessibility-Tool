@@ -62,6 +62,7 @@ from textual.widgets import (
 )
 from textual.widgets.data_table import CellDoesNotExist
 from textual.widgets.option_list import OptionDoesNotExist
+from textual.css.query import NoMatches
 from textual.widgets.selection_list import Selection
 
 from ..config import Profile
@@ -76,6 +77,7 @@ from ..run import (
     normalise_hex,
 )
 from ..discover import (
+    scope_from_cwd,
     VARIANT_LABELS,
     VARIANTS,
     Assignment,
@@ -334,7 +336,10 @@ class ScopeScreen(ListStepScreen):
     """
 
     heading = "What do you want to convert?"
-    hint = "Nothing is ticked yet. Next: documents, standards, colours, output."
+    hint = (
+        "Starts on the folder you ran this from. Next: documents, standards, "
+        "colours, output."
+    )
     list_id = "assignments"
 
     BINDINGS = [
@@ -354,9 +359,17 @@ class ScopeScreen(ListStepScreen):
         """
         if action == "scope":
             # In the path field the arrows are the text caret, which outranks
-            # anything this screen wants them for.
+            # anything this screen wants them for. And in "everything here"
+            # mode the scope row is not on screen at all, so advertising a key
+            # that walks it sends someone looking for a row they were promised.
             typing = isinstance(self.app.focused, Input)
-            return False if typing or not self._scopes else True
+            if typing or not self._scopes:
+                return False
+            try:
+                return False if self._here else True
+            except NoMatches:
+                # Called once before the radio is mounted.
+                return True
         return super().check_action(action, parameters)
 
     def __init__(self) -> None:
@@ -375,10 +388,26 @@ class ScopeScreen(ListStepScreen):
         self._rebuilding = False
 
     def body(self) -> Iterator[Widget]:
+        # The opening question, and for most runs the only one: the directory
+        # you started in is the assignment you mean. Asked rather than assumed,
+        # because "convert everything I am standing in" and "let me pick" are
+        # different intentions and the tool cannot tell them apart.
+        here = self.app.here_scope
+        with Horizontal(classes="row", id="here-line"):
+            yield Static("Run    ↑ ↓", classes="gutter")
+            yield Choice(
+                Radio("", value=bool(here), name="here", id="here-radio"),
+                Radio(
+                    "choose — pick from anywhere in the corpus",
+                    value=not here,
+                    name="choose",
+                ),
+                id="here-mode",
+            )
         with Horizontal(classes="row", id="scope-line"):
             yield Static("Scope  ← →", classes="gutter")
             yield Static("", id="scope-row", classes="rowtext")
-        with Horizontal(classes="row"):
+        with Horizontal(classes="row", id="scope-path-line"):
             yield Static("Path   type", classes="gutter")
             yield Input(
                 placeholder="a path relative to the corpus root, e.g. sp26/hw/9",
@@ -393,6 +422,40 @@ class ScopeScreen(ListStepScreen):
         yield Checklist(id="assignments")
         yield Static("", id="pick-note", classes="note")
         yield Static("", id="elsewhere", classes="count")
+
+    @property
+    def _here(self) -> bool:
+        """Is the "everything here" answer the one currently chosen?"""
+        pressed = self.query_one("#here-mode", RadioSet).pressed_button
+        return bool(pressed and pressed.name == "here")
+
+    def _label_here(self) -> None:
+        """Name the folder in the radio, so the choice is concrete."""
+        here = self.app.here_scope
+        radio = self.query_one("#here-radio", Radio)
+        if here is None:
+            radio.label = "everything here — (not inside the corpus)"
+            radio.disabled = True
+            return
+        where = here or "the whole corpus"
+        radio.label = f"everything in {where}"
+
+    @on(RadioSet.Changed, "#here-mode")
+    def _here_changed(self) -> None:
+        self._apply_mode()
+
+    def _apply_mode(self) -> None:
+        """Show the browsing controls only when the user asked to browse."""
+        here = self._here
+        self.query_one("#scope-line").display = bool(self._scopes) and not here
+        self.query_one("#scope-path-line").display = not here
+        self.refresh_bindings()
+        if here:
+            self.scan(self.app.here_scope or "")
+        elif not self._scopes:
+            self.scan("")
+        else:
+            self.select_scope(self._scope_index or 0)
 
     def on_mount(self) -> None:
         self._scopes = list(self.profile.corpus.named)
@@ -409,15 +472,17 @@ class ScopeScreen(ListStepScreen):
             ]
         )
         self._rebuilding = False
+        self._label_here()
         self._render_rows()
         self._sync()
-        if not self._chosen and self._scopes:
-            self.select_scope(0)
-        else:
+        if self._chosen:
             # A replayed config skips the opening scan, so nothing has focused
             # the list yet -- and the path field would otherwise take the focus
             # and swallow every letter key as text.
+            self.query_one("#scope-line").display = bool(self._scopes)
             self.choices.focus()
+        else:
+            self._apply_mode()
 
     # -- the two filter rows -------------------------------------------- #
 
@@ -443,7 +508,6 @@ class ScopeScreen(ListStepScreen):
         self.scan(typed)
 
     def _render_rows(self) -> None:
-        self.query_one("#scope-line").display = bool(self._scopes)
         self.query_one("#scope-row", Static).update(
             Content.from_markup(
                 " ".join(
@@ -548,6 +612,11 @@ class ScopeScreen(ListStepScreen):
         only = len(items) == 1
         if only:
             self._chosen.add(items[0].path)
+        if self._here:
+            # "Everything here" means everything here. Ticked rather than
+            # merely implied, so the list still shows exactly what will be
+            # built and any one of them can still be unticked.
+            self._chosen.update(item.path for item in items)
         self._showing = [item.path for item in items]
         # Rebuilding the options fires SelectedChanged for each one; without
         # this the handler would read a half-built list as the user's answer.
@@ -1691,6 +1760,11 @@ class LatexAllyApp(App):
         # Same anchoring the CLI does, so the runner and the flags agree about
         # where a defaulted output root points.
         self.config.output.anchor(profile)
+        #: The corpus-relative directory the runner was started from, or None
+        #: when that is outside the corpus. Same answer `latexally scan` uses,
+        #: from the same function, so the runner and the commands cannot
+        #: disagree about what "here" means.
+        self.here_scope = scope_from_cwd(profile)
         self.should_run = False
         self.reports: list = []
         self.descriptions: dict = {}

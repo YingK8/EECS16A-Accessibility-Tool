@@ -1375,3 +1375,68 @@ async def test_revert_cannot_be_confirmed_without_a_plan(profile: Profile):
         await settle(pilot)
         await press(pilot, "r")
         assert app.screen.check_action("confirm", ()) is None
+
+
+# ---------------------------------------------------------------------- #
+# starting where you are standing
+# ---------------------------------------------------------------------- #
+
+
+async def test_the_runner_opens_on_the_folder_it_was_started_from(
+    profile: Profile, corpus: Path, monkeypatch
+):
+    """The first question, and for most runs the only one.
+
+    `latexally scan` already means "this folder"; the runner meaning "the whole
+    corpus, nothing ticked, off you go" made the two disagree about the same
+    words. Everything in the folder is ticked, not merely implied -- the list
+    still shows exactly what will be built, and any row can still be unticked.
+    """
+    monkeypatch.chdir(corpus / "sem" / "hw" / "1")
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert app.here_scope == "sem/hw/1"
+        assert app.config.assignments == ("sem/hw/1",)
+        shown = visible(app)
+        assert "everything in sem/hw/1" in shown
+        # Next is reachable immediately: the question has an answer already.
+        assert app.screen.check_action("next", ()) is True
+
+
+async def test_choosing_instead_reveals_the_browsing_controls(
+    profile: Profile, corpus: Path, monkeypatch
+):
+    """The scope row and the path field are for browsing, so they appear only
+    when the user has said they want to browse. Shown always, they were two
+    rows of chrome above an answer that was already correct."""
+    monkeypatch.chdir(corpus / "sem" / "hw" / "1")
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert not app.screen.query_one("#scope-path-line").display
+
+        radio = app.screen.query_one("#here-mode", RadioSet)
+        next(b for b in radio.query("RadioButton") if b.name == "choose").value = True
+        await settle(pilot)
+        assert app.screen.query_one("#scope-path-line").display
+        assert app.screen.query_one("#scope-line").display
+
+
+async def test_outside_the_corpus_the_runner_asks_as_it_always_did(
+    profile: Profile, monkeypatch
+):
+    """Started from somewhere else -- this repository, or CI -- there is no
+    "here" to offer, so the option says so and the browsing controls open.
+
+    The tests directory, not a tmp_path child: the corpus fixture's root IS
+    tmp_path, so anything under it is inside the corpus by definition.
+    """
+    monkeypatch.chdir(Path(__file__).resolve().parent)
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert app.here_scope is None
+        assert app.config.assignments == ()
+        assert "not inside the corpus" in visible(app)
+        assert app.screen.query_one("#scope-path-line").display

@@ -101,7 +101,9 @@ tail -f /usr/local/texlive/2025/texmf-var/web2c/tlmgr.log
 uv run run.py
 ```
 
-Asks what to convert, defaults the rest, and dry-runs unless told otherwise.
+Asks what to convert, defaults the rest, and dry-runs unless told otherwise. It
+opens on the folder you started it from — the first question is "everything
+here, or choose?" and "everything here" is already the answer.
 
 Step by step, with what each screen shows:
 [`docs/QUICKSTART.md`](docs/QUICKSTART.md).
