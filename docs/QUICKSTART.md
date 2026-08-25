@@ -318,19 +318,20 @@ Useful flags: `--question-tags` (real H2 tags for question titles, at the cost
 of reflowing about one question in five), `--house-colors` (keep the course
 palette even where it fails contrast), `--json` (for agents and CI).
 
-`--here` saves naming the corpus and the folder at all: it takes the corpus
-root from the enclosing git repository and the scope from the directory you are
-standing in, on every command that accepts a scope.
+**Where you run it is the scope.** There is no flag for it: the directory you
+are standing in is the part of the corpus you mean.
 
 ```bash
 cd questionBank/sp26/hw/10
-latexally --here scan
-latexally --here build --write --edit
-latexally --here revert --write
+latexally scan
+latexally build --write --edit
+latexally revert --write
 ```
 
-At the top of the corpus it means the whole corpus. Outside a git repository it
-refuses and says so, rather than guessing.
+At the top of the corpus that means the whole corpus. Outside it — from this
+repository, or in CI — it also means the whole corpus, which is the honest
+answer there. An explicit scope argument still wins over all of it, and
+`--corpus` points at a different corpus entirely.
 
 Two write modes reach the corpus, and they are not the same thing:
 
@@ -438,7 +439,7 @@ rollback is `latexally revert`, below.
 ```bash
 latexally revert bank            # the list, without doing it
 latexally revert bank --write    # do it
-latexally --here revert --write  # or just: this folder
+latexally revert --write         # or just: wherever you are standing
 ```
 
 Three groups, and they are undone three different ways because they have to be:

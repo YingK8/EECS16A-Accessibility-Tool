@@ -134,49 +134,44 @@ The default is a mirror: your `.tex` is read, never written, and the converted
 copy goes to `ally-out/`. That is the right default and the wrong one for the
 weekly job, where you want the folder itself to build.
 
-`--here` works on the directory you are standing in — corpus root from the
-enclosing git repository, scope from the folder. `--edit` writes the conversion
-back over the sources, drops the packages they need beside them, and puts the
-alt-text worklog in the folder. After that a bare `pdflatex` produces the
-tagged PDF:
+**Where you run it is the scope.** There is no flag for it — standing in an
+assignment folder means that assignment, standing at the top of the corpus
+means all of it.
+
+`--edit` writes the conversion back over the sources and drops the packages
+they need beside them, so a bare `pdflatex` then produces the tagged PDF:
 
 ```bash
 cd questionBank/sp26/hw/10
 
-latexally --here scan               # figures -> descriptions.yaml, in this folder
-$EDITOR questionBank/hw/11/descriptions.yaml    # fill in the alt_text: lines
-latexally --here build --write --edit
+latexally scan                      # figures -> the alt-text worklogs
+latexally build --write --edit
 pdflatex prob10.tex                 # tagged; no TEXINPUTS, no output directory
 ```
-
-`--here` works on every command that takes a scope — `files`, `scan`, `apply`,
-`check`, `doctor`, `build`, `revert` — so none of them need the path spelled
-out. At the top of the corpus it means the whole corpus.
 
 Undo all of it:
 
 ```bash
-latexally --here revert --write
+latexally revert --write
 ```
 
 `revert` restores your `.tex` with `git checkout` and deletes what the tool
-wrote: the `*-accessible.*` PDFs and logs, `descriptions.yaml`, and the
+wrote: the `*-accessible.*` PDFs and logs, the worklogs, and the
 `latexally-*.sty` it installed. It leaves anything it does not recognise alone
 — your own hand-built PDFs are ignored by git and would be gone forever if it
-ran `git clean`. Drop `--write` to see the list first; that is the default.
+ran `git clean`. A worklog you have written descriptions into is reported and
+kept, never deleted: git never had it, so nothing could give it back. Drop
+`--write` to see the list first; that is the default.
 
 `--edit` refuses on a dirty worktree, which is what makes the undo total. It
-does step over its *own* files, so filling in `descriptions.yaml` and running
-again works — that loop is the point of putting the worklog there.
+steps over its *own* output, so filling in a worklog and running again works.
 
-**The worklog appears next to the file holding the figure**, which is often the
-shared bank rather than the assignment: `sp26/hw/10` writes to
-`questionBank/hw/11/descriptions.yaml`. Roughly three quarters of sp26 graphics
-live in the bank, not in the homework folder. For the same reason `--here` uses
-the repository as the corpus and not the folder — 16A drivers reach out of
-their own directory, `\usepackage{../../../ee16}` and
-`\input{../../../questionBank/hw/13/q_perpetual_motion}`, so a folder on its
-own is not a corpus and does not build.
+**Why the corpus and not just the folder:** 16A drivers reach out of their own
+directory — `\usepackage{../../../ee16}`,
+`\input{../../../questionBank/hw/13/q_perpetual_motion}` — so a folder on its
+own is not a corpus and does not build. Only the *uncommented* `\input` lines
+are followed: `sp26/hw/10`'s body lists 33 questions with 27 commented out, and
+the tool converts the 6 that are live.
 
 #### Try it without touching anything
 
@@ -192,19 +187,34 @@ byte-identical.
 ### Output
 
 ```
-ally-out/
-  pdf/           the converted PDFs
-  logs/          build logs
-  tex/           the converted sources
-  descriptions/  the worklogs staff fill in   ← the alt-text log
-  baseline/      the untouched originals, for the before/after comparison
-  run.yaml       this run's settings, replayable
+questionBank/ally-out/          ← in the corpus, beside the material
+  pdf/                          the converted PDFs
+  logs/                         build logs
+  tex/                          the converted sources
+  baseline/                     untouched builds, for the before/after comparison
+  descriptions/                 the alt-text worklogs staff fill in
+    bank/hw_fig_alt_texts.yaml      the shared question bank
+    bank/disc_fig_alt_texts.yaml
+    sp26/hw_fig_alt_texts.yaml      one semester's own material
+    fa15/exam_fig_alt_texts.yaml    the exam archive, by its own semester
+    notes/notes_fig_alt_texts.yaml
+  run.yaml                      this run's settings, replayable
 ```
 
-Under `--edit` the converted sources are not here but in the corpus, over the
-originals, and each folder carries its own `descriptions.yaml` instead of one
-sharded `descriptions/` directory. `ally-out/` still collects the logs, the
-baseline and the before/after comparison. `latexally revert` removes both.
+Worklogs are filed by semester and material type. The semester is the first
+path component shaped like one, wherever it sits, so `exams/fa15/final` files
+under `fa15`. Material belonging to no semester — above all the shared question
+bank, where roughly three quarters of this corpus's graphics live — goes to
+`bank/`: a description is content-addressed and serves every assignment that
+uses the figure, so filing it under whichever semester happened to `\input` it
+would scatter one description across several files.
+
+The output root sits in the corpus rather than in this repository, because the
+descriptions are course content — written by course staff, outliving any
+checkout of this tool. `-o` moves it anywhere you like.
+
+Under `--edit` the converted sources are not in `tex/` but in the corpus, over
+the originals. `latexally revert` removes both.
 
 Every version of each assignment is converted, not just the solutions. `sol9.tex`
 and `prob9.tex` share one body and differ only in whether `\sol` prints, and the
