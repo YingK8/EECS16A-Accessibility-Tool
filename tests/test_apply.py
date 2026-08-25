@@ -167,3 +167,33 @@ def test_the_wrapper_keeps_the_figure_at_its_own_indentation(
     assert "    \\end{Described}" in out
     assert "\n\\end{Described}" not in out, "closer must match the opener's column"
     assert "        \\node {1};\n" in out, "interior lines are left alone"
+
+
+def test_the_long_description_lands_at_the_figure_s_column(
+    profile: Profile, tmp_path: Path
+):
+    r"""The same dedent, one line further on.
+
+    ``\LongDescription`` is appended after ``\end{Described}`` and opens with a
+    newline of its own, so it went to column 0 even once the wrapper itself was
+    fixed. It is body text belonging to the figure; it reads at the figure's
+    column.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{figure}\n"
+        "    \\begin{tikzpicture}[x=0.22cm]\n"
+        "        \\node {1};\n"
+        "    \\end{tikzpicture}\n"
+        "\\end{figure}\n"
+    )
+
+    out = _apply(
+        profile,
+        path,
+        description="Single node labelled 1.",
+        long_description="The node sits at the origin.",
+    )
+
+    assert "    \\LongDescription{The node sits at the origin.}" in out
+    assert "\n\\LongDescription" not in out, "must not land in column 0"

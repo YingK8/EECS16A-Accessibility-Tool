@@ -207,7 +207,7 @@ def _wrap_described(
                 (reference.id, "long description not written: figure shares its line")
             )
         else:
-            tail = f"\n\\LongDescription{{{escape_description(long)}}}"
+            tail = f"\n{indent}\\LongDescription{{{escape_description(long)}}}"
 
     if reference.is_raster or continues:
         # Inline form: an \includegraphics usually sits inside running text or a
