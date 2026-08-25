@@ -143,6 +143,13 @@ engine:
   # PDF 2.0 support is incomplete. /AF still attaches -- verified, 181 elements
   # carry it in either version -- because readers ignore keys they do not know.
   pdf_version: "1.7"
+  # Names the kernel now defines for itself once tagging is on, which ee16.sty
+  # also defines. Without this every document that loads it dies with
+  # "Command \proof already defined" -- a failure the untagged source does not
+  # have, so it is conversion-induced and ours to absorb. `\endproof` goes with
+  # it: \newenvironment defines both halves.
+  unlet_before:
+    ee16.sty: [proof]
   legacy_testphase: [phase-III, math, table, graphic, firstaid]
   min_runs: 3
   timeout_seconds: 300

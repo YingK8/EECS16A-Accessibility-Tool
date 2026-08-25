@@ -96,6 +96,18 @@ class EditBuffer:
     def delete(self, start: int, end: int, *, reason: str = "", rule: str | None = None) -> None:
         self._edits.append(Edit(start, end, "", reason, rule))
 
+    def drop(self, predicate) -> int:
+        """Discard recorded edits matching ``predicate``. Returns how many.
+
+        Used to withdraw a rule whose fix the toolchain already applies, once
+        the plan is built. Filtering after the fact rather than before keeps
+        every rewrite in one place: the pass does not have to know which
+        toolchain it is running on.
+        """
+        before = len(self._edits)
+        self._edits = [edit for edit in self._edits if not predicate(edit)]
+        return before - len(self._edits)
+
     # ------------------------------------------------------------------ #
     # application
     # ------------------------------------------------------------------ #

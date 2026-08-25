@@ -136,3 +136,34 @@ def test_applying_twice_wraps_once(profile: Profile, tmp_path: Path, body, wrapp
 
     assert once.count(wrapper) == 1
     assert twice == once
+
+
+def test_the_wrapper_keeps_the_figure_at_its_own_indentation(
+    profile: Profile, tmp_path: Path
+):
+    r"""Found in ally-out hw/11/q_pca_movie.tex: the wrap dedented the figure.
+
+    The prefix ends in a newline and the suffix opens with one, so without the
+    figure's own leading whitespace the wrapped `\begin{tikzpicture}` and the
+    closing `\end{Described}` land in column 0 while everything around them
+    stays indented. It compiles, and it reads as damage in the diff.
+
+    Interior lines keep the author's indentation -- the wrapper matches the
+    figure's column, it does not nest the body one level in.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{figure}\n"
+        "    \\begin{tikzpicture}[x=0.22cm]\n"
+        "        \\node {1};\n"
+        "    \\end{tikzpicture}\n"
+        "\\end{figure}\n"
+    )
+
+    out = _apply(profile, path, description="Single node labelled 1.")
+
+    assert "    \\begin{Described}{Single node labelled 1.}\n" in out
+    assert "    \\begin{tikzpicture}[x=0.22cm]\n" in out, "dedented by the wrapper"
+    assert "    \\end{Described}" in out
+    assert "\n\\end{Described}" not in out, "closer must match the opener's column"
+    assert "        \\node {1};\n" in out, "interior lines are left alone"

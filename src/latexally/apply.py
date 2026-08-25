@@ -154,6 +154,27 @@ def plan_file(
     return plan
 
 
+def _indent_of(plan: ApplyPlan, reference: FigureRef) -> str:
+    r"""The whitespace the figure's own line starts with, or ``""``.
+
+    The wrapper opens with a newline, so without this the wrapped
+    ``\begin{tikzpicture}`` and the closing ``\end{Described}`` both land in
+    column 0 while the figure around them stays indented -- correct LaTeX that
+    reads as damage in a diff, and the author has to re-indent it by hand.
+
+    Interior lines are left alone deliberately: they keep the indentation the
+    author gave them, and reindenting them would mean passing the wrapped
+    content through Python, which ``EditBuffer.wrap`` exists not to do. So the
+    wrapper matches the figure's own column rather than nesting one level in.
+
+    Empty when the figure does not start its line -- there is text before it,
+    and its leading whitespace is that text's, not the figure's.
+    """
+    line_start = plan.original.rfind("\n", 0, reference.start) + 1
+    lead = plan.original[line_start : reference.start]
+    return lead if not lead.strip() else ""
+
+
 def _continues_line(plan: ApplyPlan, reference: FigureRef) -> bool:
     r"""True when the figure's own line carries content after it.
 
@@ -173,6 +194,7 @@ def _wrap_described(
     plan: ApplyPlan, reference: FigureRef, alt: str, long: str = ""
 ) -> None:
     continues = _continues_line(plan, reference)
+    indent = _indent_of(plan, reference)
 
     # The long description is ordinary body text placed after the figure, so it
     # needs vertical mode just as the block form does. A figure sharing its line
@@ -193,7 +215,7 @@ def _wrap_described(
         plan.buffer.wrap(
             reference.start,
             reference.end,
-            f"\\described{{{alt}}}{{%\n",
+            f"\\described{{{alt}}}{{%\n{indent}",
             "}" + tail,
             reason="figure alt text",
             rule="APPLY-DESCRIBED-INLINE",
@@ -202,8 +224,8 @@ def _wrap_described(
         plan.buffer.wrap(
             reference.start,
             reference.end,
-            f"\\begin{{Described}}{{{alt}}}\n",
-            "\n\\end{Described}" + tail,
+            f"\\begin{{Described}}{{{alt}}}\n{indent}",
+            f"\n{indent}\\end{{Described}}" + tail,
             reason="figure alt text",
             rule="APPLY-DESCRIBED-BLOCK",
         )
@@ -227,11 +249,12 @@ def _wrap_placeholder(plan: ApplyPlan, reference: FigureRef) -> None:
     one; the worst case is a build failure naming the file and the figure.
     """
     marker = PLACEHOLDER.format(id=reference.id)
+    indent = _indent_of(plan, reference)
     if reference.is_raster or _continues_line(plan, reference):
         plan.buffer.wrap(
             reference.start,
             reference.end,
-            f"\\described{{{marker}}}{{%\n",
+            f"\\described{{{marker}}}{{%\n{indent}",
             "}",
             reason="undescribed figure marked for a human",
             rule="APPLY-PLACEHOLDER-INLINE",
@@ -240,19 +263,20 @@ def _wrap_placeholder(plan: ApplyPlan, reference: FigureRef) -> None:
         plan.buffer.wrap(
             reference.start,
             reference.end,
-            f"\\begin{{Described}}{{{marker}}}\n",
-            "\n\\end{Described}",
+            f"\\begin{{Described}}{{{marker}}}\n{indent}",
+            f"\n{indent}\\end{{Described}}",
             reason="undescribed figure marked for a human",
             rule="APPLY-PLACEHOLDER-BLOCK",
         )
 
 
 def _wrap_decorative(plan: ApplyPlan, reference: FigureRef) -> None:
+    indent = _indent_of(plan, reference)
     plan.buffer.wrap(
         reference.start,
         reference.end,
-        "\\begin{Decorative}\n",
-        "\n\\end{Decorative}",
+        f"\\begin{{Decorative}}\n{indent}",
+        f"\n{indent}\\end{{Decorative}}",
         reason="decorative graphic marked as an artifact",
         rule="APPLY-ARTIFACT",
     )

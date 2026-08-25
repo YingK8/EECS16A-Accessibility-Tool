@@ -69,6 +69,17 @@ stay cheap enough to run before every command.
 | `ALLY-SRC-042` | a line break straight after display math | yes — `\mbox{}` before the break |
 | `ALLY-SRC-043` | inline math opened with `\(` and closed with `$` | only when the span is really a formula |
 | `ALLY-SRC-044` | a line break straight after a question macro | no — the fix deletes a break, which moves the page |
+| `ALLY-SRC-045` | a blank line inside maths | yes — delete it; TeX ignores blank lines in maths |
+| `ALLY-SRC-046` | maths holding only spacing, `$\\$` | yes — unwrap it; the dollars add nothing |
+
+`ALLY-SRC-040` is listed as found but not fixed on a toolchain with
+`tagging=on`: the kernel handles it, and rewriting 667 sites would be churn.
+Measured at list depths 1, 2 and 3 — identical rendering *and* a correct
+structure tree (`L`, `LI`, `Lbl`, `LBody`). `ALLY-SRC-041` is deliberately
+still rewritten even though LaTeX now compiles it, because it is not only about
+compiling: `latex2mathml` reads the nested form as a 1x1 table wrapping a 2x3
+one, and the `/Alt` then says "the 1 by 1 matrix with entry the 2 by 3
+augmented matrix".
 
 Counts depend on scope, so quote one with the other. Over the profile's default
 scope (1,959 files: the live bank, sp26 and the exam archive) it is 107 / 14 /
@@ -95,6 +106,18 @@ rewritten, at 110 dpi, so the number is the rewrite alone:
 | `q_ct`, `q_ct_complex_exp_potpourri` | `040` x4 each | 0.0000% |
 | `q_syllabus` | `040` x5 | 0.0048% |
 
+`ALLY-SRC-045` and `046` were found by building the real corpus rather than by
+reading it, and both had been invisible for years:
+
+* **A blank line inside display maths** produced no PDF at all under tagging —
+  "Paragraph ended before \environment equation* was complete". Untagged it is
+  only "Missing $ inserted", recovered from, so 59 of them sat in the corpus
+  unnoticed. One assignment failed on this and now builds clean.
+* **`$\\$`** — a line break someone put dollars around — still becomes a tagged
+  Formula, and no alt text can describe a line break. It was the single
+  `ALLY-PDF-040` in sp26/hw/3's 179 formulas, and it was unfixable as a
+  description gap: a permanent false positive teaches people to skim the report.
+
 The 0.0048% is enumitem: `[label=...]` sizes the label box from the label,
 `\labelenumN` uses the standard `\labelwidth`, so one list indents by a hair.
 Two orders of magnitude below the 0.42% that deleting a line break costs, and
@@ -113,7 +136,7 @@ reads.
 | Mode | Means |
 |---|---|
 | `modern` | `tagging=on` works, and the PDF can declare PDF/UA |
-| `legacy testphase` | Documents get tagged, but nothing may claim conformance in the metadata. TeX Live 2025 lands here |
+| `legacy testphase` | Documents get tagged, but nothing may claim conformance in the metadata. Which installs land here changed with the TeX Live release that moved `pdfstandard` into `pdfmanagement.ltx`; T006 is what decides, and it reads both locations |
 | `unavailable` | A build would emit an untagged PDF, so the pipeline refuses to run |
 
 ## Exit codes

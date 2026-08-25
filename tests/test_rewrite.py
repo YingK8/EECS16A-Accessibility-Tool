@@ -221,3 +221,88 @@ def test_a_file_with_nothing_to_fix_is_left_byte_identical(tmp_path):
 
     assert not plan.changed
     assert plan.result() == text
+
+
+# ---------------------------------------------------------------------- #
+# ALLY-SRC-045
+# ---------------------------------------------------------------------- #
+
+
+def test_a_blank_line_inside_display_math_is_removed(tmp_path):
+    r"""Under tagging `\[` becomes an `equation*` whose argument a `\par` ends.
+
+    "Paragraph ended before \environment equation* was complete", and no PDF.
+    Untagged it is only "Missing $ inserted", recovered from, which is why the
+    corpus carried 59 of these unnoticed.
+    """
+    plan = plan_for(tmp_path, "\\[\n\\begin{bmatrix}\n1 & 2\n\n3 & 4\n\\end{bmatrix}\n\\]\n")
+
+    assert plan.counts() == {"ALLY-SRC-045": 1}
+    assert "1 & 2\n3 & 4" in plan.result()
+
+
+def test_a_blank_line_inside_inline_math_is_removed(tmp_path):
+    plan = plan_for(tmp_path, "Let $\\begin{bmatrix}a\\\\b\n\n\\end{bmatrix}$ be.\n")
+
+    assert plan.counts() == {"ALLY-SRC-045": 1}
+
+
+def test_a_paragraph_break_between_two_formulas_is_not_touched(tmp_path):
+    r"""The bug this test exists for, which was measured before it was caught.
+
+    A regex that scans from one `$` to the next cannot tell which `$` OPENS
+    math. On `$x$ prose\n\nmore prose $y$` it matched the *closing* dollar of
+    the first formula through the *opening* dollar of the second and deleted a
+    real paragraph break. One document lost a page; another stopped building.
+    Inline math is a toggle, so it has to be counted from the top of the file.
+    """
+    text = "Text $x$ and prose.\n\nA new paragraph with $y$ in it.\n\nAnd $z$ ends.\n"
+    plan = plan_for(tmp_path, text)
+
+    assert not plan.changed
+    assert plan.result() == text
+
+
+def test_an_odd_number_of_dollars_does_not_run_away(tmp_path):
+    """Unbalanced source must not make the scanner treat the rest as maths."""
+    plan = plan_for(tmp_path, "One $x lonely.\n\nA paragraph after it.\n")
+
+    assert not plan.changed
+
+
+def test_display_dollars_are_not_read_as_two_inline_delimiters(tmp_path):
+    plan = plan_for(tmp_path, "$$\nx\n$$\n\nprose after\n\n$$y$$\n")
+
+    assert not plan.changed
+
+
+def test_an_escaped_dollar_does_not_open_maths(tmp_path):
+    plan = plan_for(tmp_path, "A price of \\$5 today.\n\nAnd \\$6 tomorrow.\n")
+
+    assert not plan.changed
+
+
+# ---------------------------------------------------------------------- #
+# ALLY-SRC-046
+# ---------------------------------------------------------------------- #
+
+
+def test_maths_holding_only_spacing_is_unwrapped(tmp_path):
+    r"""`$\\$` is a line break someone put dollars around.
+
+    It still becomes a tagged Formula element, and no alt text can describe a
+    line break -- so ALLY-PDF-040 reports it forever and nothing can ever
+    satisfy it. A permanent false positive is worse than a silent one: it
+    teaches people to skim the report. Found as the single ALLY-PDF-040 in
+    sp26/hw/3's 179 formulas. Measured: the page is byte-identical unwrapped.
+    """
+    plan = plan_for(tmp_path, "Line one$\\\\$Line two and a$\\,$thin space.\n")
+
+    assert plan.counts() == {"ALLY-SRC-046": 2}
+    assert plan.result() == "Line one\\\\Line two and a\\,thin space.\n"
+
+
+def test_real_maths_is_never_unwrapped(tmp_path):
+    plan = plan_for(tmp_path, "Here $x + 1$ and $\\vec{i}$ and $\\alpha$ stay.\n")
+
+    assert not plan.changed

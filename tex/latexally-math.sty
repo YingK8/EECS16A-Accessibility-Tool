@@ -143,49 +143,70 @@
 %% assignment -- silently, leaving the maths spoken as glyphs again.
 %%
 %% Written out twice rather than mapped over {inline, display}: the plug body
-%% takes #2, and a mapped version has to survive both \AddToHook's and
-%% \clist_map_inline:nn's hash doubling to say so. Two copies of six lines is
-%% the cheaper thing to read at 3am.
+%% takes #2, and a mapped version would have to survive \clist_map_inline:nn's
+%% hash doubling to say so. Two copies of six lines is cheaper to read at 3am.
+%%
+%% The plugs are DEFINED here, at package load, and only ASSIGNED from
+%% begindocument. Defining them inside \AddToHook was the obvious shape and it
+%% was wrong: a `#' inside a hook argument is not a parameter reference by the
+%% time \socket_new_plug:nnn stores it, so the plug body ended up carrying a
+%% LITERAL `#2'. Every inline formula then raised
+%%
+%%   ! You can't use `macro parameter character #' in math mode.
+%%
+%% Doubling the hashes only doubles the literals -- `####2' produced two errors
+%% per formula instead of one. Defining at load time removes the nesting and
+%% the question with it.
+%%
+%% That bug shipped and passed the tests, because nonstop mode carries on: the
+%% PDF appeared, /Alt and /ActualText were both present, and the assertions
+%% checked those. It was caught by a corpus build, and only because 91 errors
+%% is hard to miss. tests/test_speech.py now asserts the log is clean.
 %%
 %% Guarded on the socket existing, so a latex-lab that moves this seam again
-%% degrades to "/Alt only" instead of failing the build. The gap still gets
-%% reported: the extraction assertion in tests/test_speech.py is what fails.
+%% degrades to "/Alt only" instead of failing the build.
+\socket_if_exist:nT { tagsupport/math/inline/formula/begin }
+  {
+    \socket_new_plug:nnn
+      { tagsupport/math/inline/formula/begin }
+      { latexally-speech }
+      {
+        \tagpdfparaOff
+        \__math_luamml_structelem:
+        \tag_socket_use:n { math/content }
+        \tag_socket_use:n { math/struct/begin }
+        \__latexally_math_reopen_mc:
+        #2
+        \tag_socket_use:n { math/end }
+      }
+  }
+\socket_if_exist:nT { tagsupport/math/display/formula/begin }
+  {
+    \socket_new_plug:nnn
+      { tagsupport/math/display/formula/begin }
+      { latexally-speech }
+      {
+        \tagpdfparaOff
+        \__math_luamml_structelem:
+        \tag_socket_use:n { math/content }
+        \tag_socket_use:n { math/struct/begin }
+        \__latexally_math_reopen_mc:
+        #2
+        \tag_socket_use:n { math/end }
+      }
+  }
+
+%% Assigned from begindocument, not at load time: latex-lab assigns its own
+%% `default' plug during \begin{document} setup and would overwrite an earlier
+%% assignment -- silently, leaving the maths spoken as glyphs again.
 \AddToHook{begindocument}
   {
     \socket_if_exist:nT { tagsupport/math/inline/formula/begin }
-      {
-        \socket_new_plug:nnn
-          { tagsupport/math/inline/formula/begin }
-          { latexally-speech }
-          {
-            \tagpdfparaOff
-            \__math_luamml_structelem:
-            \tag_socket_use:n { math/content }
-            \tag_socket_use:n { math/struct/begin }
-            \__latexally_math_reopen_mc:
-            ##2
-            \tag_socket_use:n { math/end }
-          }
-        \socket_assign_plug:nn
-          { tagsupport/math/inline/formula/begin } { latexally-speech }
-      }
+      { \socket_assign_plug:nn
+          { tagsupport/math/inline/formula/begin } { latexally-speech } }
     \socket_if_exist:nT { tagsupport/math/display/formula/begin }
-      {
-        \socket_new_plug:nnn
-          { tagsupport/math/display/formula/begin }
-          { latexally-speech }
-          {
-            \tagpdfparaOff
-            \__math_luamml_structelem:
-            \tag_socket_use:n { math/content }
-            \tag_socket_use:n { math/struct/begin }
-            \__latexally_math_reopen_mc:
-            ##2
-            \tag_socket_use:n { math/end }
-          }
-        \socket_assign_plug:nn
-          { tagsupport/math/display/formula/begin } { latexally-speech }
-      }
+      { \socket_assign_plug:nn
+          { tagsupport/math/display/formula/begin } { latexally-speech } }
   }
 
 \ExplSyntaxOff

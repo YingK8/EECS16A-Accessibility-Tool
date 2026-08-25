@@ -217,11 +217,24 @@ def test_tagging_off_emits_no_metadata(profile):
 
 
 def test_document_metadata_is_separated_to_lead_the_file(profile):
-    """It is only honoured as the first line; elsewhere the build is untagged."""
+    """It is only honoured as the FIRST line; elsewhere the build is untagged.
+
+    First, not alone: `\\AddToHook{file/.../before}` also has to sit above
+    `\\documentclass`, so the lead block holds more than one line now. What
+    still has to hold is the ordering.
+    """
     lines = preamble_for(RunConfig(), profile, TaggingMode.LEGACY_TESTPHASE)
     lead, rest = split_preamble(lines)
-    assert len(lead) == 1 and lead[0].startswith("\\DocumentMetadata")
+    assert lead and lead[0].startswith("\\DocumentMetadata")
     assert not any(line.startswith("\\DocumentMetadata") for line in rest)
+    # Everything else in the lead must be a hook, not a stray package line that
+    # would be read before \documentclass.
+    assert all(line.startswith("\\AddToHook") for line in lead[1:])
+    # And nothing that must lead may end up in `rest`, where it would be read
+    # after \documentclass and be useless.
+    assert not any(
+        line.startswith(("\\DocumentMetadata", "\\AddToHook")) for line in rest
+    )
 
 
 # ---------------------------------------------------------------------- #
@@ -247,3 +260,29 @@ def test_mirror_is_the_default_write_mode():
     assert Output().write_mode == "mirror"
     assert Output().in_place is False
     assert RunConfig().write is False
+
+
+def test_a_clashing_environment_is_saved_and_restored_not_merely_freed(profile):
+    r"""Freeing the name is not enough, and the first version did only that.
+
+    ee16.sty defines `proof` and then does `\let\proof\relax` itself, expecting
+    amsthm to supply one afterwards. Under `\DocumentMetadata` amsthm does not:
+    the kernel has already declared a tagged `proof`, so amsthm's own
+    `\newenvironment{proof}` is suppressed and the name is left `\relax`. A
+    document that merely LOADS ee16 then looks fixed, while every document that
+    actually writes `\begin{proof}` fails with "Environment proof undefined".
+    """
+    lines = preamble_for(RunConfig(), profile, TaggingMode.MODERN)
+    lead, _ = split_preamble(lines)
+    hooks = [line for line in lead if line.startswith("\\AddToHook")]
+
+    before = [h for h in hooks if "/before}" in h]
+    after = [h for h in hooks if "/after}" in h]
+    assert before and after, "both halves are needed; freeing alone is a silent gap"
+    assert len(before) == len(after) == 1, "a merge duplicated the hook"
+    # The before hook saves what the kernel defined before freeing it...
+    assert "\\let\\proof\\relax" in before[0]
+    assert "latexallykept" in before[0]
+    # ...and the after hook puts it back, undoing the package's own \let.
+    assert "latexallykept" in after[0]
+    assert "endproof" in after[0], "\\newenvironment defines both halves"

@@ -447,3 +447,59 @@ def test_question_tags_option_produces_h2(tmp_path_factory):
     structure = read_structure(work / "qtags.pdf")
     assert structure.heading_levels == [1, 2, 2, 2]
 
+
+
+# ---------------------------------------------------------------------- #
+# a course package that clashes with a name the kernel now defines
+# ---------------------------------------------------------------------- #
+
+
+def test_a_clashing_environment_still_works_where_it_is_used(tmp_path):
+    r"""The test the first `\proof` fix did not have, and needed.
+
+    Reproduces ee16.sty's exact shape: define `proof`, then `\let\proof\relax`
+    at the end, leaving amsthm to supply one. Under `\DocumentMetadata` the
+    kernel declares a tagged `proof` of its own, amsthm's is then suppressed,
+    and the package's own `\let` wipes the kernel's -- so the name ends up
+    `\relax` and `\begin{proof}` fails at the point of use.
+
+    A document that merely LOADS the package builds clean either way, which is
+    why freeing the name looked like a fix. This one USES the environment.
+    """
+    import subprocess
+
+    from latexally.build import preamble_for, split_preamble
+    from latexally.config import CorpusScope, EnginePolicy, Profile
+    from latexally.run import RunConfig
+    from latexally.toolchain import TaggingMode
+
+    if shutil.which("pdflatex") is None:
+        pytest.skip("pdflatex is not installed")
+
+    (tmp_path / "clash.sty").write_text(
+        "\\ProvidesPackage{clash}\n"
+        "\\newenvironment{proof}{\\par\\textbf{Proof}:}{QED}\n"
+        # The line that makes freeing insufficient.
+        "\\let\\proof\\relax\\let\\endproof\\relax\n"
+    )
+    profile = Profile(
+        name="t",
+        corpus=CorpusScope(root=tmp_path),
+        engine=EnginePolicy(unlet_before={"clash.sty": ("proof",)}),
+    )
+    lead, _ = split_preamble(preamble_for(RunConfig(), profile, TaggingMode.MODERN))
+    (tmp_path / "d.tex").write_text(
+        "\n".join(lead)
+        + "\n\\documentclass{article}\n\\usepackage{clash}\n\\usepackage{amsthm}\n"
+        "\\begin{document}\nBefore.\n\\begin{proof}\nA body.\n\\end{proof}\nAfter.\n"
+        "\\end{document}\n"
+    )
+    subprocess.run(
+        ["pdflatex", "-interaction=nonstopmode", "d.tex"],
+        cwd=tmp_path, capture_output=True, timeout=180, check=False,
+    )
+    log = (tmp_path / "d.log").read_text(encoding="utf-8", errors="replace")
+
+    assert "Environment proof undefined" not in log, log[-1200:]
+    assert "already defined" not in log, log[-1200:]
+    assert (tmp_path / "d.pdf").is_file(), "the document must still build"

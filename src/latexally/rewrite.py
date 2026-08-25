@@ -82,18 +82,51 @@ from pathlib import Path
 
 from .check.rules import (
     _ARRAY_IN_MATRIX,
+    _BLANK_IN_DISPLAY_BRACKET,
+    _BLANK_IN_DISPLAY_ENV,
     _BREAK_AFTER_DISPLAY,
+    _CONTENT_FREE_MATH,
     _ENUMITEM_LABEL,
     _ENUMITEM_STAR_MARGIN,
     _MISMATCHED_INLINE_MATH,
     _SETLIST_LABEL,
+    inline_math_spans,
 )
 from .texlex import EditBuffer, TexSource
 
-__all__ = ["RewritePlan", "Skipped", "plan_rewrites", "rewrite_files", "RULES"]
+__all__ = [
+    "FIXED_BY_TAGGING",
+    "RULES",
+    "RewritePlan",
+    "Skipped",
+    "plan_rewrites",
+    "rewrite_files",
+]
+
+#: Rules the LaTeX kernel itself now handles once `tagging=on` is available, so
+#: rewriting them is churn rather than repair.
+#:
+#: Measured on the kernel that introduced the switch, against the same document
+#: untagged, at list depths 1, 2 and 3: `[label=(\roman*)]` renders identically
+#: and the structure tree is right too -- `L`, `LI`, `Lbl`, `LBody` all present
+#: and correctly nested. So `\AllyEnumLabel` buys nothing there.
+#:
+#: **ALLY-SRC-041 is deliberately NOT in this set even though LaTeX compiles it
+#: now.** The rewrite is not only about compiling: `latex2mathml` reads the
+#: nested form as a 1x1 table wrapping a 2x3 one, and MathCAT then says "the 1
+#: by 1 matrix with entry the 2 by 3 augmented matrix". Inverting the nesting is
+#: what makes the `/Alt` say what the matrix is.
+FIXED_BY_TAGGING = frozenset({"ALLY-SRC-040"})
 
 #: The rules this module can fix, in the order a report should list them.
-RULES = ("ALLY-SRC-040", "ALLY-SRC-041", "ALLY-SRC-042", "ALLY-SRC-043")
+RULES = (
+    "ALLY-SRC-040",
+    "ALLY-SRC-041",
+    "ALLY-SRC-042",
+    "ALLY-SRC-043",
+    "ALLY-SRC-045",
+    "ALLY-SRC-046",
+)
 
 #: Matrix environment -> the delimiters ``\left``/``\right`` need to reproduce
 #: it. ``matrix`` itself has none, and ``\left.`` is how TeX spells that.
@@ -450,8 +483,65 @@ def _starred_lengths(plan: RewritePlan) -> None:
 # driving
 # ---------------------------------------------------------------------- #
 
+#: A run of newlines that makes a blank line, inside a display formula.
+_BLANK_LINE = re.compile(r"\n([ \t]*\n)+")
+
+
+def _blank_in_display(plan: RewritePlan) -> None:
+    r"""Collapse blank lines inside display math.
+
+    TeX ignores blank lines in maths, so deleting one cannot move the page --
+    and the line was never valid anyway. Untagged pdfLaTeX says "Missing $
+    inserted", recovers and still writes a PDF, which is exactly why 59 of
+    these are sitting in the corpus unnoticed. Under tagging the `\par` ends
+    the `equation*` argument and there is no PDF at all.
+    """
+    source = plan.source
+    for pattern in (_BLANK_IN_DISPLAY_BRACKET, _BLANK_IN_DISPLAY_ENV):
+        for match in pattern.finditer(source.masked):
+            fixed = False
+            # One display may hold more than one blank line; each is its own
+            # edit so the diff shows every line that moved.
+            for blank in _BLANK_LINE.finditer(source.masked, match.start(), match.end()):
+                plan.buffer.delete(
+                    blank.start() + 1,
+                    blank.end(),
+                    reason="a blank line ends the formula's argument under tagging",
+                    rule="ALLY-SRC-045",
+                )
+                fixed = True
+            if fixed:
+                plan._fixed("ALLY-SRC-045")
+    # Inline math is found by toggling, not by pattern: see inline_math_spans.
+    for start, end in inline_math_spans(source.masked):
+        body = source.text[start + 1 : end - 1]
+        if body.strip() and _CONTENT_FREE_MATH.match(body):
+            # Unwrap: drop the dollars, keep the spacing. Two end-splices, so
+            # the content is copied rather than rebuilt.
+            plan.buffer.delete(
+                start, start + 1, reason="spacing is not maths", rule="ALLY-SRC-046"
+            )
+            plan.buffer.delete(
+                end - 1, end, reason="spacing is not maths", rule="ALLY-SRC-046"
+            )
+            plan._fixed("ALLY-SRC-046")
+            continue
+        fixed = False
+        for blank in _BLANK_LINE.finditer(source.masked, start, end):
+            plan.buffer.delete(
+                blank.start() + 1,
+                blank.end(),
+                reason="a blank line breaks the formula in two",
+                rule="ALLY-SRC-045",
+            )
+            fixed = True
+        if fixed:
+            plan._fixed("ALLY-SRC-045")
+
+
 _PASSES = (
     _break_after_display,
+    _blank_in_display,
     _mismatched_inline_math,
     _array_in_matrix,
     _enumitem_label,
@@ -459,16 +549,29 @@ _PASSES = (
 )
 
 
-def plan_rewrites(path: Path) -> RewritePlan:
-    """Everything this module would change in one file, without writing it."""
+def plan_rewrites(path: Path, *, skip: frozenset[str] = frozenset()) -> RewritePlan:
+    """Everything this module would change in one file, without writing it.
+
+    ``skip`` names rules to leave alone -- see :data:`FIXED_BY_TAGGING`. A
+    skipped rule is dropped from the plan silently rather than recorded as a
+    :class:`Skipped`, because "your toolchain already handles this" is not a
+    finding a reader needs per site; ``doctor --tagging`` says it once.
+    """
     source = TexSource.from_path(path)
     plan = RewritePlan(path=Path(path), source=source, buffer=EditBuffer(Path(path)))
     for rewrite in _PASSES:
         rewrite(plan)
+    if skip:
+        plan.buffer.drop(lambda edit: edit.rule in skip)
+        plan.skipped = [item for item in plan.skipped if item.rule not in skip]
+        for rule in skip:
+            plan.sites.pop(rule, None)
     return plan
 
 
-def rewrite_files(paths: list[Path], *, write: bool = False) -> list[RewritePlan]:
+def rewrite_files(
+    paths: list[Path], *, write: bool = False, skip: frozenset[str] = frozenset()
+) -> list[RewritePlan]:
     """Plan -- and optionally apply -- rewrites across a set of files.
 
     Files that cannot be read are skipped rather than raised on: a corpus of
@@ -478,7 +581,7 @@ def rewrite_files(paths: list[Path], *, write: bool = False) -> list[RewritePlan
     plans: list[RewritePlan] = []
     for path in paths:
         try:
-            plan = plan_rewrites(Path(path))
+            plan = plan_rewrites(Path(path), skip=skip)
         except (OSError, UnicodeDecodeError, ValueError):
             continue
         if not plan.changed and not plan.skipped:

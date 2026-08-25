@@ -16,7 +16,7 @@ instruction to separate what they ran from what they read:
 |---|---|---|
 | Figure alt-text | WCAG/NCAM/DIAGRAM guidance, genre templates, deterministic extraction, critique of the prior tool | 31% of `\includegraphics` call sites are commented out, and the prior regex tool would uncomment and break them |
 | Math-to-speech | SRE, MathCAT, MathReader, axessibility, LaTeXML, MathJax | `latex-lab-math` ingests external MathML keyed by MD5 — so pdfLaTeX needs no engine change |
-| Toolchain & validation | LaTeX3 tagging state, the suppression mechanism, validators, Python libraries | TeX Live 2025 cannot declare PDF/UA at all; `pdfstandard` accepts only PDF/A values |
+| Toolchain & validation | LaTeX3 tagging state, the suppression mechanism, validators, Python libraries | Whether `pdfstandard=ua-1` is accepted depends on the install, and `doctor` T006 is what answers it — see § 11 |
 
 **What worked:** giving each agent a corpus to measure against rather than a
 question to answer in the abstract. Every one came back with counts from this
@@ -810,7 +810,7 @@ Each was invisible in isolation and each produced a plausible-looking result.
 
 2. **`math/alt/use` is off unless PDF/UA-1 is declared.** latex-lab clears
    `\l__math_content_alt_tl` after the content socket when the flag is false. On
-   TeX Live 2025, which cannot declare `ua-1`, that silently discards correct
+   an install that cannot declare `ua-1`, that silently discards correct
    speech. `latexally-math.sty` now sets the key explicitly.
 
 3. **expl3 discards literal spaces.** The generated table is read under
@@ -884,6 +884,38 @@ formula, which they are not. The other two are a block matrix inside `\pqty`
 inside an `align*` row: two levels of `\\` that the converter cannot
 disambiguate. **Of the 854 entries that are mathematics and convert to valid
 MathML, MathCAT speaks every one.**
+
+### The probe that read the wrong file
+
+`doctor` T006 reported "`\DocumentMetadata{pdfstandard=ua-1}` is NOT supported"
+on an install that accepts it perfectly well. The detail line gave it away —
+"this install accepts only: " with nothing after the colon, meaning the parser
+had found *no* standards rather than a list without `ua-1` in it.
+
+`document_metadata_capabilities` parses the installed sources rather than
+trusting release notes, which is the right instinct and is why § 1 exists. It
+still went wrong, because it parsed **one** file: the `pdfstandard` key has
+moved out of `documentmetadata-support.ltx` and into `pdfmanagement.ltx`.
+Reading both finds `ua-1`, `ua-2` and eighteen PDF/A and PDF/X values.
+
+The consequence was not cosmetic. `preamble_for` asks T006 whether the standard
+can be declared and omits `pdfstandard=ua-1` when it cannot, so **every PDF this
+tool built was missing its PDF/UA identification schema.** Measured with the
+veraPDF gate on the same document either way:
+
+| `\DocumentMetadata` | veraPDF findings |
+|---|---|
+| `tagging=on` alone | 2 — clause 5-1 (no PDF/UA identification schema), 7.1-10 (no DisplayDocTitle) |
+| `tagging=on,pdfstandard=ua-1` | **0** |
+
+Two things are worth taking from this. The first is that a probe of the
+*installed files* is only as good as its list of files, and a file that moves
+looks exactly like a capability that vanished. The second is that this is the
+mirror image of the failure mode § 1 is built around: a false **warning** rather
+than a false pass. It is the milder direction, but it still told course staff
+they could not claim conformance when they could, and it silently degraded
+every artefact for as long as it went unnoticed. `tests/test_toolchain.py` now
+pins both file locations.
 
 ### The ceiling
 

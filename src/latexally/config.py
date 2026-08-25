@@ -248,6 +248,17 @@ class EnginePolicy:
     latexmk_args: tuple[str, ...] = DEFAULT_LATEXMK_ARGS
     min_runs: int = 3
     timeout_seconds: int = 300
+    #: ``package.sty -> commands to \let \relax before it loads``.
+    #:
+    #: Turning tagging on makes the LaTeX kernel define things it did not
+    #: define before, and a course package that defines the same name then
+    #: dies with "Command \x already defined" -- on a source that has compiled
+    #: for years and still compiles untagged. It is purely conversion-induced,
+    #: so it is this tool's job to absorb it.
+    #:
+    #: Course-specific by nature, hence a profile key rather than a constant:
+    #: which package clashes depends entirely on whose macros they are.
+    unlet_before: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -409,6 +420,10 @@ def load_profile(
             name=str(engine_data.get("name", "pdflatex")),
             min_format_date=str(engine_data.get("min_format_date", "2025-06-01")),
             pdf_standard=str(engine_data.get("pdf_standard", "ua-1")),
+            unlet_before={
+                str(package): tuple(str(name) for name in names)
+                for package, names in (engine_data.get("unlet_before") or {}).items()
+            },
             pdf_version=str(engine_data.get("pdf_version", "1.7")),
             legacy_testphase=_as_tuple(
                 engine_data.get("legacy_testphase"), "engine.legacy_testphase"

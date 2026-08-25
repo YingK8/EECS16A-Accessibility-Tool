@@ -389,7 +389,13 @@ def _doctor_tagging(ctx: Context, scope: str | None, *, fix: bool, write: bool) 
     """
     from .build import require_clean_worktree
     from .check.rules import check_tagging
-    from .rewrite import RULES, plan_rewrites
+    from .rewrite import FIXED_BY_TAGGING, RULES, plan_rewrites
+    from .toolchain import TaggingMode, probe
+
+    # Which rules still need rewriting depends on the toolchain: `tagging=on`
+    # handles some of them itself, and rewriting those would be churn.
+    mode = probe(ctx.profile).tagging_mode
+    skip = FIXED_BY_TAGGING if mode is TaggingMode.MODERN else frozenset()
 
     if write:
         # The same guard `build --in-place` uses, and for the same reason: the
@@ -418,7 +424,7 @@ def _doctor_tagging(ctx: Context, scope: str | None, *, fix: bool, write: bool) 
         if not findings:
             continue
         try:
-            plan = plan_rewrites(path)
+            plan = plan_rewrites(path, skip=skip)
         except (OSError, UnicodeDecodeError, ValueError):
             continue
         for rule, sites in plan.counts().items():
@@ -467,12 +473,13 @@ def _doctor_tagging(ctx: Context, scope: str | None, *, fix: bool, write: bool) 
     table.add_column("Auto-fixable", justify="right")
     for rule in sorted(found, key=lambda r: (RULES.index(r) if r in RULES else 99, r)):
         auto = fixed.get(rule, 0)
-        table.add_row(
-            rule,
-            str(found[rule]),
-            str(len(files.get(rule, ()))),
-            f"[green]{auto}[/green]" if auto else "[yellow]0[/yellow]",
-        )
+        if rule in skip:
+            note = "[dim]handled by tagging=on[/dim]"
+        elif auto:
+            note = f"[green]{auto}[/green]"
+        else:
+            note = "[yellow]0[/yellow]"
+        table.add_row(rule, str(found[rule]), str(len(files.get(rule, ()))), note)
     console.print(table)
     console.print(
         "\n[dim]These are latex-lab limitations, not WCAG or PDF/UA rules. "

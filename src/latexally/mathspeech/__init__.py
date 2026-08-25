@@ -57,19 +57,21 @@ import html
 import json
 import re
 import subprocess
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..errors import LatexAllyError, MissingDependency
 
 __all__ = [
-    "Formula",
-    "read_dummy",
-    "convert",
-    "expand_macros",
-    "write_sources",
     "DRIVER",
     "RULES_DIR",
+    "Formula",
+    "convert",
+    "expand_macros",
+    "normalise_speech",
+    "read_dummy",
+    "write_sources",
 ]
 
 #: One `<div>` of the dummy file. latex-lab writes the source with `&` and `<`
@@ -134,9 +136,25 @@ _STARRED_MATRIX = re.compile(r"(\\(?:begin|end)\s*)\{([bBpvV]?matrix)\*\}(\s*\[[
 #: `\mat{` with `\mathbf{` never touches the braces, so it cannot mis-nest on
 #: `\mat{\vec{x}}` the way a `{([^{}]*)}` capture would.
 _MACRO_PREFIXES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\\mat\s*\{"), r"\\mathbf{"),
     (re.compile(r"\\wt\s*\{"), r"\\tilde{"),
 )
+
+#: A `\mat` argument that is a matrix *body* rather than a matrix *name*.
+#:
+#: The corpus uses the macro both ways, and the semesters disagree about which
+#: it is: 39 of 47 live definitions are `\mathbf{#1}`, five are
+#: `\begin{bmatrix}#1\end{bmatrix}`. Measured over every call, 11,279
+#: arguments are a name (`\mat{A}`, `\mat{V}`) and 1,199 are a body
+#: (`\mat{| & | \\ \vec{a}_1 & \vec{a}_2 \\ | & |}`).
+#:
+#: Expanding a body to `\mathbf{...}` produces invalid MathML and MathCAT
+#: refuses the whole formula, so it ships with no `/Alt` -- three of them in
+#: notes_sp21/note23 alone. Expanding a name to a bracketed environment would
+#: have the reader hear "the 1 by 1 matrix cap a" eleven thousand times.
+#:
+#: An `&` or a `\\` inside the argument can only be a body, so the content
+#: decides and neither reading has to be guessed at.
+_MATRIX_BODY = re.compile(r"&|\\\\")
 
 #: The argument-less ones, and the unit macros `siunitx` provides. `\SI{5}{\ohm}`
 #: is two arguments, so it is spelled out rather than prefixed.
@@ -153,6 +171,13 @@ _MACRO_WORDS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\\e\b(?![a-zA-Z])"), r"\\vec{e}"),
     (re.compile(r"\\dag\b"), r"\\dagger"),
     (re.compile(r"\\hdots\b"), r"\\cdots"),
+    # Transpose. MathCAT recognises `^T` as the transpose intent and says
+    # "transpose"; `^{\top}` reaches no such rule and comes out as the literal
+    # "superscript top". The corpus writes it the second way 11,345 times, and
+    # `\top` never appears outside a superscript there -- so in this material
+    # it always means transpose, and saying so is not a guess.
+    (re.compile(r"\^\s*\{\s*\\top\s*\}"), r"^{T}"),
+    (re.compile(r"\^\s*\\top\b"), r"^{T}"),
     # A rule drawn across a table cell. It is decoration; in speech it is noise.
     (re.compile(r"\\horzbar\b"), ""),
     # Delimiter sizing. The converter leaves `\big\{` as literal text, so the
@@ -166,6 +191,39 @@ _MACRO_WORDS: tuple[tuple[re.Pattern[str], str], ...] = (
 #: `/Alt`. `align*` produces the reading the author meant, nested inside
 #: `equation*` or not. **[verified]** both ways.
 _ALIGNED = re.compile(r"(\\(?:begin|end)\s*)\{aligned\}")
+
+#: `flalign` is `align` stretched to the margins -- the trailing `&` on each row
+#: is a spacing anchor, nothing more. The converter emits invalid MathML for it,
+#: MathCAT refuses, and the formula ships with no `/Alt`. Caught by
+#: ALLY-PDF-040 on a real build: one `flalign*` out of sp26/hw/5's 272 formulas.
+_FLALIGN = re.compile(r"(\\(?:begin|end)\s*)\{flalign(\*?)\}")
+
+#: `eqnarray` is `align`'s deprecated predecessor and the converter emits
+#: invalid MathML for it, so the formula ships with no `/Alt` at all. 48 sites
+#: in the live scope; it was the last ALLY-PDF-040 in sp26/hw/7.
+#:
+#: The two differ in column count: eqnarray is `lhs & rel & rhs`, align is
+#: `lhs & rel-and-rhs`. So the middle separator of each row has to go, and only
+#: the SECOND `&` of a row is the middle one.
+_EQNARRAY = re.compile(r"(\\(?:begin|end)\s*)\{eqnarray(\*?)\}")
+_EQNARRAY_BODY = re.compile(
+    r"(\\begin\s*\{eqnarray\*?\})(.*?)(\\end\s*\{eqnarray\*?\})", re.DOTALL
+)
+
+
+def _collapse_eqnarray_columns(body: str) -> str:
+    r"""Drop the middle column separator of every ``eqnarray`` row."""
+
+    def one(match: re.Match[str]) -> str:
+        rows = []
+        for row in re.split(r"\\\\", match.group(2)):
+            cells = row.split("&")
+            # `lhs & rel & rhs` -> `lhs & rel rhs`; anything else is left alone
+            # rather than guessed at.
+            rows.append(f"{cells[0]}&{' '.join(cells[1:])}" if len(cells) == 3 else row)
+        return match.group(1) + "\\\\".join(rows) + match.group(3)
+
+    return _EQNARRAY_BODY.sub(one, body)
 
 
 #: One-argument macros whose *closing* brace also has to change, so they cannot
@@ -249,6 +307,54 @@ def _expand_fence(body: str, name: str, opener: str, closer: str) -> str:
         index = end + 1
 
 
+def _expand_fence_by_content(body: str, name: str, choose) -> str:
+    r"""Like :func:`_expand_fence`, but the delimiters depend on the argument.
+
+    ``\mat`` is the only macro here that means two different things, and which
+    one it means is legible from the argument -- see :data:`_MATRIX_BODY`.
+    """
+    marker = "\\" + name
+    out: list[str] = []
+    index = 0
+    while True:
+        found = body.find(marker, index)
+        while found != -1 and body[found + len(marker) : found + len(marker) + 1].isalpha():
+            found = body.find(marker, found + 1)
+        if found == -1:
+            out.append(body[index:])
+            return "".join(out)
+        cursor = found + len(marker)
+        while cursor < len(body) and body[cursor] in " \t\n":
+            cursor += 1
+        if cursor >= len(body) or body[cursor] != "{":
+            out.append(body[index : found + len(marker)])
+            index = found + len(marker)
+            continue
+        depth = 0
+        end = cursor
+        while end < len(body):
+            char = body[end]
+            if char == "\\":
+                end += 2
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            end += 1
+        if depth != 0:  # unbalanced source; ALLY-PDF-041 reports what results
+            out.append(body[index : found + len(marker)])
+            index = found + len(marker)
+            continue
+        argument = body[cursor + 1 : end]
+        opener, closer = choose(argument)
+        out.append(body[index:found])
+        out.append(opener + argument + closer)
+        index = end + 1
+
+
 def expand_macros(body: str) -> str:
     """Expand the course macros ``latex2mathml`` would otherwise read as text.
 
@@ -259,12 +365,24 @@ def expand_macros(body: str) -> str:
     """
     for pattern, replacement in _MACRO_PREFIXES:
         body = pattern.sub(replacement, body)
+    if "\\mat" in body:
+        body = _expand_fence_by_content(
+            body,
+            "mat",
+            lambda arg: (
+                ("\\begin{bmatrix}", "\\end{bmatrix}")
+                if _MATRIX_BODY.search(arg)
+                else ("\\mathbf{", "}")
+            ),
+        )
     for name, (opener, closer) in _MACRO_FENCES.items():
         if "\\" + name in body:
             body = _expand_fence(body, name, opener, closer)
     for pattern, replacement in _MACRO_WORDS:
         body = pattern.sub(replacement, body)
     body = _ALIGNED.sub(r"\1{align*}", body)
+    body = _FLALIGN.sub(r"\1{align\2}", body)
+    body = _EQNARRAY.sub(r"\1{align\2}", _collapse_eqnarray_columns(body))
     return _SCRIPTED_MATRIX.sub(r"{\\begin{\1}\2\\end{\1}}", body)
 
 
@@ -318,6 +436,24 @@ class Formula:
         return _unwrap(self.tex)[1]
 
 
+#: A control sequence with `@` in its name -- ``\if@eqnstar``, ``\@currentHref``,
+#: ``\hyper@makecurrent``. Those are kernel and package internals, never author
+#: maths: outside ``\makeatletter`` an author cannot even write one.
+#:
+#: They reach the dummy file because latex-lab's ``write-dummy`` captures the
+#: *rendered source template*, and for a numbered ``eqnarray`` that template is
+#: hyperref's expanded label machinery rather than the formula. Seven of this
+#: corpus's 861 entries are that, and they are not equations at all.
+#:
+#: Dropping them is a correction, not a loss. They used to be rejected by
+#: MathCAT as invalid MathML, which looked like a limitation; once the
+#: ``eqnarray`` rewrite made them *convertible*, they started producing fluent
+#: nonsense instead -- "table with 4 rows and 2 columns; row 1; column 1;
+#: backslash if at sign e q n s t a r". A reader hears that as if it were the
+#: formula. No ``/Alt`` and an ``ALLY-PDF-040`` is the honest outcome.
+_INTERNAL_TEX = re.compile(r"\\[A-Za-z]*@")
+
+
 def read_dummy(path: Path) -> list[Formula]:
     """Parse ``<jobname>-mathml-dummy.html`` into unique formulas.
 
@@ -329,6 +465,9 @@ def read_dummy(path: Path) -> list[Formula]:
     formulas: dict[str, Formula] = {}
     for match in _ENTRY.finditer(text):
         digest = match.group("hash")
+        source = html.unescape(match.group("tex"))
+        if _INTERNAL_TEX.search(source):
+            continue
         existing = formulas.get(digest)
         if existing is not None:
             existing.count += 1
@@ -352,7 +491,7 @@ def _to_mathml(formula: Formula) -> str:
 #: Bumped whenever anything upstream of the speech string changes -- the macro
 #: table, the engine, its preferences, the fork's rules. It is stored in the
 #: cache and checked on read, because the cache key cannot see any of them.
-RECIPE = "mathcat-0.7.5+augmented-matrix/clearspeak/macros-1"
+RECIPE = "mathcat-0.7.5+augmented-matrix+temp-name/clearspeak/macros-4-matbody"
 
 #: Not a valid MD5, so it can never collide with a formula's hash.
 _RECIPE_KEY = "#recipe"
@@ -390,6 +529,10 @@ def _speak(pairs: list[tuple[str, str]], *, domain: str, timeout: int) -> dict[s
         text=True,
         timeout=timeout,
         cwd=REPO_ROOT,
+        # The driver's own exit code is checked below, and a non-zero one is
+        # reported with its stderr rather than raised as a CalledProcessError
+        # that loses it.
+        check=False,
     )
     if result.returncode != 0:
         raise LatexAllyError(
@@ -455,7 +598,14 @@ def convert(
 
     spoken = _speak(sorted(mathml.items()), domain=domain, timeout=timeout)
     for digest, markup in mathml.items():
-        if digest in spoken:
+        # Whitespace-only speech is not a result. `$\\\\$` -- a line break that
+        # ended up inside maths -- converts to a lone `<mspace linebreak>`, and
+        # MathCAT is right to say nothing about it. Recording that as a success
+        # writes an EMPTY token list, which makes `\tl_if_exist` true and ships
+        # `/Alt ()`. An empty /Alt is worse than none: it satisfies a naive
+        # "does every Formula have /Alt" check and says nothing to a reader.
+        # Dropped here instead, so ALLY-PDF-040 reports the gap.
+        if spoken.get(digest, "").strip():
             known[digest] = (markup, spoken[digest])
 
     if cache is not None:
@@ -466,6 +616,33 @@ def convert(
     return known
 
 
+def normalise_speech(text: str) -> str:
+    r"""Fold speech into characters pdfTeX can actually write.
+
+    MathCAT renders ``mathvariant="bold"`` by substituting the Unicode
+    mathematical-bold letters themselves, so ``$\textbf{vector projection}$``
+    comes back as ``\U0001D42F\U0001D41E...`` rather than as the words. Two
+    things go wrong with that. It is useless as speech, and every one of those
+    codepoints is four UTF-8 octets, which pdfTeX cannot encode -- the
+    generated token list then leaks LaTeX's own error text into the PDF:
+
+        Figure 1 shows ... known as \UTFvi ii@four@octets vector projection
+
+    That shipped on page 1 of sp26/hw/2, in a build the tool reported as clean
+    with zero errors, and no check saw it: they read the structure tree and the
+    /Alt coverage, never the page. ``ALLY-PDF-033`` reads the page now.
+
+    NFKC is the exact inverse of the substitution -- it maps every
+    mathematical-alphanumeric back to its base letter -- and it was measured to
+    clear all 8 non-ASCII characters MathCAT emits across this corpus's 861
+    formulas. Anything still outside the BMP after that is dropped rather than
+    written, because pdfTeX cannot encode it either; characters *inside* the
+    BMP are left alone, since those it handles and they may be meaningful.
+    """
+    folded = unicodedata.normalize("NFKC", text)
+    return "".join(char for char in folded if ord(char) <= 0xFFFF)
+
+
 def _escape_tex_string(text: str) -> str:
     """Make a speech string safe as a PDF string inside an expl3 token list.
 
@@ -474,6 +651,7 @@ def _escape_tex_string(text: str) -> str:
     string, where the only characters that matter are the ones that would end
     the argument or start a control sequence.
     """
+    text = normalise_speech(text)
     for char in ("\\", "{", "}", "#", "%", "$", "&", "_", "^", "~"):
         text = text.replace(char, " ")
     # `~` and not " ": the generated table is read under \ExplSyntaxOn, where a

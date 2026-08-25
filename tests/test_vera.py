@@ -9,9 +9,6 @@ is a list, not a dict.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 import pytest
 
 from latexally.check.rules import Severity
@@ -182,3 +179,77 @@ def test_real_verapdf_agrees_with_the_captured_shape(tmp_path):
     # The shape is being read, not just the presence of output: a clause and a
     # test number came back for every finding.
     assert all(f.data.get("clause") and f.data.get("test") for f in findings)
+
+
+# ---------------------------------------------------------------------- #
+# ALLY-PDF-033 -- macro internals drawn on the page
+# ---------------------------------------------------------------------- #
+
+
+def test_typeset_macro_internals_are_reported(tmp_path):
+    r"""The check that exists because every other check missed ulem.
+
+    sp26/hw/7 passed the structure tier with 353 Formula elements, correct
+    nesting and 56 bookmarks, while page 10 read "bold cap a is
+    1000cmd/emph/after0block upper triangular". The tiers read the structure
+    tree and the /Alt coverage; none of them read the page.
+    """
+    import shutil
+    import subprocess
+
+    from latexally.check.rules import _typeset_internals
+
+    if shutil.which("pdflatex") is None:
+        pytest.skip("pdflatex is not installed")
+    pytest.importorskip("pymupdf", reason="reading the page needs PyMuPDF")
+
+    # Six lines reproduce it: \DocumentMetadata alone is the trigger, not
+    # tagging -- ulem redefines \emph as a zero-argument macro and LaTeX's
+    # command hooks then separate \uline from its argument.
+    (tmp_path / "u.tex").write_text(
+        "\\DocumentMetadata{lang=en-US,pdfversion=1.7}\n"
+        "\\documentclass{article}\n"
+        "\\usepackage{ulem}\n"
+        "\\begin{document}\nText is \\emph{emphasised here}, done.\n\\end{document}\n"
+    )
+    subprocess.run(
+        ["pdflatex", "-interaction=nonstopmode", "u.tex"],
+        cwd=tmp_path, capture_output=True, timeout=180, check=False,
+    )
+    pdf = tmp_path / "u.pdf"
+    if not pdf.is_file():
+        pytest.skip("pdflatex produced no PDF")
+
+    findings = _typeset_internals(pdf, "u.tex")
+
+    assert findings, "ulem's internals on the page must be reported"
+    assert findings[0].rule == "ALLY-PDF-033"
+    assert "cmd/emph/after" in findings[0].message
+
+
+def test_a_clean_page_reports_nothing(tmp_path):
+    """No false positives on ordinary prose, including a real backslash word."""
+    import shutil
+    import subprocess
+
+    from latexally.check.rules import _typeset_internals
+
+    if shutil.which("pdflatex") is None:
+        pytest.skip("pdflatex is not installed")
+    pytest.importorskip("pymupdf", reason="reading the page needs PyMuPDF")
+
+    (tmp_path / "c.tex").write_text(
+        "\\DocumentMetadata{lang=en-US,pdfversion=1.7}\n"
+        "\\documentclass{article}\n\\usepackage{ulem}\\normalem\n"
+        "\\renewcommand{\\emph}[1]{\\uline{#1}}\n"
+        "\\begin{document}\nText is \\emph{emphasised here}, done.\n\\end{document}\n"
+    )
+    subprocess.run(
+        ["pdflatex", "-interaction=nonstopmode", "c.tex"],
+        cwd=tmp_path, capture_output=True, timeout=180, check=False,
+    )
+    pdf = tmp_path / "c.pdf"
+    if not pdf.is_file():
+        pytest.skip("pdflatex produced no PDF")
+
+    assert _typeset_internals(pdf, "c.tex") == []

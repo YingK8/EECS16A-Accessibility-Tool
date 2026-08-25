@@ -639,3 +639,31 @@ def test_clean_log_reports_no_tounicode_warning(tmp_path):
     log.write_text("Output written on doc.pdf (1 page).\n", encoding="utf-8")
 
     assert _log_findings(log) == ([], [])
+
+
+def test_enumitem_shortlabels_and_series_are_reported(tmp_path):
+    r"""ALLY-SRC-040 for the two spellings that carry no counter macro.
+
+    The patterns above this one all look for a counter -- `label=(\roman*)` or
+    `leftmargin=*`. Two enumitem features are dropped by the same mechanism and
+    match none of them: the *shortlabels* spelling `[(A)]`, which is `label=`
+    without the key, and `series=`/`resume=`, which carry numbering across
+    lists. Both renumber silently, with no error anywhere in the log, and
+    `series=` is the largest exposure in the corpus.
+
+    Bare keywords such as `[nosep]` are not shortlabels and must not be flagged.
+    """
+    from latexally.check.rules import Severity, check_tagging
+
+    source = tmp_path / "q.tex"
+    source.write_text(
+        "\\begin{enumerate}[(A)]\n\\item one\n\\end{enumerate}\n"
+        "\\begin{enumerate}[series=qn]\n\\item two\n\\end{enumerate}\n"
+        "\\begin{enumerate}[resume=qn]\n\\item three\n\\end{enumerate}\n"
+        "\\begin{itemize}[nosep]\n\\item not a shortlabels spec\n\\end{itemize}\n"
+    )
+
+    findings = [f for f in check_tagging(source) if f.rule == "ALLY-SRC-040"]
+
+    assert [f.line for f in findings] == [1, 4, 7], "[nosep] is a bare keyword"
+    assert all(f.severity == Severity.ERROR for f in findings)

@@ -769,6 +769,49 @@
   }
 
 %% ---------------------------------------------------------------------- %%
+%% ulem: keep the underline, lose the garbage
+%% ---------------------------------------------------------------------- %%
+%%
+%% `\DocumentMetadata' alone -- no tagging, no testphase -- makes a document
+%% that loads `ulem' typeset ulem's own internals into the page:
+%%
+%%     Text is 1000cmd/emph/after0emphasised here, done.
+%%
+%% Six lines reproduce it: \DocumentMetadata, \documentclass, \usepackage{ulem},
+%% one \emph. Six LaTeX errors, the first "Missing \endcsname inserted" with
+%% "<to be read again> \xdef", and that text on the page. **[verified]** on
+%% three pages of two real sp26/hw/7 PDFs before it was found -- and NOT found
+%% by the checks, which read the structure tree and the /Alt coverage and never
+%% looked at what the page actually said.
+%%
+%% Mechanism: ulem's \ULforem redefines \emph as a ZERO-argument macro
+%% expanding to \uline, relying on \uline to grab the following group itself.
+%% `\DocumentMetadata' switches on LaTeX's generic command hooks, which wrap
+%% \emph's replacement text -- putting \UseHookWithArguments{cmd/emph/after}{0}
+%% between \uline and its argument. \uline underlines the hook call,
+%% \UseHookWithArguments builds a \csname, and expansion runs into the
+%% \xdef\UL@spfactor in ulem.sty. \uline{x} written directly is fine; it is the
+%% hook wrapper around a zero-argument \emph that breaks.
+%%
+%% So give \emph the argument the hook mechanism expects it to have. Measured
+%% against the untagged original at 110 dpi:
+%%
+%%     \normalem alone (\emph back to italic)   0.0764% of pixels
+%%     this, keeping the underline              0.0000%
+%%
+%% Underlining for emphasis is poor practice -- underline conventionally means
+%% a link -- but that is the course's call, not something to change by way of a
+%% bug fix. This keeps the page byte-identical.
+%%
+%% `package/ulem/after' rather than \@ifpackageloaded: the hook fires whenever
+%% ulem loads, so a driver that loads it after this package is covered too.
+\AddToHook{package/ulem/after}
+  {
+    \normalem
+    \renewcommand{\emph}[1]{\uline{#1}}
+  }
+
+%% ---------------------------------------------------------------------- %%
 %% Enumerate labels that survive tagging
 %% ---------------------------------------------------------------------- %%
 %%

@@ -136,6 +136,51 @@ def preamble_for(
             keys.append("testphase={" + ",".join(engine.legacy_testphase) + "}")
         lines.append("\\DocumentMetadata{" + ",".join(keys) + "}")
 
+        # Turning tagging on makes the kernel define names it did not define
+        # before, and a course package that defines the same name then dies with
+        # "Command \\proof already defined" -- on source that has compiled for
+        # years and still compiles untagged. Measured: it took out every
+        # document that loads ee16.sty.
+        #
+        # Freeing the name before the package loads is NOT enough, and the
+        # first version of this did only that. ee16.sty defines `proof' at line
+        # 22 and then does `\\let\\proof\\relax' itself at line 365, expecting
+        # amsthm to supply one afterwards. Under \\DocumentMetadata amsthm does
+        # not: the kernel has already declared a tagged `proof', so amsthm's own
+        # `\\newenvironment{proof}' is suppressed and the name is left \\relax.
+        # Every document that actually writes \\begin{proof} then failed with
+        # "Environment proof undefined" -- 60 files in this corpus. Freeing the
+        # name only changed which error you got, which is why a build of a
+        # document that merely *loads* ee16 looked fixed.
+        #
+        # So: save what the kernel defined, free it so the course package's own
+        # definition does not error, and restore it afterwards. **[verified]**
+        # the kernel's tagged `proof' and amsthm's render identically.
+        #
+        # The hook has to be installed before the package is read, and it cannot
+        # live in latexally-ee16.sty, which loads after it. It also cannot be
+        # inserted between \\documentclass and the course \\usepackage, because a
+        # shared preamble brings both in from the same included file. So it
+        # leads the document, beside \\DocumentMetadata.
+        for package, names in sorted(engine.unlet_before.items()):
+            if not names:
+                continue
+            slug = re.sub(r"[^A-Za-z]", "", package)
+            saves, restores = [], []
+            for name in names:
+                for command in (name, f"end{name}"):
+                    keep = f"latexallykept{slug}{command}"
+                    saves.append(
+                        f"\\expandafter\\let\\csname {keep}\\expandafter\\endcsname"
+                        f"\\csname {command}\\endcsname\\let\\{command}\\relax"
+                    )
+                    restores.append(
+                        f"\\expandafter\\let\\csname {command}\\expandafter\\endcsname"
+                        f"\\csname {keep}\\endcsname"
+                    )
+            lines.append(f"\\AddToHook{{file/{package}/before}}{{{''.join(saves)}}}")
+            lines.append(f"\\AddToHook{{file/{package}/after}}{{{''.join(restores)}}}")
+
     # Which of our packages is loaded governs which of our macros may be used.
     # Emitting \accesssetup with neither loaded is an undefined control sequence
     # -- and one that a naive log scan reports as a clean build, because pdflatex
@@ -202,14 +247,22 @@ def preamble_for(
     return lines
 
 
-def split_preamble(lines: list[str]) -> tuple[list[str], list[str]]:
-    """Separate the lines that must lead the file from the rest.
+#: Lines that have to sit above ``\documentclass``, in this order.
+#:
+#: ``\DocumentMetadata`` is only honoured as the *first* line of the document;
+#: anywhere else the kernel ignores it and the build is silently untagged.
+#:
+#: ``\AddToHook{file/…/before}`` has to lead for a different reason: it must be
+#: installed before the package it guards is read, and for a shared preamble the
+#: course ``\usepackage`` and ``\documentclass`` arrive in the same included
+#: file, so there is no line between them to insert at.
+_LEADING = ("\\DocumentMetadata", "\\AddToHook")
 
-    ``\\DocumentMetadata`` is only honoured as the first line of the document;
-    anywhere else the kernel ignores it and the build is silently untagged.
-    """
-    first = [line for line in lines if line.startswith("\\DocumentMetadata")]
-    rest = [line for line in lines if not line.startswith("\\DocumentMetadata")]
+
+def split_preamble(lines: list[str]) -> tuple[list[str], list[str]]:
+    """Separate the lines that must lead the file from the rest."""
+    first = [line for line in lines if line.startswith(_LEADING)]
+    rest = [line for line in lines if not line.startswith(_LEADING)]
     return first, rest
 
 
@@ -330,7 +383,9 @@ def _alt_text_failures(pdf: Path, config: RunConfig) -> list[str]:
     ]
 
 
-def rewrite_incompatibilities(prepared: Prepared) -> dict[str, int]:
+def rewrite_incompatibilities(
+    prepared: Prepared, *, mode: TaggingMode | None = None
+) -> dict[str, int]:
     """Fix the constructs tagging cannot compile, in the MIRROR.
 
     Runs before :func:`apply_descriptions` rather than beside it, so the two
@@ -344,15 +399,19 @@ def rewrite_incompatibilities(prepared: Prepared) -> dict[str, int]:
     it is compiled unconverted for the visual diff, and rewriting it would make
     the comparison measure this tool against itself.
     """
-    from ..rewrite import rewrite_files
+    from ..rewrite import FIXED_BY_TAGGING, rewrite_files
 
+    # On a toolchain with `tagging=on` the kernel already handles some of these,
+    # and rewriting them would be 667 edits of churn per run. Measured, not
+    # assumed: see FIXED_BY_TAGGING.
+    skip = FIXED_BY_TAGGING if mode is TaggingMode.MODERN else frozenset()
     files = [
         path
         for path in relative_dependencies(prepared.driver)
         if path.suffix.lower() == ".tex" and not path.stem.endswith("-original")
     ]
     counts: dict[str, int] = {}
-    for plan in rewrite_files(files, write=True):
+    for plan in rewrite_files(files, write=True, skip=skip):
         for rule, sites in plan.counts().items():
             counts[rule] = counts.get(rule, 0) + sites
     return counts
@@ -1183,7 +1242,7 @@ def build_assignment(
     # latex-lab's default alt: the source file name, read aloud verbatim.
     # Before the descriptions: a document that cannot compile has no figures to
     # describe, and three of the four constructs below produce no PDF at all.
-    report.rewrites = rewrite_incompatibilities(prepared)
+    report.rewrites = rewrite_incompatibilities(prepared, mode=probe(profile).tagging_mode)
     report.described = apply_descriptions(prepared, config, profile)
     return _compile_assignment(prepared, report, assignment, config, profile, variant, compare)
 

@@ -427,6 +427,33 @@ _ENUMITEM_STAR_MARGIN = re.compile(
     r"(?:leftmargin|labelwidth|labelsep|widest)\s*=\s*\*"
 )
 
+#: enumitem's *shortlabels* spelling: `\begin{enumerate}[(A)]` instead of
+#: `[label=(\Alph*)]`. It is the same feature by a shorter name and it is
+#: dropped by the same mechanism, but nothing above matches it -- there is no
+#: `label=` and no counter macro to see. 435 uses in this corpus, every one of
+#: them silently renumbered to `1. 2. 3.` with no error anywhere in the log.
+#:
+#: Recognised by exclusion: a bracket argument holding no `=` at all is either
+#: a shortlabels spec or one of enumitem's bare keywords, and the keywords are
+#: a short closed list.
+_ENUMITEM_SHORTLABEL = re.compile(
+    r"\\begin\s*\{(?:enumerate|itemize|description)\}\s*\[\s*"
+    r"(?!(?:resume\*?|nosep|noitemsep|wide|left|nolistsep)\s*\])"
+    r"([^\]=]+)\]"
+)
+
+#: `series=`/`resume=` carry numbering ACROSS lists: an assignment opens
+#: `[series=qn]`, writes prose, and continues with `[resume=qn]` so the second
+#: list starts at 3. Under tagging the key is dropped and it starts at 1 again.
+#:
+#: This is the largest exposure in the corpus -- 812 `series` and 90 `resume` --
+#: and the most damaging, because the failure is a *plausible* number. A reader
+#: gets question 1 twice and nothing anywhere says so.
+_ENUMITEM_SERIES = re.compile(
+    r"\\begin\s*\{(?:enumerate|itemize|description)\}\s*\[[^\]]*"
+    r"\b(series|resume)\b"
+)
+
 #: A tabular-family environment nested inside a matrix environment. Measured on
 #: sp26/hw/13: `\begin{bmatrix}\begin{array}{r}` gives "Paragraph ended before
 #: ... was complete", "Misplaced \crcr" and four more, and no PDF.
@@ -498,6 +525,82 @@ def _darken_hint(
     )
 
 
+#: Display math environments whose body a blank line must not interrupt.
+_DISPLAY_ENVS = "equation|align|gather|multline|eqnarray|flalign"
+
+#: A blank line inside display math. Invalid LaTeX either way -- untagged
+#: pdfLaTeX says "Missing $ inserted", recovers, and still writes a PDF, which
+#: is why the corpus has carried 59 of these without anyone noticing. Under
+#: tagging `\[` becomes an `equation*` environment whose argument a `\par`
+#: ends: "Paragraph ended before \environment equation* was complete", and no
+#: PDF at all.
+#:
+#: Both patterns refuse to cross their own closing delimiter, so a blank line
+#: BETWEEN two display formulas -- which is ordinary and correct -- is not
+#: matched.
+_BLANK_IN_DISPLAY_BRACKET = re.compile(
+    r"\\\[(?:(?!\\\]).)*?\n[ \t]*\n(?:(?!\\\]).)*?\\\]", re.DOTALL
+)
+#: A blank line inside `$…$`. NOT tagging-specific -- it gives "Missing $
+#: inserted" tagged and untagged alike, and both still write a PDF -- but it is
+#: the same construct, the same one-line fix, and two real errors in every log
+#: that carries it.
+#:
+#: This cannot be a regex, and the attempt was a real bug: a pattern that scans
+#: from one `$` to the next has no idea which of them OPENS math. Applied to
+#: `$x$ prose\n\nmore prose $y$` it matches the closing `$` of the first
+#: formula through the opening `$` of the second, and "fixing" it deletes a
+#: genuine paragraph break. Measured before it was caught: one document lost a
+#: page and another stopped building.
+#:
+#: Inline math mode is a toggle, so the only way to know is to count from the
+#: start of the file.
+_BLANK_LINE_RUN = re.compile(r"\n[ \t]*\n")
+
+#: Inline math holding nothing but spacing -- `$\\$`, `$\,$`. It still becomes a
+#: tagged Formula element, and there is no alt text for a thin space, so
+#: ALLY-PDF-040 reports it forever and no description can ever satisfy it. A
+#: permanent false positive is worse than a silent one: it teaches people to
+#: skim the report.
+_CONTENT_FREE_MATH = re.compile(r"\A\s*(?:\\\\|\\newline\b|\\,|\\;|\\ |~|\s)+\s*\Z")
+
+
+def inline_math_spans(masked: str) -> list[tuple[int, int]]:
+    """``(start, end)`` of every `$…$`, by toggling from the top of the file.
+
+    Operates on ``TexSource.masked``, so comments and verbatim are already
+    blanked and cannot flip the toggle. `$$` is display math and is skipped as
+    a pair; `\\$` is consumed with its backslash.
+    """
+    spans: list[tuple[int, int]] = []
+    index = 0
+    opened: int | None = None
+    length = len(masked)
+    while index < length:
+        char = masked[index]
+        if char == "\\":
+            index += 2
+            continue
+        if char == "$":
+            if index + 1 < length and masked[index + 1] == "$":
+                index += 2
+                continue
+            if opened is None:
+                opened = index
+            else:
+                spans.append((opened, index + 1))
+                opened = None
+        index += 1
+    return spans
+
+
+_BLANK_IN_DISPLAY_ENV = re.compile(
+    r"\\begin\s*\{(" + _DISPLAY_ENVS + r")\*?\}(?:(?!\\end\s*\{\1\*?\}).)*?"
+    r"\n[ \t]*\n(?:(?!\\end\s*\{\1\*?\}).)*?\\end\s*\{\1\*?\}",
+    re.DOTALL,
+)
+
+
 def check_tagging(path: Path, *, name: str | None = None) -> list[Finding]:
     r"""Constructs LaTeX's tagging cannot compile. **Not** accessibility rules.
 
@@ -543,6 +646,8 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
         (_ENUMITEM_LABEL, "a counter in the list's own label option"),
         (_SETLIST_LABEL, "a counter in a \\setlist label"),
         (_ENUMITEM_STAR_MARGIN, "a starred length such as leftmargin=*"),
+        (_ENUMITEM_SHORTLABEL, "a shortlabels spec such as [(A)]"),
+        (_ENUMITEM_SERIES, "series= or resume=, which carry numbering between lists"),
     ):
         for match in pattern.finditer(source.masked):
             findings.append(
@@ -610,6 +715,78 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 ),
             )
         )
+    for pattern, where, effect in (
+        (
+            _BLANK_IN_DISPLAY_BRACKET,
+            "display",
+            "under tagging this fails with \"Paragraph ended before "
+            "\\environment equation* was complete\" and produces no PDF",
+        ),
+        (
+            _BLANK_IN_DISPLAY_ENV,
+            "display",
+            "under tagging this fails with \"Paragraph ended before "
+            "\\environment equation* was complete\" and produces no PDF",
+        ),
+    ):
+        for match in pattern.finditer(source.masked):
+            findings.append(
+                Finding(
+                    rule="ALLY-SRC-045",
+                    severity=Severity.ERROR,
+                    message=f"blank line inside {where} math; {effect}",
+                    file=name,
+                    line=source.line_of(match.start()),
+                    standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
+                    hint=(
+                        "delete the blank line. It was never valid -- untagged "
+                        "pdfLaTeX reports \"Missing $ inserted\", recovers and "
+                        "still writes a PDF, which is why this has gone unnoticed. "
+                        "TeX ignores blank lines in math, so removing it changes "
+                        "nothing on the page"
+                    ),
+                )
+            )
+    for start, end in inline_math_spans(source.masked):
+        body = source.text[start + 1 : end - 1]
+        if body.strip() and _CONTENT_FREE_MATH.match(body):
+            findings.append(
+                Finding(
+                    rule="ALLY-SRC-046",
+                    severity=Severity.ERROR,
+                    message=(
+                        f"inline math holding only spacing ({body.strip()!r}); it "
+                        "still becomes a tagged Formula, and no alt text can "
+                        "describe a line break"
+                    ),
+                    file=name,
+                    line=source.line_of(start),
+                    standard="broken source (not a WCAG or PDF/UA rule)",
+                    hint=(
+                        "take the spacing out of the maths -- the dollars add "
+                        "nothing. Measured: the page is byte-identical either way"
+                    ),
+                )
+            )
+        if _BLANK_LINE_RUN.search(source.masked, start, end):
+            findings.append(
+                Finding(
+                    rule="ALLY-SRC-045",
+                    severity=Severity.ERROR,
+                    message=(
+                        "blank line inside inline math; this raises \"Missing $ "
+                        "inserted\" twice, tagged or not, and the formula is "
+                        "silently broken in two"
+                    ),
+                    file=name,
+                    line=source.line_of(start),
+                    standard="broken source (not a WCAG or PDF/UA rule)",
+                    hint=(
+                        "delete the blank line. TeX ignores blank lines in maths, "
+                        "so removing it changes nothing on the page"
+                    ),
+                )
+            )
     for match in _BREAK_AFTER_HEADING.finditer(source.masked):
         findings.append(
             Finding(
@@ -830,6 +1007,74 @@ def _bookmark_navigation(structure, name: str) -> list[Finding]:
     return findings
 
 
+#: Fragments of LaTeX/package internals that reached the PAGE instead of doing
+#: their job. Each is a literal string observed in a shipped PDF.
+#:
+#: `cmd/<name>/before` and `cmd/<name>/after` are LaTeX's generic command-hook
+#: names. They appear as text when a package redefines a command as a
+#: zero-argument macro and the hook wrapper then separates it from its argument
+#: -- ulem's `\emph` under `\DocumentMetadata` is the case that prompted this,
+#: and it put "1000cmd/emph/after0Interpretation:" on three pages of two real
+#: solution sets.
+_TYPESET_INTERNALS = re.compile(
+    r"cmd/[A-Za-z@]+/(?:before|after)"
+    r"|\\[A-Za-z@]{3,}\b"
+    r"|__[a-z]+_[a-z_]+:[a-zA-Z]*"
+    r"|\bUL@[A-Za-z]+"
+)
+
+
+def _typeset_internals(pdf_path: Path, name: str) -> list[Finding]:
+    """Macro internals that ended up drawn on the page.
+
+    This exists because the rest of this tier did not catch ulem: every
+    structural check passed -- 353 Formula elements, correct nesting, 56
+    bookmarks, one missing /Alt -- while the page itself read
+    "bold cap a is 1000cmd/emph/after0block upper triangular". The checks read
+    the structure tree and the /Alt coverage and never read the page.
+
+    A reader hears this, and a sighted reader sees it. It is the same failure
+    class ``doctor`` is built around, one layer further along: everything
+    reports success and the artefact is wrong.
+    """
+    try:
+        import pymupdf
+    except ImportError:  # pragma: no cover - degrades like every other extra
+        return []
+    findings: list[Finding] = []
+    try:
+        document = pymupdf.open(pdf_path)
+    except Exception:  # pragma: no cover
+        return []
+    with document:
+        for number, page in enumerate(document, start=1):
+            text = page.get_text()
+            match = _TYPESET_INTERNALS.search(text)
+            if match is None:
+                continue
+            start = max(0, match.start() - 40)
+            findings.append(
+                Finding(
+                    "ALLY-PDF-033",
+                    Severity.ERROR,
+                    (
+                        f"page {number} has macro internals typeset into it: "
+                        f"{match.group(0)!r}"
+                    ),
+                    file=name,
+                    line=number,
+                    standard="broken output (not a WCAG or PDF/UA rule)",
+                    hint=(
+                        "a package redefined a command in a way LaTeX's command "
+                        "hooks then broke; the text is drawn on the page and read "
+                        "aloud. See the ulem note in latexally-core.sty"
+                    ),
+                    data={"context": " ".join(text[start : match.end() + 40].split())},
+                )
+            )
+    return findings
+
+
 def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> list[Finding]:
     """Assert the structural contract on a built PDF."""
     from .content import read_page_content
@@ -1002,6 +1247,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
         )
 
     findings.extend(_bookmark_navigation(structure, name))
+    findings.extend(_typeset_internals(pdf_path, name))
 
     # The Described contract, checked on the artefact rather than trusted.
     for page in range(structure.page_count):

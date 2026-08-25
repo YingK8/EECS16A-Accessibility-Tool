@@ -294,7 +294,9 @@ def test_a_superscripted_matrix_is_wrapped_before_conversion():
 
     wrapped = expand_macros(r"\begin{bmatrix}1 & 2\end{bmatrix}^{\top}")
 
-    assert wrapped == r"{\begin{bmatrix}1 & 2\end{bmatrix}}^{\top}"
+    # `^{\top}` is normalised to `^{T}` on the way past -- see
+    # test_transpose_is_spelled_the_way_the_engine_recognises_it.
+    assert wrapped == r"{\begin{bmatrix}1 & 2\end{bmatrix}}^{T}"
     # Unscripted, it must be left exactly as it was.
     assert expand_macros(r"\begin{bmatrix}1 & 2\end{bmatrix}") == (
         r"\begin{bmatrix}1 & 2\end{bmatrix}"
@@ -311,7 +313,7 @@ def test_a_transposed_matrix_actually_speaks():
 
     assert formula.hash in results, "a transposed matrix produced no speech at all"
     speech = results[formula.hash][1]
-    assert "matrix" in speech and "top" in speech, speech
+    assert "matrix" in speech and "transpose" in speech, speech
 
 
 def test_the_cache_is_discarded_when_the_conversion_recipe_changes(tmp_path: Path):
@@ -338,3 +340,166 @@ def test_the_cache_is_discarded_when_the_conversion_recipe_changes(tmp_path: Pat
     cache.write_text(json.dumps(stored))
 
     assert convert(formulas, cache=cache) == first
+
+
+def test_transpose_is_spelled_the_way_the_engine_recognises_it():
+    r"""`^{\top}` and `^T` are the same operator and were not spoken the same.
+
+    MathCAT matches `^T` to its transpose intent and says "transpose"; nothing
+    matches `^{\top}`, which comes out as the literal "superscript top". This
+    corpus writes it the second way 11,345 times, and `\top` never appears
+    outside a superscript in it -- so there it always means transpose.
+    """
+    from latexally.mathspeech import expand_macros
+
+    assert expand_macros(r"\vec{x}^\top") == r"\vec{x}^{T}"
+    assert expand_macros(r"\mathbf{A}^{\top}") == r"\mathbf{A}^{T}"
+
+
+@pytest.mark.skipif(not DRIVER.is_file(), reason="speech needs the MathCAT driver built")
+@pytest.mark.parametrize(
+    "tex, expected",
+    [
+        # The fork's TEMP_NAME rule. Without it MathCAT's own internal wrapper
+        # reaches the catch-all and a reader hears the words "TEMP NAME of".
+        # 315 matrix inverses in this corpus.
+        (r"$\begin{bmatrix}1 & 2\\3 & 4\end{bmatrix}^{-1}$", "matrix"),
+        (r"$\begin{bmatrix}1 & 2\end{bmatrix}^{\top}$", "transpose"),
+    ],
+)
+def test_a_scripted_matrix_says_nothing_internal(tex: str, expected: str):
+    pytest.importorskip("latex2mathml", reason="math descriptions need the [math] extra")
+    formula = Formula("H", tex)
+
+    results = convert([formula])
+
+    assert formula.hash in results, f"no speech at all for {tex}"
+    speech = results[formula.hash][1]
+    assert "TEMP" not in speech.upper(), speech
+    assert expected in speech, speech
+
+
+@pytest.mark.skipif(not DRIVER.is_file(), reason="speech needs the MathCAT driver built")
+def test_a_formula_that_says_nothing_is_not_recorded_as_spoken():
+    r"""`$\\$` is a line break that ended up inside maths.
+
+    It converts to a lone `<mspace linebreak="newline"/>`, and MathCAT is right
+    to return "" for it. Recording that as a success writes an empty token
+    list, `\tl_if_exist` then succeeds, and the document ships `/Alt ()` --
+    which satisfies a naive "every Formula has /Alt" check and tells a reader
+    nothing. Found on sp26/hw/3, where it was the single ALLY-PDF-040 in 179
+    formulas.
+    """
+    pytest.importorskip("latex2mathml", reason="math descriptions need the [math] extra")
+    empty = Formula("E", "$\\\\$")
+    real = Formula("R", "$x + 1$")
+
+    results = convert([empty, real])
+
+    assert real.hash in results
+    assert empty.hash not in results, "an empty /Alt must not be written"
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        # `aligned`, `flalign` and `eqnarray` all yield invalid MathML, and the
+        # formula then ships with no /Alt at all. Each was found by a real
+        # build, not by reading.
+        (r"\begin{flalign*}y &= 1&\end{flalign*}", "align"),
+        (r"\begin{eqnarray*}y &=& 1\end{eqnarray*}", "align"),
+    ],
+)
+def test_align_lookalikes_become_align(source: str, expected: str):
+    from latexally.mathspeech import expand_macros
+
+    assert expected in expand_macros(source)
+
+
+def test_an_eqnarray_row_loses_only_its_middle_separator():
+    r"""eqnarray is `lhs & rel & rhs`; align is `lhs & rel-and-rhs`."""
+    from latexally.mathspeech import expand_macros
+
+    out = expand_macros(r"\begin{eqnarray*} y &=& mx+b \\ z &=& 2y \end{eqnarray*}")
+
+    assert "&=  mx+b" in out.replace("& = ", "&= ")
+    assert out.count("&") == 2, out
+
+
+def test_speech_is_folded_to_characters_pdftex_can_write():
+    r"""MathCAT renders mathvariant="bold" as the Unicode bold letters.
+
+    `$\textbf{vector projection}$` came back as U+1D42F U+1D41E ... -- useless
+    as speech, and four UTF-8 octets each, which pdfTeX cannot encode. The
+    generated token list then leaked LaTeX's own error text onto the page:
+    "known as \UTFvi ii@four@octets vector projection", on page 1 of
+    sp26/hw/2, in a build reported as clean with zero errors.
+    """
+    from latexally.mathspeech import normalise_speech
+
+    assert normalise_speech("\U0001D42F\U0001D41E\U0001D41C\U0001D42D\U0001D428\U0001D42B") == "vector"
+    # Inside the BMP is left alone: pdfTeX handles those and they carry meaning.
+    assert normalise_speech("alpha β and x") == "alpha β and x"
+    assert all(ord(c) <= 0xFFFF for c in normalise_speech("\U0001F600 x"))
+
+
+def test_the_escaped_string_never_carries_a_four_octet_character():
+    from latexally.mathspeech import _escape_tex_string
+
+    out = _escape_tex_string("\U0001D42F\U0001D41E\U0001D41C x")
+
+    assert out == "vec~x"
+    assert all(ord(c) <= 0xFFFF for c in out)
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        # A matrix NAME: 11,279 of the corpus's 12,478 \mat arguments.
+        (r"\mat{A}", r"\mathbf{A}"),
+        (r"\mat{\vec{x}}", r"\mathbf{\vec{x}}"),
+        # A matrix BODY: the other 1,199. \mathbf{| & | \\ ...} is invalid
+        # MathML, MathCAT refuses it, and the formula ships with no /Alt --
+        # three of them in notes_sp21/note23 alone.
+        (r"\mat{1 & 2 \\ 3 & 4}", r"\begin{bmatrix}1 & 2 \\ 3 & 4\end{bmatrix}"),
+        (r"\mat{a \\ b}", r"\begin{bmatrix}a \\ b\end{bmatrix}"),
+    ],
+)
+def test_mat_expands_by_what_its_argument_holds(source: str, expected: str):
+    r"""The macro means two things and the semesters disagree about which.
+
+    39 of its 47 live definitions are `\mathbf{#1}` and five are
+    `\begin{bmatrix}#1\end{bmatrix}`. An `&` or a `\\` inside the argument can
+    only be a body, so the content decides rather than a guess.
+    """
+    from latexally.mathspeech import expand_macros
+
+    assert expand_macros(source) == expected
+
+
+def test_latex_lab_write_dummy_artifacts_are_not_treated_as_formulas(tmp_path: Path):
+    r"""`write-dummy` sometimes captures hyperref's machinery, not the maths.
+
+    For a numbered `eqnarray` the rendered source template is
+    `\if@eqnstar \else \ifx \\\@currentHref ... \hyper@makecurrent`, which is
+    not an equation. Seven of this corpus's entries are that.
+
+    They used to be rejected downstream as invalid MathML, which looked like an
+    engine limitation. Once the `eqnarray` rewrite made them convertible they
+    started producing fluent nonsense instead -- "table with 4 rows and 2
+    columns; row 1; column 1; backslash if at sign e q n s t a r" -- which a
+    reader hears as if it were the formula. Dropping them restores no `/Alt`
+    and an ALLY-PDF-040, which is the honest outcome.
+    """
+    dummy = tmp_path / "d-mathml-dummy.html"
+    dummy.write_text(
+        "<html>\n<div>\n<h2>\\mml 1</h2>\n<p>$x + 1$</p>\n<p>AAAA1111BBBB2222</p>\n</div>\n"
+        "<div>\n<h2>\\mml 2</h2>\n"
+        "<p>\\begin {eqnarray}\\if@eqnstar \\else \\ifx \\\\\\@currentHref</p>\n"
+        "<p>CCCC3333DDDD4444</p>\n</div>\n</html>\n",
+        encoding="utf-8",
+    )
+
+    formulas = read_dummy(dummy)
+
+    assert [f.tex for f in formulas] == ["$x + 1$"]

@@ -2,8 +2,10 @@
 
 Why this is the first thing that was built
 ------------------------------------------
-The dominant failure mode of LaTeX accessibility work is **silent** failure. On
-TeX Live 2025:
+The dominant failure mode of LaTeX accessibility work is **silent** failure.
+Each of these was observed on a real install; which of them a given TeX Live
+still exhibits is what ``doctor`` is for, and the answer moves between
+releases:
 
 * ``\\DocumentMetadata{pdfstandard=ua-1}`` raises ``unknown-standard`` and the
   build carries on, producing a PDF that claims nothing.
@@ -194,38 +196,58 @@ def package_version(sty: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+#: Files that between them define what ``\DocumentMetadata`` accepts. The
+#: ``pdfstandard`` key moved out of ``documentmetadata-support.ltx`` and into
+#: ``pdfmanagement.ltx``; both are searched because which one holds it depends
+#: on the TeX Live release, and reading only the first made this probe report
+#: "PDF/UA is NOT supported" on an install that accepts ``ua-1`` perfectly well.
+#: A false *warning* is milder than a false pass, but it still tells course
+#: staff they cannot claim conformance when they can.
+_METADATA_FILES = ("documentmetadata-support.ltx", "pdfmanagement.ltx")
+
+
 def document_metadata_capabilities() -> dict:
     """What ``\\DocumentMetadata`` actually accepts on this machine.
 
-    Parses ``documentmetadata-support.ltx`` rather than trusting the release
-    notes, because the installed file is the only thing that governs the build.
+    Parses the installed sources rather than trusting the release notes,
+    because the installed file is the only thing that governs the build.
     """
-    path = kpsewhich("documentmetadata-support.ltx")
-    text = _read(path)
-    if not text:
+    sources: list[tuple[Path, str]] = []
+    for name in _METADATA_FILES:
+        path = kpsewhich(name)
+        text = _read(path)
+        if text and path is not None:
+            sources.append((path, text))
+    if not sources:
         return {"found": False}
-    standards = re.search(r"_pdfstandard\s*\.choices:nn\s*=\s*\{([^}]*)\}", text)
-    listed = (
-        [item.strip().lower() for item in standards.group(1).split(",") if item.strip()]
-        if standards
-        else []
-    )
-    # A-4F / A-4E are declared separately as `_pdfstandard / A-4F .code:n`.
-    # `unknown` is the error branch of the choice list, not a usable standard.
-    listed += [
-        match.group(1).strip().lower()
-        for match in re.finditer(r"_pdfstandard\s*/\s*([A-Za-z0-9\-]+)\s*\.code:n", text)
-    ]
+
+    listed: list[str] = []
+    for _, text in sources:
+        standards = re.search(r"_pdfstandard\s*\.choices:nn\s*=\s*\{([^}]*)\}", text)
+        if standards:
+            listed += [
+                item.strip().lower() for item in standards.group(1).split(",") if item.strip()
+            ]
+        # A-4F / A-4E and UA-1 are declared separately as
+        # `_pdfstandard / UA-1 .code:n`. `unknown` is the choice list's error
+        # branch, not a usable standard.
+        listed += [
+            match.group(1).strip().lower()
+            for match in re.finditer(r"_pdfstandard\s*/\s*([A-Za-z0-9\-]+)\s*\.code:n", text)
+        ]
     listed = [item for item in listed if item != "unknown"]
+
+    joined = "\n".join(text for _, text in sources)
     # `tagging` as a top-level key, not the deprecated `activate / tagging`.
-    has_tagging_key = re.search(r"^\s*,?\s*tagging\s*\.(?:code|choice)", text, re.M) is not None
+    has_tagging_key = re.search(r"^\s*,?\s*tagging\s*\.(?:code|choice)", joined, re.M) is not None
     return {
         "found": True,
-        "path": str(path),
+        "path": str(sources[0][0]),
+        "paths": [str(path) for path, _ in sources],
         "pdfstandards": sorted(set(listed)),
         "supports_ua": any(item.startswith("ua") for item in listed),
         "supports_tagging_key": has_tagging_key,
-        "supports_tagging_setup": ".tagging-setup" in text or "tagging-setup" in text,
+        "supports_tagging_setup": ".tagging-setup" in joined or "tagging-setup" in joined,
     }
 
 
@@ -379,7 +401,7 @@ def probe(profile: Profile) -> ToolchainReport:
                 "T006",
                 "PDF/UA declaration",
                 Status.FAIL,
-                "documentmetadata-support.ltx not found",
+                "none of " + ", ".join(_METADATA_FILES) + " could be read",
                 "install a complete latex-lab; without it nothing can be tagged",
             )
         )

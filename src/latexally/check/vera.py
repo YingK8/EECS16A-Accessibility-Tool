@@ -179,6 +179,10 @@ def check_verapdf(pdf: Path, *, flavour: str = "ua1") -> list[Finding]:
             capture_output=True,
             text=True,
             timeout=_TIMEOUT,
+            # Exit 1 means "this file is invalid", which is the normal outcome
+            # here and not an error. Only a non-JSON stdout means veraPDF itself
+            # failed, and that is handled below.
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         return [
