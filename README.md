@@ -15,7 +15,7 @@ other course!
 | **A tagged template layer** | `latexally-assignment`, `-exam`, and `-worksheet` classes producing an `H1` to `H4` hierarchy that reaches PDF bookmark panes and screen readers |
 | **Strict alt text** | `Described` wraps any region, including text, math, TikZ, and tables, so assistive technology reads the description and never the contents |
 | **Deterministic descriptions** | pgfplots axes, circuitikz netlists, and state machines described from source, with no model in the loop |
-| **A Markdown worklog** | staff or an agent fill in descriptions; machine sections regenerate, human text survives |
+| **A YAML worklog** | three keys per figure: `file`, `lines`, `alt_text`. Writing the text is what approves it |
 | **A conformance checker** | source lint, build-log analysis, and PDF structure assertions, each mapped to a Matterhorn checkpoint or WCAG SC |
 | **An agent harness** | every command speaks `--json`; agents propose descriptions, humans approve them |
 | **A legacy shim** | existing `\qns`, `\qitem`, and `\sol` question files keep compiling |
@@ -120,7 +120,7 @@ Individual stages:
 
 ```bash
 latexally files bank            # what is in scope
-latexally scan bank             # figures -> Markdown worklogs
+latexally scan bank             # figures -> YAML worklogs
 latexally agent next-task -n 5  # what an agent should describe next
 latexally apply bank --write    # approved descriptions -> .tex
 latexally check bank --pdf out.pdf --log out.log
@@ -171,6 +171,12 @@ ahead of those dates.
 UC Presidential Policy **IMT-1300** (2026-03-17) adopts WCAG 2.1 AA systemwide
 and requires new digital content created after 2027-04-26 to conform, including
 course material behind authentication.
+
+**PDF/UA is declarable as of TeX Live 2026.** `tagging=on` and
+`pdfstandard=ua-1` are both supported, so a build declares conformance in the
+PDF's own metadata rather than merely being tagged. `doctor` reports this as
+`Tagging mode: modern`. Earlier toolchains reached only the legacy testphase
+mode, which tagged documents but could claim nothing.
 
 **Section 508 (36 CFR Part 1194) is not the governing standard here.** It binds
 federal agencies and their contractors; the operative obligation for this

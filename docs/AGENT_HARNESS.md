@@ -7,11 +7,16 @@ same code paths a human does.
 
 ## The contract
 
-**An agent proposes; a human disposes.** `agent submit` always records
-`needs-review`. Only `approved` text is ever written into a `.tex` file, and
-nothing in the agent API can set `approved`. This is enforced in code, not by
-convention, because the failure it prevents — plausible-sounding but wrong alt
-text shipped into a document under a legal obligation — is silent and expensive.
+**What an agent submits is what ships.** There is no review stage. The worklog
+carries `file`, `lines` and `alt_text`, so a description has nowhere to sit as a
+draft: `agent submit` writes it and the next build puts it in the PDF.
+
+This replaced a gate that recorded every submission as `needs-review` and wrote
+only `approved` text. Removing it also removed the only thing between an unread
+machine-written sentence and a student, and the failure that gate prevented,
+plausible-sounding but wrong alt text in a document under a legal obligation, is
+silent and expensive. `validate_description` catches malformed text, not wrong
+text. Read what agents submit.
 
 ---
 
@@ -122,9 +127,8 @@ never passes through Python.
 
 ## What an agent must not do
 
-* Set `status: approved`, or edit that field in a worklog directly.
 * Paste `machine_facts` as a description.
 * Describe a figure it has not seen when the task says `image_absolute` — open
   the image first; rasters carry no recoverable content.
 * Reveal an answer in a figure whose task says `inside_solution: false`.
-* Edit machine-managed worklog sections; they regenerate on the next `scan`.
+* Edit `file` or `lines`; both regenerate on the next `scan`.

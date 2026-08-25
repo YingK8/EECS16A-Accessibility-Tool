@@ -91,19 +91,25 @@ at build time; this tool does not do that yet.
 
 ---
 
-## Decide the disposition first
+## Decide whether it carries meaning
 
 Apply in order, stop at the first hit:
 
-1. Does the image contain text, numbers or symbols a reader needs? → **figure**
-2. Is it referenced by `\ref`, a caption, or prose ("the circuit shown")? → **figure**
+1. Does the image contain text, numbers or symbols a reader needs? → describe it
+2. Is it referenced by `\ref`, a caption, or prose ("the circuit shown")? → describe it
 3. **Deletion test:** delete it and read the question. Can every part still be
-   answered? If no → **figure**.
-4. Is it a logo, banner, seal, rule, spacer or ornament? → **artifact**
-5. Anything else → **figure**.
+   answered? If no → describe it.
+4. Is it a logo, banner, seal, rule, spacer or ornament? → see below
+5. Anything else → describe it.
 
-When in doubt, choose figure. A wrong artifact call silently deletes
-information; a wrong figure call costs a second of speech.
+**The worklog cannot mark a graphic decorative.** It carries `alt_text` and
+nothing else, so every figure the scan finds either gets a description or ships
+undescribed. A genuinely ornamental graphic needs `\begin{Decorative}` written
+around it in the source by hand, which is the only thing that makes a reader
+skip it.
+
+When in doubt, describe it. A wrong decorative call silently deletes
+information; a wrong description call costs a second of speech.
 
 Never infer decorative from a filename. In this corpus `lefthalfpic.jpg` and
 `righthalfpic.jpg` look decorative and are the panorama halves an
@@ -185,6 +191,7 @@ they do not affect tagging.
 
 ## Definition of done
 
-A description is done when: a disposition is recorded; the text passes rules
-1–10; a `long` description exists if rule 8 triggered; the status is `approved`;
-and `latexally check --pdf` reports no `ALLY-PDF-002/003/004` for it.
+A description is done when the text passes rules 1-10 and `latexally check
+--pdf` reports no `ALLY-PDF-002/003/004` for it. Writing it into `alt_text` is
+what approves it; there is no separate status, and no second pair of eyes unless
+you arrange one.

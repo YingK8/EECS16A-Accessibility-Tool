@@ -11,10 +11,15 @@ Design principles, learned from what goes wrong when an agent edits a corpus:
    description that breaks the authoring spec and says exactly which rule failed,
    so the agent can correct itself in one turn.
 
-3. **An agent can never approve its own work.** Submissions land as
-   ``needs-review``. Only a human sets ``approved``, and only ``approved`` text
-   is ever written into a ``.tex`` file. This is the human-in-the-loop gate, and
-   it is enforced here rather than left to convention.
+3. **A submission ships as written.** There is no review gate. The worklog
+   carries ``file``, ``lines`` and ``alt_text`` and nothing else, so a
+   description has nowhere to sit as a draft: whatever ``submit`` writes is what
+   reaches the PDF on the next build.
+
+   This was a deliberate simplification, not an oversight, and it removed the
+   only thing standing between an unread machine-written sentence and a
+   student. ``validate_description`` is now the sole automatic check, and it
+   catches malformed text, not wrong text. Read what agents submit.
 """
 
 from __future__ import annotations
@@ -111,8 +116,8 @@ class Task:
             "instructions": (
                 "Write a one-sentence description. Use `long` only if the figure "
                 "genuinely cannot be conveyed in about 200 characters. Submit with: "
-                "latexally agent submit --id <id> --description '<text>'. Your "
-                "submission is recorded as needs-review; a human approves it."
+                "latexally agent submit --id <id> --description '<text>'. What "
+                "you submit is what ships; there is no review stage."
             ),
         }
 
@@ -261,9 +266,6 @@ def submit(
         entry.notes = notes.strip()
     if disposition in ("figure", "artifact"):
         entry.disposition = disposition
-    # An agent proposes; a human disposes. Only `approved` text is ever written
-    # into a .tex file, and nothing here can set that.
-    entry.status = "needs-review"
     entry.author = author
     entry.updated = date.today().isoformat()
 
@@ -271,7 +273,6 @@ def submit(
     return {
         "accepted": True,
         "id": identity,
-        "status": entry.status,
         "worklog": str(target),
-        "note": "recorded as needs-review; a human must approve before it is written",
+        "note": "written; this text reaches the PDF on the next build, unreviewed",
     }
