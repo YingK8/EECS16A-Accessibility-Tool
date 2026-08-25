@@ -223,8 +223,9 @@ def _driver_for(assignment: str) -> str:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        ASSIGNMENT = sys.argv[1].strip("/")
-        DRIVER = sys.argv[2] if len(sys.argv) > 2 else _driver_for(ASSIGNMENT)
     KEEP = "--keep" in sys.argv
+    positional = [arg for arg in sys.argv[1:] if not arg.startswith("-")]
+    if positional:
+        ASSIGNMENT = positional[0].strip("/")
+        DRIVER = positional[1] if len(positional) > 1 else _driver_for(ASSIGNMENT)
     raise SystemExit(main())
