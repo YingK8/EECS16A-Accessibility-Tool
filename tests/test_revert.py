@@ -319,3 +319,67 @@ def test_the_guard_still_refuses_somebody_else_s_work(
     (root / "notes.txt").write_text("also mine")
     with pytest.raises(LatexAllyError, match="uncommitted change"):
         require_clean_worktree(root)
+
+
+# ---------------------------------------------------------------------- #
+# --here
+# ---------------------------------------------------------------------- #
+
+
+def test_here_resolves_the_corpus_and_the_folder_from_git(
+    sample: list[Path], tmp_path: Path, monkeypatch
+):
+    """`--here` exists so neither path has to be typed twice.
+
+    The alternative was a shell function wrapping `--corpus $(git rev-parse
+    --show-toplevel)` and `$(git rev-parse --show-prefix)` -- which works, but
+    only in a shell, only once someone has installed it, and it restates what
+    the working directory already says.
+    """
+    from latexally.cli import _here
+
+    root = _repo_from(sample, tmp_path / "corpus")
+    folder = sorted(
+        path for path in root.rglob("*")
+        if path.is_dir() and ".git" not in path.relative_to(root).parts
+    )[0]
+
+    monkeypatch.chdir(folder)
+    found_root, prefix = _here()
+    assert found_root.resolve() == root.resolve()
+    assert prefix == folder.relative_to(root).as_posix()
+
+    # At the top of the repository the prefix is empty, which correctly means
+    # "the whole corpus" rather than "no scope at all".
+    monkeypatch.chdir(root)
+    assert _here()[1] == ""
+
+
+def test_here_refuses_outside_a_repository(tmp_path: Path, monkeypatch):
+    """It says where it was standing, because that is the fact to correct."""
+    from latexally.cli import _here
+
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+    monkeypatch.chdir(plain)
+    with pytest.raises(LatexAllyError, match="not.*in a git repository"):
+        _here()
+
+
+def test_here_puts_the_worklog_in_the_folder_not_inside_ally_out(
+    sample: list[Path], tmp_path: Path
+):
+    """The default output root is `ally-out` relative to the working directory,
+    and `--here` runs from inside the corpus -- where `_refuse_inside_corpus`
+    rightly refuses to put anything. So `--here` means the worklog goes beside
+    the sources, the same answer `--edit` gives."""
+    from latexally.catalog import build_catalog
+
+    root = _repo_from(sample, tmp_path / "corpus")
+    profile = _profile(root)
+
+    result = build_catalog(profile, write=True, beside=root)
+    assert result.worklogs, "nothing catalogued"
+    for path in result.worklogs:
+        assert path.name == WORKLOG_NAME
+        assert path.is_relative_to(root), f"{path} escaped the corpus"

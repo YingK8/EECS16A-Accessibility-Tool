@@ -205,7 +205,10 @@ def build_catalog(
         shard_of[identity] = _shard_for(primary, root)
         dir_of[identity] = _dir_for(primary, root)
 
-    directory = worklog_dir(profile, output_root)
+    # Both are skipped entirely when `beside` is set: neither is used on that
+    # path, and `worklog_dir` refuses any location inside the corpus -- which
+    # is exactly where `beside` points, on purpose.
+    directory = worklog_dir(profile, output_root) if beside is None else None
     # Descriptions outlive any one run. They are content-addressed and were
     # written by a person, so the corpus catalogue is always the merge base --
     # even when `output_root` sends this run's worklogs somewhere else.
@@ -214,7 +217,7 @@ def build_catalog(
     # reports "0 described, 17 outstanding" while approved descriptions for six
     # of those very figures sit in the corpus, and the build ships the figures
     # with no /Alt. The corpus stays read-only -- it is read, never written.
-    baseline = worklog_dir(profile)
+    baseline = worklog_dir(profile) if beside is None else None
     # Keyed by both, because `beside` needs the unflattened directory and the
     # shard name is still what names the file everywhere else. They are a
     # 1:1 function of each other, so the pair never splits one folder in two.

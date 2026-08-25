@@ -13,6 +13,8 @@ Two hard rules, because this CLI has two very different consumers:
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -42,10 +44,41 @@ _STATUS_STYLE = {
 class Context:
     """Shared state resolved once and handed to every subcommand."""
 
-    def __init__(self, profile: Profile, *, as_json: bool, quiet: bool) -> None:
+    def __init__(
+        self,
+        profile: Profile,
+        *,
+        as_json: bool,
+        quiet: bool,
+        here_scope: str | None = None,
+    ) -> None:
         self.profile = profile
         self.as_json = as_json
         self.console = Console(stderr=as_json, quiet=quiet and not as_json)
+        #: Corpus-relative path of the directory `--here` was run from, or None.
+        #: Commands that take a scope fall back to it when given none.
+        self.here_scope = here_scope
+
+    @property
+    def beside(self) -> Path | None:
+        """Where worklogs go when `--here` is in play: beside the sources.
+
+        `--here` says this folder is the unit of work, and the worklog for a
+        folder belongs in it -- the same answer `--edit` gives, for the same
+        reason. It also happens to be the only workable one: the default output
+        root is `ally-out` relative to the working directory, and `--here` is
+        run from *inside* the corpus, where `catalog._refuse_inside_corpus`
+        rightly refuses to put anything.
+        """
+        return self.profile.corpus.root.resolve() if self.here_scope is not None else None
+
+    def scope_or_here(self, scope: str | None) -> str | None:
+        """An explicit scope wins; otherwise `--here` supplies one.
+
+        Every scope-taking command routes through this, so `--here` cannot be
+        a flag that works on two of them and silently does nothing on the rest.
+        """
+        return scope if scope is not None else self.here_scope
 
     def emit(self, payload: dict) -> None:
         if self.as_json:
@@ -73,6 +106,15 @@ pass_context = click.make_pass_decorator(Context)
     default=None,
     help="Corpus root, overriding the profile's corpus.root.",
 )
+@click.option(
+    "--here",
+    is_flag=True,
+    help=(
+        "Work on the directory you are standing in: the corpus root is its "
+        "enclosing git repository and the scope is this folder. Needs no "
+        "arguments — `latexally --here build --write --edit`."
+    ),
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress human-readable output.")
 @click.pass_context
@@ -80,16 +122,62 @@ def main(
     ctx: click.Context,
     profile: str | None,
     corpus: Path | None,
+    here: bool,
     as_json: bool,
     quiet: bool,
 ) -> None:
     """Convert LaTeX instructional materials into tagged, PDF/UA-conforming PDFs."""
+    here_scope: str | None = None
+    if here:
+        try:
+            corpus, here_scope = _here()
+        except LatexAllyError as exc:
+            click.echo(f"error: {exc}", err=True)
+            ctx.exit(EXIT_ERROR)
     try:
         loaded = load_profile(profile, corpus_root=corpus)
     except LatexAllyError as exc:
         click.echo(f"error: {exc}", err=True)
         ctx.exit(EXIT_ERROR)
-    ctx.obj = Context(loaded, as_json=as_json, quiet=quiet)
+    ctx.obj = Context(loaded, as_json=as_json, quiet=quiet, here_scope=here_scope)
+
+
+def _here() -> tuple[Path, str]:
+    """The enclosing git repository, and where inside it we are standing.
+
+    Both halves of the answer come from the same place, which is the point:
+    a course corpus is a repository, an assignment is a directory inside it,
+    and a person running this is already `cd`-ed into the one they mean. Asking
+    them to spell out both -- as `--corpus ../../.. build sp26/hw/10` does --
+    is asking them to restate what the shell already knows.
+
+    git rather than a walk up for a marker file: `--edit` refuses to run
+    outside a clean git repository anyway, so requiring one here adds no
+    constraint that was not already there, and `--show-prefix` is exactly the
+    corpus-relative path the scope argument wants.
+    """
+    if shutil.which("git") is None:
+        raise LatexAllyError(
+            "--here finds the corpus with git, and git is not installed",
+            hint="pass --corpus and a scope instead",
+        )
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel", "--show-prefix"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise LatexAllyError(
+            f"--here needs to be run inside the corpus, and {Path.cwd()} is not "
+            "in a git repository",
+            hint="cd into the assignment folder, or pass --corpus and a scope",
+        )
+    lines = result.stdout.splitlines()
+    root = Path(lines[0].strip())
+    # Empty at the repository root, which correctly means "the whole corpus".
+    prefix = (lines[1].strip() if len(lines) > 1 else "").strip("/")
+    return root, prefix
 
 
 # ---------------------------------------------------------------------- #
@@ -132,6 +220,7 @@ def doctor(
     `pdfstandard` value produces an untagged PDF with no error, which is far
     worse than a build failure when the output carries a legal obligation.
     """
+    scope = ctx.scope_or_here(scope)
     if (fix or write) and not tagging:
         click.echo("error: --fix and --write only apply to --tagging", err=True)
         sys.exit(EXIT_ERROR)
@@ -204,6 +293,7 @@ def files(ctx: Context, scope: str | None, documents: bool, limit: int) -> None:
     Useful for confirming that excludes actually exclude what you think: in the
     EECS 16A corpus, 17k of 17.6k .tex files are frozen per-semester snapshots.
     """
+    scope = ctx.scope_or_here(scope)
     from .texlex.includes import IncludeGraph
 
     try:
@@ -269,22 +359,38 @@ def scan(ctx: Context, scope: str | None, no_write: bool) -> None:
     did not, so a worklog filled in by hand disagreed with the one a build
     produced.
     """
+    scope = ctx.scope_or_here(scope)
     from .build import source_files_for
     from .catalog import build_catalog, worklog_dir
     from .discover import discover_assignments
 
-    files: list[Path] = []
-    for assignment in discover_assignments(ctx.profile, scope):
-        files.extend(source_files_for(assignment, ctx.profile))
+    beside = ctx.beside
+    try:
+        files: list[Path] = []
+        for assignment in discover_assignments(ctx.profile, scope):
+            files.extend(source_files_for(assignment, ctx.profile))
 
-    # No assignment in scope means the scope is a bare glob, not a document.
-    # Fall back to it rather than scanning nothing.
-    result = (
-        build_catalog(ctx.profile, files=sorted(set(files)), write=not no_write)
-        if files
-        else build_catalog(ctx.profile, scope, write=not no_write)
-    )
-    payload = result.as_dict() | {"scope": scope, "directory": str(worklog_dir(ctx.profile))}
+        # No assignment in scope means the scope is a bare glob, not a document.
+        # Fall back to it rather than scanning nothing.
+        result = (
+            build_catalog(
+                ctx.profile, files=sorted(set(files)), write=not no_write, beside=beside
+            )
+            if files
+            else build_catalog(ctx.profile, scope, write=not no_write, beside=beside)
+        )
+    except LatexAllyError as exc:
+        # This command had no handler at all, so a CatalogError surfaced as a
+        # traceback -- against this module's own rule that every failure names
+        # the next action.
+        if ctx.as_json:
+            ctx.emit({"ok": False, "error": str(exc)})
+        else:
+            # `str(exc)` already carries the hint; printing it again is noise.
+            click.echo(f"error: {exc}", err=True)
+        sys.exit(EXIT_ERROR)
+    directory = str(beside) if beside is not None else str(worklog_dir(ctx.profile))
+    payload = result.as_dict() | {"scope": scope, "directory": directory}
 
     if ctx.as_json:
         ctx.emit(payload)
@@ -359,12 +465,16 @@ def apply(ctx: Context, scope: str | None, write: bool, show_diff: bool) -> None
     ``apply`` then walks a folder full of different ones, reporting every id as
     "not in any worklog; run scan first" immediately after a successful scan.
     """
+    scope = ctx.scope_or_here(scope)
     from .apply import apply_scope
     from .build import source_files_for
     from .catalog import load_entries
     from .discover import discover_assignments
 
-    entries = load_entries(ctx.profile)
+    # The same place `scan` wrote them. Without `beside` here, `--here scan`
+    # followed by `--here apply` reports "no worklogs found" while the file it
+    # just wrote sits in the folder.
+    entries = load_entries(ctx.profile, beside=ctx.beside)
     if not entries:
         click.echo("error: no worklogs found; run `latexally scan` first", err=True)
         sys.exit(EXIT_ERROR)
@@ -575,6 +685,7 @@ def check(
     ctx: Context, scope: str | None, pdf: Path | None, logfile: Path | None, severity: str
 ) -> None:
     """Validate conformance: source lint, build log, and PDF structure."""
+    scope = ctx.scope_or_here(scope)
     from .check.rules import Severity, check_log, check_pdf_structure, check_source
     from .check.vera import check_verapdf
 
@@ -774,6 +885,10 @@ def build(
     from .build import build_run, describe_run
     from .run import AltChoice, ColorChoice
 
+    # `--here` answers "which assignment" from the shell's own position, so a
+    # bare `latexally --here build --write --edit` is the whole command.
+    if not assignments and ctx.here_scope is not None:
+        assignments = (ctx.here_scope,)
     config = _load_run_config(ctx, config_path, assignments, output, write)
     if edit or in_place:
         # `edit` wins: it is a superset, and asking for both is not a conflict.
@@ -986,6 +1101,7 @@ def revert(
     from .revert import do_revert, plan_revert
     from .tui.summary import show_path
 
+    scope = ctx.scope_or_here(scope)
     config = _load_run_config(ctx, config_path, (), output, write)
     console = ctx.console
     try:

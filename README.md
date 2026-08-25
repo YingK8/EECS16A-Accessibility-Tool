@@ -134,38 +134,29 @@ The default is a mirror: your `.tex` is read, never written, and the converted
 copy goes to `ally-out/`. That is the right default and the wrong one for the
 weekly job, where you want the folder itself to build.
 
-`--edit` writes the conversion back over the sources, drops the packages it
-needs beside them, and puts the alt-text worklog in the same folder. After it,
-a bare `pdflatex` produces the tagged PDF:
+`--here` works on the directory you are standing in — corpus root from the
+enclosing git repository, scope from the folder. `--edit` writes the conversion
+back over the sources, drops the packages they need beside them, and puts the
+alt-text worklog in the folder. After that a bare `pdflatex` produces the
+tagged PDF:
 
 ```bash
-cd questionBank/sp26/hw/13
+cd questionBank/sp26/hw/10
 
-latexally --corpus "$(git rev-parse --show-toplevel)" \
-          build "$(git rev-parse --show-prefix)" --write --edit
-
-pdflatex prob13.tex        # tagged, no TEXINPUTS, no output directory
+latexally --here scan               # figures -> descriptions.yaml, in this folder
+$EDITOR questionBank/hw/11/descriptions.yaml    # fill in the alt_text: lines
+latexally --here build --write --edit
+pdflatex prob10.tex                 # tagged; no TEXINPUTS, no output directory
 ```
 
-Both paths come from git, so the line is the same in every assignment folder —
-`--show-toplevel` is the corpus root and `--show-prefix` is the folder you are
-standing in. It is worth an alias:
-
-```bash
-alias ally='latexally --corpus "$(git rev-parse --show-toplevel)" \
-                      build "$(git rev-parse --show-prefix)" --write --edit'
-```
-
-Why both, rather than just the folder: 16A drivers reach out of their own
-directory — `\usepackage{../../../ee16}`, `\input{../../../questionBank/hw/13/q_perpetual_motion}`
-— so the folder alone is not a corpus. Roughly three quarters of sp26 graphics
-live in the shared bank, not in the assignment.
+`--here` works on every command that takes a scope — `files`, `scan`, `apply`,
+`check`, `doctor`, `build`, `revert` — so none of them need the path spelled
+out. At the top of the corpus it means the whole corpus.
 
 Undo all of it:
 
 ```bash
-latexally --corpus "$(git rev-parse --show-toplevel)" \
-          revert "$(git rev-parse --show-prefix)" --write
+latexally --here revert --write
 ```
 
 `revert` restores your `.tex` with `git checkout` and deletes what the tool
@@ -174,7 +165,29 @@ wrote: the `*-accessible.*` PDFs and logs, `descriptions.yaml`, and the
 — your own hand-built PDFs are ignored by git and would be gone forever if it
 ran `git clean`. Drop `--write` to see the list first; that is the default.
 
-`--edit` refuses on a dirty worktree, which is what makes the undo total.
+`--edit` refuses on a dirty worktree, which is what makes the undo total. It
+does step over its *own* files, so filling in `descriptions.yaml` and running
+again works — that loop is the point of putting the worklog there.
+
+**The worklog appears next to the file holding the figure**, which is often the
+shared bank rather than the assignment: `sp26/hw/10` writes to
+`questionBank/hw/11/descriptions.yaml`. Roughly three quarters of sp26 graphics
+live in the bank, not in the homework folder. For the same reason `--here` uses
+the repository as the corpus and not the folder — 16A drivers reach out of
+their own directory, `\usepackage{../../../ee16}` and
+`\input{../../../questionBank/hw/13/q_perpetual_motion}`, so a folder on its
+own is not a corpus and does not build.
+
+#### Try it without touching anything
+
+```bash
+uv run python tests/revert_e2e.py sp26/hw/10 --keep
+```
+
+Copies that assignment's whole dependency closure into a throwaway git
+repository, runs the stack, builds it with a bare `pdflatex`, and stops so you
+can look. Without `--keep` it reverts and checks that every file came back
+byte-identical.
 
 ### Output
 
