@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .catalog import WORKLOG_NAME
+from .catalog.worklog import read_worklog
 from .config import Profile
 from .errors import LatexAllyError
 from .run import ARTIFACTS, RunConfig
@@ -81,9 +82,14 @@ class RevertPlan:
     restore: list[Path] = field(default_factory=list)
     remove: list[Path] = field(default_factory=list)
     outputs: list[Path] = field(default_factory=list)
+    #: Worklogs left alone because somebody has written descriptions in them.
+    #: Reported, never deleted -- see :func:`_holds_human_text`.
+    kept: list[Path] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
+        # `kept` deliberately does not count: a plan whose only finding is "I
+        # left your descriptions alone" has nothing to do, and should say so.
         return not (self.restore or self.remove or self.outputs)
 
     def as_dict(self) -> dict:
@@ -92,6 +98,7 @@ class RevertPlan:
             "restore": [str(path) for path in self.restore],
             "remove": [str(path) for path in self.remove],
             "outputs": [str(path) for path in self.outputs],
+            "kept": [str(path) for path in self.kept],
         }
 
 
@@ -157,18 +164,32 @@ def plan_revert(
     plan = RevertPlan(root=root)
     plan.restore = _modified(root, None if target == root else target)
 
+    # Everywhere this scope's material actually lives, not just the folder
+    # named. A worklog goes beside the .tex holding the FIGURE, and three
+    # quarters of sp26 graphics are \input from the shared bank -- so a revert
+    # that swept only the assignment directory left every worklog it wrote
+    # sitting in questionBank/, and reported "nothing to revert" while doing it.
+    searched = {target} | _reached_directories(profile, scope, root)
+
     # One `git ls-files` for the whole scope, not one `--error-unmatch` per
     # candidate: a corpus-wide revert matches thousands of files and that is
     # thousands of subprocesses.
     tracked = _tracked(root, None if target == root else target)
-    for pattern in artifact_globs():
-        for path in target.rglob(pattern):
-            # Deleted only if git has never seen it. A `latexally-core.sty` a
-            # course committed itself is theirs, and `git checkout` owns it.
-            resolved = path.resolve()
-            if path.is_file() and resolved not in tracked:
+    for directory in searched:
+        for pattern in artifact_globs():
+            for path in directory.rglob(pattern) if directory == target else directory.glob(pattern):
+                # Deleted only if git has never seen it. A `latexally-core.sty`
+                # a course committed itself is theirs, and `git checkout` owns
+                # it.
+                resolved = path.resolve()
+                if not path.is_file() or resolved in tracked:
+                    continue
+                if _holds_human_text(resolved):
+                    plan.kept.append(resolved)
+                    continue
                 plan.remove.append(resolved)
     plan.remove = sorted(set(plan.remove))
+    plan.kept = sorted(set(plan.kept))
 
     seen: set[Path] = set()
     for slug, _, _ in ARTIFACTS:
@@ -181,6 +202,53 @@ def plan_revert(
         if stray.is_file():
             plan.outputs.append(stray)
     return plan
+
+
+def _reached_directories(profile: Profile, scope: str | None, root: Path) -> set[Path]:
+    r"""Every directory holding a ``.tex`` the scope's assignments actually use.
+
+    ``source_files_for`` is the same walk the build does to decide what a
+    conversion means, so the directories it returns are exactly the ones a run
+    could have written a worklog into. Reusing it here is what keeps "where
+    revert looks" and "where the run wrote" the same answer.
+    """
+    from .build import source_files_for
+    from .discover import discover_assignments
+
+    directories: set[Path] = set()
+    try:
+        assignments = discover_assignments(profile, scope)
+    except LatexAllyError:
+        return directories
+    for assignment in assignments:
+        for path in source_files_for(assignment, profile):
+            directory = path.parent.resolve()
+            if directory == root or root in directory.parents:
+                directories.add(directory)
+    return directories
+
+
+def _holds_human_text(path: Path) -> bool:
+    """Has anyone written a description in this worklog?
+
+    A worklog the tool wrote and nobody has touched is pure output and goes.
+    One with even a single filled-in ``alt_text`` is somebody's afternoon, and
+    git cannot give it back -- it was never committed. So it is reported and
+    left, which is the failure worth having.
+
+    Only worklogs are asked: a PDF or a ``.sty`` this tool wrote carries no
+    typing of anybody's.
+    """
+    if path.name != WORKLOG_NAME:
+        return False
+    try:
+        return any(
+            entry.description.strip()
+            for entry in read_worklog(path).entries.values()
+        )
+    except OSError:
+        # Unreadable: assume it matters rather than delete it.
+        return True
 
 
 def _tracked(root: Path, scope: Path | None) -> set[Path]:

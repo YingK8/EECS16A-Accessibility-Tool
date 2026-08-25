@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from .catalog import build_catalog, worklog_dir
+from .catalog import WORKLOG_NAME, build_catalog, worklog_dir
 from .catalog.worklog import read_worklog, write_worklog
 from .config import Profile
 from .errors import LatexAllyError
@@ -172,17 +172,53 @@ def validate_description(text: str, *, caption: str | None = None) -> list[Rejec
     return problems
 
 
+
+def _files_for(profile: Profile, scope: str) -> list[Path] | None:
+    """Every ``.tex`` the scope's assignments actually reach, or None.
+
+    None when the scope names no assignment -- a bare glob rather than a
+    document -- which is the signal for the caller to fall back to the glob.
+    """
+    from .build import source_files_for
+    from .discover import discover_assignments
+
+    files: list[Path] = []
+    try:
+        for assignment in discover_assignments(profile, scope):
+            files.extend(source_files_for(assignment, profile))
+    except LatexAllyError:
+        return None
+    return sorted(set(files)) or None
+
+
 def next_tasks(
-    profile: Profile, *, limit: int = 1, genre: str | None = None, refresh: bool = False
+    profile: Profile,
+    *,
+    limit: int = 1,
+    genre: str | None = None,
+    refresh: bool = False,
+    beside: Path | None = None,
+    scope: str | None = None,
 ) -> list[Task]:
     """The highest-value outstanding descriptions.
 
     Ordered by call-site count: describing a figure cited eight times is eight
     times the benefit for the same effort.
+
+    ``scope`` narrows it to one part of the corpus. Without it this always
+    answered for the whole corpus, which under ``--here`` meant standing in
+    ``sp26/hw/10`` and being handed a circuit from another semester -- a
+    perfectly good next task, and not the one that was asked for.
     """
+    # The scope's REAL file set, not a glob of its directory. An assignment's
+    # figures overwhelmingly are not in its own folder -- `sp26/hw/10` draws
+    # from `questionBank/hw/11` -- so globbing the directory reported "nothing
+    # outstanding" for a folder with five undescribed figures. `scan` learned
+    # this already; this command had not.
+    files = _files_for(profile, scope) if scope else None
     if refresh:
-        build_catalog(profile, None, write=True)
-    result = build_catalog(profile, None, write=False)
+        build_catalog(profile, scope, files=files, write=True, beside=beside)
+    result = build_catalog(profile, scope, files=files, write=False, beside=beside)
     root = profile.corpus.root.resolve()
 
     candidates = [entry for entry in result.entries.values() if entry.needs_human]
@@ -217,7 +253,7 @@ def next_tasks(
                 ),
                 still_needed=skeleton.needs if skeleton else [],
                 data_table=[list(row) for row in (skeleton.table if skeleton else [])],
-                worklog=str(worklog_dir(profile) / "…"),
+                worklog=str((beside or worklog_dir(profile)) / "…"),
             )
         )
     return tasks
@@ -232,15 +268,21 @@ def submit(
     notes: str = "",
     author: str = "agent",
     disposition: str | None = None,
+    beside: Path | None = None,
 ) -> dict:
     """Record a proposed description. Never marks it approved.
 
     Raises :class:`LatexAllyError` when the id is unknown, and returns the
     rejection list without writing when validation fails.
     """
-    directory = worklog_dir(profile)
+    # `beside` searches the worklogs scattered through the corpus rather than
+    # one output directory -- the layout `--here` and `--edit` produce.
+    if beside is not None:
+        candidates = sorted(Path(beside).rglob(WORKLOG_NAME))
+    else:
+        candidates = sorted(worklog_dir(profile).glob("*.md"))
     target: Path | None = None
-    for path in sorted(directory.glob("*.md")):
+    for path in candidates:
         if identity in read_worklog(path).entries:
             target = path
             break

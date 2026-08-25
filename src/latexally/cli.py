@@ -396,15 +396,25 @@ def scan(ctx: Context, scope: str | None, no_write: bool) -> None:
         ctx.emit(payload)
     else:
         console = ctx.console
-        console.print(
-            f"[bold]{result.call_sites}[/bold] call sites → "
-            f"[bold]{result.unique}[/bold] unique figures "
-            f"({result.call_sites / max(1, result.unique):.2f}× deduplication)"
-        )
+        # "1.00× deduplication" is a ratio nobody asked for, and at 1.00 it
+        # says nothing at all. The useful fact is how much work the figures
+        # represent, and -- when a figure is reused -- how much of it you get
+        # for free by describing it once.
+        if result.call_sites > result.unique:
+            saved = result.call_sites - result.unique
+            console.print(
+                f"[bold]{result.unique}[/bold] figures to describe, appearing at "
+                f"[bold]{result.call_sites}[/bold] places — describing each once "
+                f"covers {saved} further use(s)"
+            )
+        else:
+            console.print(
+                f"[bold]{result.unique}[/bold] figures to describe, each used once"
+            )
         console.print(f"described: [green]{result.done}[/green]   "
                       f"outstanding: [yellow]{len(result.outstanding)}[/yellow]")
         if not no_write:
-            console.print(f"worklogs: {worklog_dir(ctx.profile)} ({len(result.worklogs)} files)")
+            console.print(f"worklogs: {directory} ({len(result.worklogs)} files)")
         by_genre: dict[str, int] = {}
         for entry in result.outstanding:
             by_genre[entry.genre] = by_genre.get(entry.genre, 0) + 1
@@ -1118,7 +1128,7 @@ def revert(
         sys.exit(EXIT_ERROR)
 
     ctx.emit({"ok": True, "written": write, **plan.as_dict()})
-    if plan.empty:
+    if plan.empty and not plan.kept:
         console.print("[dim]nothing to revert[/dim]")
         sys.exit(EXIT_OK)
 
@@ -1145,6 +1155,13 @@ def revert(
     _listing(f"{tense}restored with git".strip(), plan.restore, root)
     _listing(f"{tense}deleted".strip(), plan.remove, root)
     _listing(f"output {tense}removed".strip(), plan.outputs, None)
+    if plan.kept:
+        console.print(
+            f"[bold]kept[/bold] ({len(plan.kept)}) — descriptions written by hand; "
+            "git never had these, so they are not deleted"
+        )
+        for path in plan.kept[:10]:
+            console.print(f"  {escape(str(path.relative_to(root)))}")
 
     if not write:
         console.print("\n[dim]dry run — pass --write to do it[/dim]")
@@ -1224,7 +1241,13 @@ def agent() -> None:
 
 
 @agent.command("next-task")
-@click.option("--limit", type=int, default=1, help="How many tasks to return.")
+@click.option(
+    "--limit",
+    "-n",
+    type=int,
+    default=1,
+    help="How many tasks to return.",
+)
 @click.option("--genre", default=None, help="Restrict to one genre (circuit, plot, image…).")
 @click.option("--refresh", is_flag=True, help="Re-scan the corpus before selecting.")
 @pass_context
@@ -1232,7 +1255,14 @@ def agent_next_task(ctx: Context, limit: int, genre: str | None, refresh: bool) 
     """Return self-contained description tasks, highest-value first."""
     from .agent import next_tasks
 
-    tasks = next_tasks(ctx.profile, limit=limit, genre=genre, refresh=refresh)
+    tasks = next_tasks(
+        ctx.profile,
+        limit=limit,
+        genre=genre,
+        refresh=refresh,
+        beside=ctx.beside,
+        scope=ctx.here_scope,
+    )
     payload = {"count": len(tasks), "tasks": [task.as_dict() for task in tasks]}
     if ctx.as_json:
         ctx.emit(payload)
@@ -1284,6 +1314,7 @@ def agent_submit(
             notes=notes,
             author=author,
             disposition=disposition,
+            beside=ctx.beside,
         )
     except LatexAllyError as exc:
         if ctx.as_json:
