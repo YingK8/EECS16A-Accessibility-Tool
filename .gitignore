@@ -33,3 +33,6 @@ venv/
 # bare `target/` would also swallow anything a course names that.
 /mathspeech-driver/target/
 /vendor/MathCAT/target/
+
+# macOS Finder metadata. Tracked once, and it blocked a branch checkout.
+.DS_Store
