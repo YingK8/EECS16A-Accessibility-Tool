@@ -456,6 +456,11 @@ def apply_descriptions(
     # makes the worklog list every figure instead of the handful reachable
     # before the repair. Ids are content hashes, so the two agree on any figure
     # both can see.
+    # In `edit` mode the worklog belongs beside the .tex, in the corpus. The
+    # scan runs against the mirror -- that is where the document is whole --
+    # so the sources are the mirror's and the destination is the corpus, which
+    # is exactly the pair of roots these two arguments name.
+    beside = profile.corpus.root.resolve() if config.output.edits_sources else None
     build_catalog(
         profile,
         files=files,
@@ -464,9 +469,10 @@ def apply_descriptions(
         # The mirror repeats the corpus's directory layout, so sharding against
         # its root yields exactly the worklog names a corpus scan would.
         shard_root=config.output.tex_dir(),
+        beside=beside,
     )
 
-    entries = load_entries(profile, config.output.root)
+    entries = load_entries(profile, config.output.root, beside=beside)
     if not entries:
         return 0
 
@@ -967,6 +973,9 @@ class BuildReport:
     #: Not an accessibility number: these are LaTeX constructs that pdfLaTeX
     #: accepts and tagging does not, fixed so the document builds at all.
     rewrites: dict[str, int] = field(default_factory=dict)
+    #: Corpus files this run overwrote, in `edit` mode. Empty everywhere else,
+    #: and the honest answer to "what did it touch" when someone asks later.
+    edited: list[str] = field(default_factory=list)
     #: Fraction of strongly-differing pixels vs the untouched original, 0..1.
     pixel_diff: float | None = None
     #: Set when the comparison could not be made, with the reason.
@@ -1327,6 +1336,15 @@ def build_assignment(
         report.note = "dry run: nothing written"
         return report
 
+    # Before the first byte reaches the corpus, and that is the whole point of
+    # the position: `apply_descriptions` below writes the worklog beside the
+    # sources in `edit` mode, so a guard placed after it would be checking a
+    # tree this run had already dirtied. `build_run` checks once up front too,
+    # so a multi-document run cannot get half way; this one is for the callers
+    # that reach here directly -- the agent API and the tests both do.
+    if config.output.in_place:
+        require_clean_worktree(profile.corpus.root.resolve())
+
     # Approved descriptions become real /Alt HERE, in the mirror `materialise`
     # just wrote -- never in the corpus. Without this step a run scans figures,
     # writes worklogs, and then builds a PDF whose figures still carry
@@ -1361,14 +1379,11 @@ def _compile_assignment(
     # conversion is now always mirrored and the only thing that reaches the
     # corpus is the finished document, beside the original it was built from.
     if config.output.in_place:
-        # Additive, but not harmless: a PDF of the same name may already sit
-        # there. The clean-worktree guard is what makes that revertible, and it
-        # is the same one this mode has always used.
-        #
-        # `build_run` checks this once up front so a run cannot get half way
-        # before noticing. This one stays for callers that reach
-        # `build_assignment` directly -- the agent API and the tests both do.
-        require_clean_worktree(profile.corpus.root.resolve())
+        # The guard for a direct caller used to live here. It cannot: by this
+        # point `apply_descriptions` has written the worklog beside the sources
+        # -- in `edit` mode that is inside the corpus -- so the guard tripped
+        # over this run's own file and refused every build. It now runs in
+        # `build_assignment`, before anything is written anywhere.
         pdf_dir = (profile.corpus.root / assignment.path).resolve()
     else:
         pdf_dir = config.output.pdf_dir()
@@ -1434,7 +1449,115 @@ def _compile_assignment(
     if not config.output.keep_logs and report.log and report.log.is_file():
         report.log.unlink()
         report.log = None
+    # Only now, and only if it built. `edit` overwrites course material, and
+    # material overwritten with sources that do not compile is the worst thing
+    # this tool could do to a repository it was pointed at.
+    if config.write and config.output.edits_sources and report.ok:
+        report.edited = [str(path) for path in copy_back(prepared, config, profile)]
     return report
+
+
+def copy_back(prepared: Prepared, config: RunConfig, profile: Profile) -> list[Path]:
+    r"""Write the mirror's converted sources back over the corpus originals.
+
+    Only ``edit`` mode reaches here, and only after the document has compiled.
+    Overwriting course material with sources that do not build would be the
+    worst possible failure mode of this tool, so the successful PDF is the
+    precondition.
+
+    Two rules decide what comes back, and both are about what must NOT:
+
+    1. **A file must already exist in the corpus.** The mirror holds more than
+       converted originals -- ``repair_missing`` copies stand-in questions from
+       other semesters to resolve dangling includes, and
+       ``repair.write_gap_note`` writes stubs for the ones it cannot resolve.
+       Those exist so a historical assignment can be *built*; writing them into
+       the course repository would be this tool inventing course material.
+    2. **Never the baseline.** ``<stem>-original.tex`` is the untouched copy the
+       pixel diff measures against. It is an artefact of the comparison, not
+       output, and it would land beside the real driver as a duplicate.
+
+    The package's own ``.sty`` files are then copied in beside the driver. The
+    mirror never needed them on disk -- it reached them through ``TEXINPUTS``
+    (see :func:`materialise`) -- but the whole point of this mode is a folder
+    that builds with a bare ``pdflatex``, and a bare ``pdflatex`` has no such
+    path. They are named ``latexally-*``, which is what lets
+    :mod:`latexally.revert` recognise them again.
+    """
+    mirror_root = config.output.tex_dir().resolve()
+    corpus_root = profile.corpus.root.resolve()
+    written: list[Path] = []
+
+    for source in sorted(prepared.work_dir.rglob("*")):
+        if not source.is_file() or source.name.endswith(f"-{ORIGINAL_SUFFIX}.tex"):
+            continue
+        try:
+            relative = source.resolve().relative_to(mirror_root)
+        except ValueError:
+            continue
+        target = corpus_root / relative
+        if not target.is_file():
+            continue  # rule 1: repaired stand-ins and gap notes stay in the mirror
+        if target.read_bytes() == source.read_bytes():
+            continue
+        target.write_bytes(source.read_bytes())
+        written.append(target)
+
+    written.extend(_install_packages(prepared.work_dir, corpus_root, prepared))
+    return written
+
+
+def _install_packages(
+    work_dir: Path, corpus_root: Path, prepared: Prepared
+) -> list[Path]:
+    """Put the ``latexally-*.sty`` the driver loads beside it, for bare pdflatex."""
+    if not PACKAGE_TEX_DIR.is_dir():
+        return []
+    target_dir = (corpus_root / prepared.assignment.path).resolve()
+    wanted = {
+        Path(name).stem
+        for name in _package_names(prepared.driver)
+    }
+    installed: list[Path] = []
+    for package in sorted(PACKAGE_TEX_DIR.iterdir()):
+        if package.suffix.lower() not in (".sty", ".cls") or package.stem not in wanted:
+            continue
+        target = target_dir / package.name
+        if target.is_file() and target.read_bytes() == package.read_bytes():
+            continue
+        shutil.copy2(package, target)
+        installed.append(target)
+    return installed
+
+
+def _package_names(driver: Path) -> set[str]:
+    r"""Every ``latexally-*`` package the converted driver loads, transitively.
+
+    Read from the file rather than derived from the run's toggles: the preamble
+    the conversion injects is the authority on what the document needs, and a
+    package that loads another (``latexally-ee16`` requires ``latexally-core``)
+    must bring it along or the bare build fails on the second file.
+    """
+    seen: set[str] = set()
+    frontier = [driver]
+    pattern = re.compile(r"\\(?:usepackage|RequirePackage|documentclass)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}")
+    while frontier:
+        current = frontier.pop()
+        try:
+            text = current.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in pattern.finditer(text):
+            for name in match.group(1).split(","):
+                name = name.strip()
+                if not name.startswith("latexally") or name in seen:
+                    continue
+                seen.add(name)
+                for suffix in (".sty", ".cls"):
+                    candidate = PACKAGE_TEX_DIR / f"{name}{suffix}"
+                    if candidate.is_file():
+                        frontier.append(candidate)
+    return seen
 
 
 def source_files_for(assignment: Assignment, profile: Profile) -> list[Path]:
@@ -1476,6 +1599,10 @@ def describe_run(config: RunConfig, profile: Profile) -> dict:
         files=files,
         write=config.write,
         output_root=config.output.root if config.write else None,
+        # Scanned from the corpus here, so the corpus is both source root and
+        # destination -- and the worklog this reports is the same file the
+        # build's own scan will refresh later.
+        beside=profile.corpus.root.resolve() if config.output.edits_sources else None,
     )
     return {
         "scanned": True,

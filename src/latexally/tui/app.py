@@ -99,7 +99,7 @@ from .summary import (
     swatch,
 )
 
-__all__ = ["Checklist", "Choice", "LatexAllyApp", "Radio"]
+__all__ = ["Checklist", "Choice", "LatexAllyApp", "Radio", "RevertScreen"]
 
 def _plural(count: int) -> str:
     return "y" if count == 1 else "ies"
@@ -1054,17 +1054,31 @@ class OutputScreen(StepScreen):
                 Radio(
                     "mirror — write converted .tex + PDFs to the output tree; "
                     "corpus read-only",
-                    value=not output.in_place,
+                    value=output.write_mode == "mirror",
                     name="mirror",
                 ),
                 Radio(
-                    "in-place — needs a clean git worktree; the PDF goes beside "
-                    "the original",
-                    value=output.in_place,
+                    "in-place — the PDF goes beside the original, in the "
+                    "corpus; no .tex is edited",
+                    value=output.write_mode == "in-place",
                     name="in-place",
+                ),
+                Radio(
+                    "edit — ALSO rewrites the corpus .tex, so the folder "
+                    "builds with a bare pdflatex. Undo with r",
+                    value=output.edits_sources,
+                    name="edit",
                 ),
                 id="write-mode",
             )
+        # Said once, below both modes it applies to. It used to live inside the
+        # in-place label, which had no room for it and no way to also cover
+        # edit -- the mode where it matters far more.
+        yield Static(
+            "in-place and edit both need a clean git worktree. That is what "
+            "makes them undoable.",
+            classes="hint",
+        )
         with Horizontal(classes="row"):
             yield Static("Root   type", classes="gutter")
             yield Input(value=str(output.root), id="root", compact=True)
@@ -1155,15 +1169,27 @@ class ReviewScreen(StepScreen):
 
         config, profile = self.config, self.profile
         count = len(config.assignments)
-        self.query_one("#verdict", Static).update(
-            Content(
+        # Three modes, three sentences. The one that rewrites course material
+        # must not read like the one that only drops a PDF next to it, and the
+        # last screen before anything is written is where that has to be said.
+        if config.output.edits_sources:
+            verdict = (
+                f"Build {count} assignment(s), write each PDF into the corpus, "
+                "AND REWRITE THE .tex FILES THEMSELVES?\n"
+                "Your course sources will be modified. Press r at any time to "
+                "undo it."
+            )
+        elif config.output.in_place:
+            verdict = (
                 f"Build {count} assignment(s) and write each PDF into the corpus, "
-                "beside the document it came from?"
-                if config.output.in_place
-                else f"Build {count} assignment(s) into {config.output.root}? "
+                "beside the document it came from? (no .tex is edited)"
+            )
+        else:
+            verdict = (
+                f"Build {count} assignment(s) into {config.output.root}? "
                 "(your corpus is not modified)"
             )
-        )
+        self.query_one("#verdict", Static).update(Content(verdict))
         self.query_one("#settings", Static).update(
             Content(
                 "\n".join(
@@ -1482,6 +1508,116 @@ class BuildScreen(Screen):
 
 
 # ---------------------------------------------------------------------- #
+# revert
+# ---------------------------------------------------------------------- #
+
+
+class RevertScreen(Screen):
+    """Undo a run, after showing exactly what that means.
+
+    Reachable with ``r`` from anywhere, and deliberately not a step: reverting
+    is not part of converting, and putting it in the wizard would make it
+    something you walk past on the way to a build.
+
+    It opens on the plan, never on the act. The three groups are listed by name
+    and by count, and ``y`` is the only key that writes -- because the thing
+    being undone is somebody's course material and "I pressed enter out of
+    habit" must not be able to reach it.
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Back"),
+        Binding("y", "confirm", "Revert"),
+        Binding("q", "app.quit", "Quit"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Static("Revert", classes="heading")
+        yield Static(
+            "Puts your .tex back with git and deletes what this tool wrote. "
+            "Files it does not recognise are left alone.",
+            classes="hint",
+        )
+        with VerticalScroll(id="body"):
+            yield Static("", id="revert-plan")
+        yield Static("", id="revert-note", classes="reason")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self._plan = None
+        self._load()
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action == "confirm":
+            # Greyed rather than dropped, so the footer still answers "why can
+            # I not press y" while the plan is loading or empty.
+            return True if self._plan is not None and not self._plan.empty else None
+        return True
+
+    def _load(self) -> None:
+        from ..revert import plan_revert
+
+        try:
+            self._plan = plan_revert(self.app.config, self.app.profile)
+        except LatexAllyError as exc:
+            self.query_one("#revert-plan", Static).update(Content(str(exc)))
+            self.refresh_bindings()
+            return
+        self.query_one("#revert-plan", Static).update(self._describe(self._plan))
+        self.refresh_bindings()
+
+    def _describe(self, plan) -> Content:
+        if plan.empty:
+            return Content("Nothing to revert — the corpus is clean and there "
+                           "is no output tree.")
+        lines: list[str] = []
+        root = plan.root
+
+        def group(title: str, paths: list, relative: bool) -> None:
+            if not paths:
+                return
+            lines.append(f"{title} ({len(paths)})")
+            for path in paths[:12]:
+                try:
+                    shown = path.relative_to(root) if relative else path
+                except ValueError:
+                    shown = path
+                lines.append(f"  {shown if relative else show_path(path)}")
+            if len(paths) > 12:
+                lines.append(f"  …{len(paths) - 12} more")
+            lines.append("")
+
+        group("Restored with git", plan.restore, True)
+        group("Deleted", plan.remove, True)
+        group("Output removed", plan.outputs, False)
+        return Content("\n".join(lines).rstrip())
+
+    def action_close(self) -> None:
+        self.app.pop_screen()
+
+    def action_confirm(self) -> None:
+        from ..revert import do_revert
+
+        if self._plan is None or self._plan.empty:
+            return
+        try:
+            do_revert(self._plan)
+        except LatexAllyError as exc:
+            self.say(str(exc))
+            return
+        self.say(
+            f"Reverted: {len(self._plan.restore)} restored, "
+            f"{len(self._plan.remove)} deleted. esc to go back."
+        )
+        self._load()
+
+    def say(self, text: str) -> None:
+        note = self.query_one("#revert-note", Static)
+        note.update(Content(text))
+        note.display = bool(text)
+
+
+# ---------------------------------------------------------------------- #
 # the app
 # ---------------------------------------------------------------------- #
 
@@ -1503,6 +1639,7 @@ class LatexAllyApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("s", "save", "Save run.yaml"),
+        Binding("r", "revert", "Revert"),
     ]
     CSS = """
     Screen { background: transparent; }
@@ -1576,6 +1713,16 @@ class LatexAllyApp(App):
         self.config = replace(self.config, write=True)
         self.should_run = True
         self.push_screen(BuildScreen())
+
+    def action_revert(self) -> None:
+        """Undo a run. Available from every step, including after the build.
+
+        Not a wizard step: it is the opposite of one. Pushed rather than
+        switched to, so escape puts the user back exactly where they were.
+        """
+        if isinstance(self.screen, RevertScreen):
+            return
+        self.push_screen(RevertScreen())
 
     def action_save(self, path: Path | None = None) -> Path:
         path = path or (self.config.output.root / "run.yaml")

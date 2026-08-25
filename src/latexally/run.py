@@ -44,7 +44,7 @@ __all__ = [
     "normalise_hex",
 ]
 
-WRITE_MODES = ("mirror", "in-place")
+WRITE_MODES = ("mirror", "in-place", "edit")
 COLOR_MODES = ("conforming", "house")
 ALT_MODES = ("worklog", "placeholders", "off")
 
@@ -362,9 +362,16 @@ class Output:
                  relative layout.
     ``in-place`` identical, except the finished PDF is written beside the
                  document it was built from instead of into ``root/pdf``. The
-                 corpus ``.tex`` is still never edited -- the mode used to mean
-                 exactly that, and the PDF is the only thing anybody wanted out
-                 of it.
+                 corpus ``.tex`` is still never edited.
+    ``edit``     everything ``in-place`` does, and the converted sources are
+                 written back over the corpus originals, so the folder builds
+                 with a bare ``pdflatex`` and no TEXINPUTS. This is the only
+                 mode that edits course material, and it is the reason
+                 ``latexally revert`` exists.
+
+    The distinction between the last two is not pedantry. ``in-place`` was for
+    years the mode whose name promised source edits and delivered a PDF, and
+    the promise is now kept by a mode that says so.
     """
 
     root: Path = Path("ally-out")
@@ -394,7 +401,13 @@ class Output:
 
     @property
     def in_place(self) -> bool:
-        return self.write_mode == "in-place"
+        """The PDF goes beside the document. ``edit`` implies it."""
+        return self.write_mode in ("in-place", "edit")
+
+    @property
+    def edits_sources(self) -> bool:
+        """The corpus ``.tex`` is rewritten. Only ``edit`` does this."""
+        return self.write_mode == "edit"
 
     def path_for(self, slug: str) -> Path:
         """Where one artifact goes, as an ABSOLUTE path.

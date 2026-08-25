@@ -1,0 +1,221 @@
+r"""Undo a run: put the corpus back, and take the output tree with it.
+
+``edit`` mode rewrites course material. Every other safeguard in this package
+is about making sure what it writes is correct; this module is the one that
+assumes it was not, and gives the folder back.
+
+Three groups, because they need three different mechanisms and confusing them
+is how a revert destroys something:
+
+``restore``  tracked files the run modified. ``git checkout`` is the whole
+             mechanism -- the corpus is a git repository and
+             :func:`~latexally.build.require_clean_worktree` refuses to start
+             an in-place run unless it is clean, so at the moment a revert runs
+             the modifications in scope are this tool's.
+``remove``   files the run *created* inside the corpus. Git cannot restore a
+             file that was never committed, so these are deleted by name.
+``outputs``  the run's own output tree, which is entirely this tool's and goes
+             wholesale.
+
+**Why not ``git clean``.** It is the obvious way to do the middle group and it
+is wrong here. The course repository ignores ``*.pdf``, ``*.log``, ``*.aux``
+and ``*.annotations``, and holds 63 PDFs and 29 logs a TA built by hand.
+``git clean -fdx`` deletes every one of them, and nothing in git would bring
+them back. So the middle group is matched against the names this tool writes
+and nothing else: an unrecognised file is left alone, which is the failure
+worth having.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .catalog import WORKLOG_NAME
+from .config import Profile
+from .errors import LatexAllyError
+from .run import ARTIFACTS, RunConfig
+
+__all__ = ["RevertPlan", "plan_revert", "do_revert"]
+
+
+def _artifact_globs() -> tuple[str, ...]:
+    """Glob patterns for everything this tool writes into a corpus folder.
+
+    Built from the suffixes the build engine itself stamps on its output, so a
+    rename there cannot leave this module quietly matching nothing.
+    """
+    from .build import ACCESSIBLE_SUFFIX, ORIGINAL_SUFFIX
+
+    stamped = tuple(
+        f"*-{suffix}.{extension}"
+        for suffix in (ACCESSIBLE_SUFFIX, ORIGINAL_SUFFIX)
+        # .pdf is the deliverable; the rest are what pdflatex leaves behind and
+        # `_collect_log` only tidies when its moves succeed.
+        for extension in ("pdf", "log", "aux", "out", "annotations", "synctex.gz")
+    )
+    # The worklog, and the packages `copy_back` installs so a bare pdflatex can
+    # find them. Both are named by this package, which is what makes them
+    # recognisable a week later.
+    return stamped + (WORKLOG_NAME, "latexally-*.sty", "latexally-*.cls")
+
+
+@dataclass(slots=True)
+class RevertPlan:
+    """What a revert would do. Nothing here has happened yet."""
+
+    root: Path
+    restore: list[Path] = field(default_factory=list)
+    remove: list[Path] = field(default_factory=list)
+    outputs: list[Path] = field(default_factory=list)
+
+    @property
+    def empty(self) -> bool:
+        return not (self.restore or self.remove or self.outputs)
+
+    def as_dict(self) -> dict:
+        return {
+            "root": str(self.root),
+            "restore": [str(path) for path in self.restore],
+            "remove": [str(path) for path in self.remove],
+            "outputs": [str(path) for path in self.outputs],
+        }
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(root), *args], capture_output=True, text=True, check=False
+    )
+
+
+def _require_repository(root: Path) -> None:
+    """Revert restores with git, so refuse early and by name when it cannot."""
+    if shutil.which("git") is None:
+        raise LatexAllyError(
+            "revert restores your .tex with git, and git is not installed",
+            hint="install git, or restore the files from your own backup",
+        )
+    inside = _git(root, "rev-parse", "--is-inside-work-tree")
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        raise LatexAllyError(
+            f"{root} is not a git repository, so there is nothing to restore from",
+            hint=(
+                "only `edit` mode changes the corpus, and it refuses to run "
+                "outside a clean git repository for exactly this reason"
+            ),
+        )
+
+
+def _modified(root: Path, scope: Path | None) -> list[Path]:
+    """Tracked files git reports as changed, inside ``scope``.
+
+    Porcelain v1, read by field rather than by column: a rename is
+    ``R  old -> new`` and taking the first path would restore the wrong one.
+    """
+    args = ["status", "--porcelain", "--untracked-files=no"]
+    if scope is not None:
+        args += ["--", str(scope)]
+    result = _git(root, *args)
+    paths: list[Path] = []
+    for line in result.stdout.splitlines():
+        if not line.strip():
+            continue
+        entry = line[3:]
+        if " -> " in entry:
+            entry = entry.split(" -> ", 1)[1]
+        paths.append((root / entry.strip().strip('"')).resolve())
+    return sorted(set(paths))
+
+
+def plan_revert(
+    config: RunConfig, profile: Profile, scope: str | None = None
+) -> RevertPlan:
+    """Work out what undoing this run means. Writes nothing."""
+    root = profile.corpus.root.resolve()
+    _require_repository(root)
+
+    target = (root / scope).resolve() if scope else root
+    if target != root and root not in target.parents:
+        raise LatexAllyError(
+            f"scope {scope!r} is outside the corpus root {root}",
+            hint="pass a path inside the corpus, or leave it off for all of it",
+        )
+
+    plan = RevertPlan(root=root)
+    plan.restore = _modified(root, None if target == root else target)
+
+    # One `git ls-files` for the whole scope, not one `--error-unmatch` per
+    # candidate: a corpus-wide revert matches thousands of files and that is
+    # thousands of subprocesses.
+    tracked = _tracked(root, None if target == root else target)
+    for pattern in _artifact_globs():
+        for path in target.rglob(pattern):
+            # Deleted only if git has never seen it. A `latexally-core.sty` a
+            # course committed itself is theirs, and `git checkout` owns it.
+            resolved = path.resolve()
+            if path.is_file() and resolved not in tracked:
+                plan.remove.append(resolved)
+    plan.remove = sorted(set(plan.remove))
+
+    seen: set[Path] = set()
+    for slug, _, _ in ARTIFACTS:
+        directory = config.output.path_for(slug)
+        if directory.is_dir() and directory not in seen:
+            seen.add(directory)
+            plan.outputs.append(directory)
+    for name in ("run.yaml", "build-log.txt"):
+        stray = (config.output.root / name).resolve()
+        if stray.is_file():
+            plan.outputs.append(stray)
+    return plan
+
+
+def _tracked(root: Path, scope: Path | None) -> set[Path]:
+    """Every path git has under version control in ``scope``, resolved."""
+    args = ["ls-files", "-z"]
+    if scope is not None:
+        args += ["--", str(scope)]
+    result = _git(root, *args)
+    return {
+        (root / entry).resolve()
+        for entry in result.stdout.split("\0")
+        if entry
+    }
+
+
+def do_revert(plan: RevertPlan) -> RevertPlan:
+    """Carry the plan out, then check that it worked.
+
+    The verification is not decoration. A revert that half-succeeds leaves
+    course material in a state nobody chose, and the person who ran it has
+    every reason to believe it is clean.
+    """
+    if plan.restore:
+        relative = [str(path.relative_to(plan.root)) for path in plan.restore]
+        result = _git(plan.root, "checkout", "--", *relative)
+        if result.returncode != 0:
+            raise LatexAllyError(
+                f"git could not restore {len(relative)} file(s): "
+                f"{result.stderr.strip()}",
+                hint="resolve it in the corpus, then run revert again",
+            )
+    for path in plan.remove:
+        path.unlink(missing_ok=True)
+    for path in plan.outputs:
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
+
+    left = _modified(plan.root, None)
+    if left:
+        listed = "\n    ".join(str(path) for path in left[:8])
+        more = f"\n    …and {len(left) - 8} more" if len(left) > 8 else ""
+        raise LatexAllyError(
+            f"revert ran but {len(left)} file(s) are still modified:\n    "
+            f"{listed}{more}",
+            hint="these were not this tool's to restore; `git diff` shows them",
+        )
+    return plan

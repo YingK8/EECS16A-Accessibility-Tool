@@ -259,7 +259,32 @@ def test_mirror_is_the_default_write_mode():
     """The safe default: the corpus is read-only unless asked otherwise."""
     assert Output().write_mode == "mirror"
     assert Output().in_place is False
+    assert Output().edits_sources is False
     assert RunConfig().write is False
+
+
+def test_edit_is_a_superset_of_in_place():
+    """`edit` puts the PDF beside the original too, so it must answer to both.
+
+    The clean-worktree guard and the PDF destination are both keyed on
+    `in_place`; a mode that edited sources but reported `in_place is False`
+    would write into the corpus with no guard at all.
+    """
+    assert Output(write_mode="edit").in_place is True
+    assert Output(write_mode="edit").edits_sources is True
+    assert Output(write_mode="in-place").edits_sources is False
+
+
+def test_edit_mode_round_trips_through_yaml():
+    """A run.yaml that says `edit` must still say it after a reload.
+
+    This is the setting with consequences for somebody's course repository, so
+    it is the one that must not quietly degrade to `mirror` on replay.
+    """
+    config = RunConfig(output=Output(root="out", write_mode="edit"))
+    restored = RunConfig.from_yaml(config.to_yaml())
+    assert restored.output.write_mode == "edit"
+    assert restored.output.edits_sources is True
 
 
 def test_a_clashing_environment_is_saved_and_restored_not_merely_freed(profile):

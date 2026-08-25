@@ -128,6 +128,54 @@ latexally check bank --pdf out.pdf --log out.log
 
 Exit codes: `0` clean, `1` findings, `2` could not run.
 
+### One week's homework, in place
+
+The default is a mirror: your `.tex` is read, never written, and the converted
+copy goes to `ally-out/`. That is the right default and the wrong one for the
+weekly job, where you want the folder itself to build.
+
+`--edit` writes the conversion back over the sources, drops the packages it
+needs beside them, and puts the alt-text worklog in the same folder. After it,
+a bare `pdflatex` produces the tagged PDF:
+
+```bash
+cd questionBank/sp26/hw/13
+
+latexally --corpus "$(git rev-parse --show-toplevel)" \
+          build "$(git rev-parse --show-prefix)" --write --edit
+
+pdflatex prob13.tex        # tagged, no TEXINPUTS, no output directory
+```
+
+Both paths come from git, so the line is the same in every assignment folder —
+`--show-toplevel` is the corpus root and `--show-prefix` is the folder you are
+standing in. It is worth an alias:
+
+```bash
+alias ally='latexally --corpus "$(git rev-parse --show-toplevel)" \
+                      build "$(git rev-parse --show-prefix)" --write --edit'
+```
+
+Why both, rather than just the folder: 16A drivers reach out of their own
+directory — `\usepackage{../../../ee16}`, `\input{../../../questionBank/hw/13/q_perpetual_motion}`
+— so the folder alone is not a corpus. Roughly three quarters of sp26 graphics
+live in the shared bank, not in the assignment.
+
+Undo all of it:
+
+```bash
+latexally --corpus "$(git rev-parse --show-toplevel)" \
+          revert "$(git rev-parse --show-prefix)" --write
+```
+
+`revert` restores your `.tex` with `git checkout` and deletes what the tool
+wrote: the `*-accessible.*` PDFs and logs, `descriptions.yaml`, and the
+`latexally-*.sty` it installed. It leaves anything it does not recognise alone
+— your own hand-built PDFs are ignored by git and would be gone forever if it
+ran `git clean`. Drop `--write` to see the list first; that is the default.
+
+`--edit` refuses on a dirty worktree, which is what makes the undo total.
+
 ### Output
 
 ```
@@ -139,6 +187,11 @@ ally-out/
   baseline/      the untouched originals, for the before/after comparison
   run.yaml       this run's settings, replayable
 ```
+
+Under `--edit` the converted sources are not here but in the corpus, over the
+originals, and each folder carries its own `descriptions.yaml` instead of one
+sharded `descriptions/` directory. `ally-out/` still collects the logs, the
+baseline and the before/after comparison. `latexally revert` removes both.
 
 Every version of each assignment is converted, not just the solutions. `sol9.tex`
 and `prob9.tex` share one body and differ only in whether `\sol` prints, and the

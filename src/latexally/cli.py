@@ -729,6 +729,15 @@ def _report_table(reports: list) -> Table:
     help="Write the PDF beside the original instead of into the output directory. Refuses on a dirty git worktree.",
 )
 @click.option(
+    "--edit",
+    is_flag=True,
+    help=(
+        "Rewrite the corpus .tex in place, so the folder builds with a bare "
+        "pdflatex. Implies --in-place. Refuses on a dirty git worktree; undo "
+        "with `latexally revert`."
+    ),
+)
+@click.option(
     "--jobs",
     "-j",
     type=click.IntRange(1, 64),
@@ -750,6 +759,7 @@ def build(
     output: Path | None,
     write: bool,
     in_place: bool,
+    edit: bool,
     jobs: int | None,
     question_tags: bool,
     house_colors: bool,
@@ -765,8 +775,11 @@ def build(
     from .run import AltChoice, ColorChoice
 
     config = _load_run_config(ctx, config_path, assignments, output, write)
-    if in_place:
-        config.output = replace(config.output, write_mode="in-place")
+    if edit or in_place:
+        # `edit` wins: it is a superset, and asking for both is not a conflict.
+        config.output = replace(
+            config.output, write_mode="edit" if edit else "in-place"
+        )
     if jobs is not None:
         config.jobs = jobs
     if question_tags:
@@ -935,6 +948,91 @@ def _print_failures(console: Console, failures: list) -> None:
             "tagging cannot compile, without rebuilding, and `--fix` rewrites "
             "the ones that can be rewritten.[/dim]"
         )
+
+
+@main.command()
+@click.argument("scope", required=False)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="The output tree to delete. Defaults to ally-out.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, exists=True),
+    help="Read the artifact locations from the run.yaml that produced them.",
+)
+@click.option("--write", is_flag=True, help="Actually revert (default is a dry run).")
+@pass_context
+def revert(
+    ctx: Context,
+    scope: str | None,
+    output: Path | None,
+    config_path: Path | None,
+    write: bool,
+) -> None:
+    """Undo a run: restore the .tex and delete what the run produced.
+
+    A dry run by default, like `apply`. It prints the three groups it would
+    touch — files git will restore, files it will delete by name, and the
+    output tree — so nothing is a surprise.
+
+    Pass the run's own `--config ally-out/run.yaml` when its artifacts were
+    relocated; without it the defaults are assumed and a relocated directory is
+    left behind.
+    """
+    from .revert import do_revert, plan_revert
+    from .tui.summary import show_path
+
+    config = _load_run_config(ctx, config_path, (), output, write)
+    console = ctx.console
+    try:
+        plan = plan_revert(config, ctx.profile, scope)
+        if write:
+            do_revert(plan)
+    except LatexAllyError as exc:
+        if ctx.as_json:
+            ctx.emit({"ok": False, "error": str(exc)})
+        else:
+            console.print(f"[red]error:[/red] {escape(str(exc))}")
+            if getattr(exc, "hint", None):
+                console.print(f"[dim]{escape(exc.hint)}[/dim]")
+        sys.exit(EXIT_ERROR)
+
+    ctx.emit({"ok": True, "written": write, **plan.as_dict()})
+    if plan.empty:
+        console.print("[dim]nothing to revert[/dim]")
+        sys.exit(EXIT_OK)
+
+    root = ctx.profile.corpus.root.resolve()
+
+    def _listing(title: str, paths: list[Path], relative_to: Path | None) -> None:
+        if not paths:
+            return
+        console.print(f"[bold]{title}[/bold] ({len(paths)})")
+        for path in paths[:10]:
+            shown: Path | str = path
+            if relative_to is not None:
+                try:
+                    shown = path.relative_to(relative_to)
+                except ValueError:
+                    shown = show_path(path)
+            else:
+                shown = show_path(path)
+            console.print(f"  {escape(str(shown))}")
+        if len(paths) > 10:
+            console.print(f"  [dim]…{len(paths) - 10} more[/dim]")
+
+    tense = "" if write else "would be "
+    _listing(f"{tense}restored with git".strip(), plan.restore, root)
+    _listing(f"{tense}deleted".strip(), plan.remove, root)
+    _listing(f"output {tense}removed".strip(), plan.outputs, None)
+
+    if not write:
+        console.print("\n[dim]dry run — pass --write to do it[/dim]")
+    sys.exit(EXIT_OK)
 
 
 @main.command("run")

@@ -35,6 +35,7 @@ from latexally.tui.app import (
     LatexAllyApp,
     OutputScreen,
     ReviewScreen,
+    RevertScreen,
     ScopeScreen,
     StandardsScreen,
 )
@@ -1315,3 +1316,51 @@ async def test_scanning_clears_the_list_and_says_so(profile: Profile, monkeypatc
         assert screen.query_one("#assignments", SelectionList).option_count == 3
         # The tick from the other scope stands.
         assert app.config.assignments == ("sem/dis/01A",)
+
+
+# ---------------------------------------------------------------------- #
+# revert
+# ---------------------------------------------------------------------- #
+
+
+async def test_r_opens_revert_from_any_step(profile: Profile):
+    """`r` is app-level on purpose: undoing is not a step in converting.
+
+    Reachable from the first screen without walking the wizard, and pushed
+    rather than switched to, so escape returns to exactly where it was called.
+    """
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        opened_from = type(app.screen)
+        await press(pilot, "r")
+        assert isinstance(app.screen, RevertScreen)
+        await press(pilot, "escape")
+        assert isinstance(app.screen, opened_from)
+
+
+async def test_revert_says_what_it_would_do_before_doing_it(profile: Profile):
+    """The screen opens on the plan. Nothing is written until `y`."""
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await press(pilot, "r")
+        shown = visible(app)
+        assert "Revert" in shown
+        # A profile whose corpus is a bare tmp_path is not a git repository, so
+        # the screen must say that rather than offer a key that cannot work.
+        assert "git" in shown.lower()
+
+
+async def test_revert_cannot_be_confirmed_without_a_plan(profile: Profile):
+    """`y` is greyed, not missing: the footer still answers "why not".
+
+    A key listed but inert sends someone looking for a result they were
+    promised; a key that has vanished gives them no way to ask what happened
+    to it.
+    """
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await press(pilot, "r")
+        assert app.screen.check_action("confirm", ()) is None

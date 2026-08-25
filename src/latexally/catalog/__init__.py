@@ -18,7 +18,7 @@ from ..scan import FigureRef, scan_corpus
 from ..texlex import TexSource
 from .worklog import Entry, Worklog, merge, read_worklog, write_worklog
 
-__all__ = ["CatalogResult", "build_catalog", "load_entries", "worklog_dir"]
+__all__ = ["CatalogResult", "WORKLOG_NAME", "build_catalog", "load_entries", "worklog_dir"]
 
 
 @dataclass(slots=True)
@@ -92,6 +92,27 @@ def _refuse_inside_corpus(directory: Path, profile: Profile) -> None:
 
 
 
+#: What a worklog is called when it lives beside the sources it describes,
+#: rather than sharded by name into an output directory. One per folder, so a
+#: TA opening a homework sees exactly one file to fill in.
+WORKLOG_NAME = "descriptions.yaml"
+
+
+def _dir_for(reference: FigureRef, root: Path) -> str:
+    """The source's own directory, relative to ``root`` -- ``""`` at the root.
+
+    The same fact :func:`_shard_for` flattens into a name, kept unflattened so
+    a worklog can be written back into that directory. Deriving both from one
+    place is what keeps ``questionBank-hw-11.yaml`` and
+    ``questionBank/hw/11/descriptions.yaml`` describing the same figures.
+    """
+    try:
+        relative = reference.file.resolve().relative_to(root)
+    except ValueError:
+        return ""
+    return relative.parent.as_posix().strip("/").lstrip(".").strip("/")
+
+
 def _shard_for(reference: FigureRef, root: Path) -> str:
     """Which worklog file an entry belongs to.
 
@@ -115,6 +136,7 @@ def build_catalog(
     files: list[Path] | None = None,
     output_root: Path | None = None,
     shard_root: Path | None = None,
+    beside: Path | None = None,
 ) -> CatalogResult:
     """Scan a scope and refresh its worklogs.
 
@@ -126,6 +148,13 @@ def build_catalog(
     exists for scanning the build mirror, whose layout repeats the corpus's but
     whose paths are not under it -- without it every mirrored file lands in one
     ``external`` worklog and each assignment overwrites the last.
+
+    ``beside`` writes each worklog into the directory holding its sources,
+    under that root, as ``descriptions.yaml`` -- rather than sharding every one
+    by name into a single output directory. Only ``edit`` mode passes it, and
+    only because that mode is already rewriting those very files: a folder the
+    tool has just edited should carry the one file saying what is left to
+    describe, not send its author to a directory elsewhere to find it.
     """
     root = (shard_root or profile.corpus.root).resolve()
     references = scan_corpus(profile, scope, files=files)
@@ -140,6 +169,7 @@ def build_catalog(
 
     entries: dict[str, Entry] = {}
     shard_of: dict[str, str] = {}
+    dir_of: dict[str, str] = {}
     for identity, group in by_id.items():
         primary = group[0]
         source = sources.get(primary.file)
@@ -173,6 +203,7 @@ def build_catalog(
             skeleton=skeleton,
         )
         shard_of[identity] = _shard_for(primary, root)
+        dir_of[identity] = _dir_for(primary, root)
 
     directory = worklog_dir(profile, output_root)
     # Descriptions outlive any one run. They are content-addressed and were
@@ -184,15 +215,21 @@ def build_catalog(
     # of those very figures sit in the corpus, and the build ships the figures
     # with no /Alt. The corpus stays read-only -- it is read, never written.
     baseline = worklog_dir(profile)
-    grouped: dict[str, dict[str, Entry]] = defaultdict(dict)
+    # Keyed by both, because `beside` needs the unflattened directory and the
+    # shard name is still what names the file everywhere else. They are a
+    # 1:1 function of each other, so the pair never splits one folder in two.
+    grouped: dict[tuple[str, str], dict[str, Entry]] = defaultdict(dict)
     for identity, entry in entries.items():
-        grouped[shard_of[identity]][identity] = entry
+        grouped[(shard_of[identity], dir_of[identity])][identity] = entry
 
     worklogs: dict[Path, Worklog] = {}
-    for shard, shard_entries in grouped.items():
-        path = directory / f"{shard}.yaml"
+    for (shard, relative_dir), shard_entries in grouped.items():
+        if beside is not None:
+            path = (Path(beside) / relative_dir / WORKLOG_NAME).resolve()
+        else:
+            path = directory / f"{shard}.yaml"
         previous = read_worklog(path)
-        if baseline != directory:
+        if beside is None and baseline != directory:
             # This run's own worklog wins over the corpus, so a description
             # edited inside an output directory is not reverted by an older
             # one carrying the same id.
@@ -221,18 +258,30 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 def load_entries(
-    profile: Profile, output_root: Path | None = None
+    profile: Profile,
+    output_root: Path | None = None,
+    beside: Path | None = None,
 ) -> dict[str, Entry]:
     """Every description on disk, keyed by content hash.
 
     Read across all worklogs so a description written for one assignment is
     reused wherever the same figure appears -- the payoff of content addressing.
+
+    ``beside`` reads the ``descriptions.yaml`` files scattered through a source
+    tree instead of one output directory. It has to be honoured here and not
+    only on the write side: the whole point of putting the worklog next to the
+    ``.tex`` is that a TA fills it in there, and a run that wrote it there but
+    read from ``ally-out`` would silently ignore an afternoon of their work.
     """
     entries: dict[str, Entry] = {}
-    directory = worklog_dir(profile, output_root)
-    if not directory.is_dir():
-        return entries
-    for path in sorted(directory.glob("*.yaml")):
+    if beside is not None:
+        candidates = sorted(Path(beside).rglob(WORKLOG_NAME))
+    else:
+        directory = worklog_dir(profile, output_root)
+        if not directory.is_dir():
+            return entries
+        candidates = sorted(directory.glob("*.yaml"))
+    for path in candidates:
         for identity, entry in read_worklog(path).entries.items():
             existing = entries.get(identity)
             # Prefer an approved description over a draft of the same figure.

@@ -160,12 +160,13 @@ where you are standing.
 | key | does |
 |---|---|
 | `←` `→` | move between named scopes (in the path field, the text caret) |
-| `↑` `↓` `PgUp` `PgDn` `Home` `End` | move between rows — and on a two-way choice like mirror / in-place, they *are* the choice |
+| `↑` `↓` `PgUp` `PgDn` `Home` `End` | move between rows — and on a choice like mirror / in-place / edit, they *are* the choice |
 | `Enter` | tick a row — `[x]` is ticked, `[ ]` is not |
 | `a` / `c` | tick all / clear |
 | `n` | Next. On Review it says `Build`, and that is what writes |
 | `Esc` or `b` | Back, keeping everything you already changed. Step 1 has no back |
 | `s` | write the settings to `<output>/run.yaml` without building — replay with `latexally run --config` or `latexally build --config` |
+| `r` | Revert — undo a run: restore your `.tex` with git and delete what the tool wrote. Shows the list first; `y` confirms |
 | `q` | quit; nothing is built |
 
 **Nothing starts ticked**, and `n` stays greyed — with the reason under the
@@ -192,7 +193,7 @@ Then seven steps, each already carrying a sensible default:
 | Standards | which standards to apply |
 | Colours | which course colours fail WCAG, and what to do about each |
 | Alt text | write a description template into undescribed figures, or skip |
-| Output | where everything goes, and whether your corpus is edited |
+| Output | where everything goes: mirror, PDF-in-place, or edit the sources |
 | Review | every directory selected, the exact preamble, every file touched |
 
 Every list scrolls, so a scope larger than your terminal is still reachable and
@@ -315,8 +316,20 @@ latexally build --config ally-out/run.yaml --write          # replay
 
 Useful flags: `--question-tags` (real H2 tags for question titles, at the cost
 of reflowing about one question in five), `--house-colors` (keep the course
-palette even where it fails contrast), `--in-place` (edit the corpus directly;
-refuses unless its git worktree is clean), `--json` (for agents and CI).
+palette even where it fails contrast), `--json` (for agents and CI).
+
+Two write modes reach the corpus, and they are not the same thing:
+
+* `--in-place` puts the finished **PDF** beside the document it came from. No
+  `.tex` is edited.
+* `--edit` also writes the converted **sources** back over the originals,
+  installs the `latexally-*.sty` they need beside them, and puts the alt-text
+  worklog in the same folder — so `pdflatex` alone builds the tagged PDF
+  afterwards. This is the one for the weekly job; see "One week's homework, in
+  place" in the README.
+
+Both refuse unless the corpus's git worktree is clean, which is what makes
+`latexally revert` able to undo them completely.
 
 ---
 
@@ -403,8 +416,37 @@ When the diff looks right:
 latexally apply bank --write
 ```
 
-Only entries marked `approved` are written. Rollback is `git checkout` inside
-`questionBank`; the tool creates no `.bak` files.
+Only entries marked `approved` are written. The tool creates no `.bak` files;
+rollback is `latexally revert`, below.
+
+### Undo everything a run did
+
+```bash
+latexally revert bank            # the list, without doing it
+latexally revert bank --write    # do it
+```
+
+Three groups, and they are undone three different ways because they have to be:
+
+| group | how | what |
+|---|---|---|
+| tracked `.tex` the run changed | `git checkout` | the wrappers and placeholders `apply` and `--edit` wrote |
+| files the run created in the corpus | deleted by name | `*-accessible.*`, `descriptions.yaml`, the installed `latexally-*.sty` |
+| the output tree | deleted whole | `ally-out/` and everything under it |
+
+The middle group is matched against the names this tool writes, and nothing
+else. It deliberately does **not** run `git clean`: `questionBank/.gitignore`
+covers `*.pdf`, `*.log`, `*.aux` and `*.annotations`, and the repository holds
+dozens of PDFs a TA built by hand. A tidy-everything-untracked revert would
+delete them and git could not bring them back. A file the tool does not
+recognise is left alone.
+
+Afterwards it checks `git status` itself and fails loudly if anything in scope
+is still modified — a half-done revert must not read as a clean one. If someone
+else's uncommitted edit is in the way, it says so and names the file.
+
+Pass the run's own `--config ally-out/run.yaml` if its artifacts were
+relocated; without it the default locations are assumed.
 
 ### Validate
 
