@@ -114,10 +114,16 @@ def _repo_from(files: list[Path], destination: Path) -> Path:
     return destination
 
 
-def _config(root: Path, out: Path) -> RunConfig:
+def _config(root: Path, out: Path | None = None) -> RunConfig:
+    """A run config whose output root matches where the tool actually writes.
+
+    Defaulted to `<corpus>/ally-out`, the same anchoring the CLI applies. A
+    config pointing somewhere else describes a run that never happened, and a
+    revert built from it would leave the real output on disk.
+    """
     return RunConfig(
         profile="test",
-        output=Output(root=out, write_mode="edit"),
+        output=Output(root=out or (root / "ally-out"), write_mode="edit"),
         write=True,
     )
 
@@ -161,7 +167,7 @@ def test_revert_restores_every_sampled_file_byte_for_byte(
 
     # Everything `edit` mode does to sources: placeholders into the .tex, and
     # the worklog written beside them.
-    catalog = build_catalog(profile, write=True, beside=root)
+    catalog = build_catalog(profile, write=True)
     apply_scope(
         profile, None, catalog.entries, dry_run=False, placeholders=True
     )
@@ -181,21 +187,22 @@ def test_revert_restores_every_sampled_file_byte_for_byte(
     assert not _git(root, "status", "--porcelain").stdout.strip()
 
 
-def test_revert_removes_the_worklogs_it_wrote_beside_the_sources(
-    sample: list[Path], tmp_path: Path
-):
-    """`descriptions.yaml` is untracked and gitignored-adjacent, so git alone
-    would never notice it. It is the file this mode adds to a folder, and the
-    one a revert most obviously has to take away again."""
-    root = _repo_from(sample, tmp_path / "corpus")
-    profile, config = _profile(root), _config(root, tmp_path / "ally-out")
+def test_revert_removes_the_worklogs_it_wrote(sample: list[Path], tmp_path: Path):
+    """The worklogs are untracked, so git alone would never notice them. They
+    are what a run adds to the corpus, and the first thing a revert has to take
+    away again."""
+    from latexally.catalog import worklog_dir
 
-    build_catalog(profile, write=True, beside=root)
-    worklogs = list(root.rglob(WORKLOG_NAME))
-    assert worklogs, "no worklog was written beside the sources"
+    root = _repo_from(sample, tmp_path / "corpus")
+    profile = _profile(root)
+    config = _config(root)
+
+    build_catalog(profile, write=True)
+    written = sorted(worklog_dir(profile).rglob("*_fig_alt_texts.yaml"))
+    assert written, "no worklog was written"
 
     do_revert(plan_revert(config, profile))
-    assert not list(root.rglob(WORKLOG_NAME))
+    assert not list(root.rglob("*_fig_alt_texts.yaml"))
 
 
 def test_revert_leaves_a_file_the_tool_did_not_write(sample: list[Path], tmp_path: Path):
@@ -206,14 +213,14 @@ def test_revert_leaves_a_file_the_tool_did_not_write(sample: list[Path], tmp_pat
     destroys work git cannot give back.
     """
     root = _repo_from(sample, tmp_path / "corpus")
-    profile, config = _profile(root), _config(root, tmp_path / "ally-out")
+    profile, config = _profile(root), _config(root)
 
     theirs = root / "hand-built.pdf"
     theirs.write_bytes(b"%PDF-1.7 not ours\n")
     notes = root / "notes-to-self.txt"
     notes.write_text("do not delete me")
 
-    build_catalog(profile, write=True, beside=root)
+    build_catalog(profile, write=True)
     do_revert(plan_revert(config, profile))
 
     assert theirs.is_file(), "revert deleted a PDF it did not write"
@@ -223,7 +230,7 @@ def test_revert_leaves_a_file_the_tool_did_not_write(sample: list[Path], tmp_pat
 def test_revert_deletes_the_artifacts_it_did_write(sample: list[Path], tmp_path: Path):
     """The other half: a PDF this tool made is named for it, and does go."""
     root = _repo_from(sample, tmp_path / "corpus")
-    profile, config = _profile(root), _config(root, tmp_path / "ally-out")
+    profile, config = _profile(root), _config(root)
 
     assignment = sorted(p for p in root.rglob("*") if p.is_dir())[0]
     ours = assignment / "sem-hw-1-solution-accessible.pdf"
@@ -248,7 +255,7 @@ def test_revert_refuses_outside_a_git_repository(tmp_path: Path):
     (root / "q.tex").write_text("\\documentclass{article}\\begin{document}x\\end{document}")
 
     with pytest.raises(LatexAllyError, match="not a git repository"):
-        plan_revert(_config(root, tmp_path / "out"), _profile(root))
+        plan_revert(_config(root), _profile(root))
 
 
 def test_revert_reports_rather_than_hides_what_it_could_not_restore(
@@ -261,7 +268,7 @@ def test_revert_reports_rather_than_hides_what_it_could_not_restore(
     quietly and letting the folder look reverted.
     """
     root = _repo_from(sample, tmp_path / "corpus")
-    profile, config = _profile(root), _config(root, tmp_path / "ally-out")
+    profile, config = _profile(root), _config(root)
 
     plan = plan_revert(config, profile)
     victim = sorted(root.rglob("*.tex"))[0]
@@ -322,64 +329,64 @@ def test_the_guard_still_refuses_somebody_else_s_work(
 
 
 # ---------------------------------------------------------------------- #
-# --here
+# where you are standing is the scope
 # ---------------------------------------------------------------------- #
 
 
-def test_here_resolves_the_corpus_and_the_folder_from_git(
-    sample: list[Path], tmp_path: Path, monkeypatch
-):
-    """`--here` exists so neither path has to be typed twice.
+def test_the_working_directory_is_the_scope(sample: list[Path], tmp_path: Path, monkeypatch):
+    """No flag says which assignment: the directory you are in does.
 
-    The alternative was a shell function wrapping `--corpus $(git rev-parse
-    --show-toplevel)` and `$(git rev-parse --show-prefix)` -- which works, but
-    only in a shell, only once someone has installed it, and it restates what
-    the working directory already says.
+    This replaced a `--here` flag. A flag that has to be passed on every
+    command to make the tool mean the folder you are standing in is a flag that
+    should not exist -- the working directory already carries that fact.
     """
-    from latexally.cli import _here
+    from latexally.cli import _where
 
     root = _repo_from(sample, tmp_path / "corpus")
+    profile = _profile(root)
     folder = sorted(
         path for path in root.rglob("*")
         if path.is_dir() and ".git" not in path.relative_to(root).parts
     )[0]
 
     monkeypatch.chdir(folder)
-    found_root, prefix = _here()
-    assert found_root.resolve() == root.resolve()
-    assert prefix == folder.relative_to(root).as_posix()
+    assert _where(profile) == folder.relative_to(root).as_posix()
 
-    # At the top of the repository the prefix is empty, which correctly means
-    # "the whole corpus" rather than "no scope at all".
+    # At the top of the corpus, "" -- the whole corpus, not "no scope".
     monkeypatch.chdir(root)
-    assert _here()[1] == ""
+    assert _where(profile) == ""
 
 
-def test_here_refuses_outside_a_repository(tmp_path: Path, monkeypatch):
-    """It says where it was standing, because that is the fact to correct."""
-    from latexally.cli import _here
+def test_outside_the_corpus_means_the_whole_corpus(tmp_path: Path, monkeypatch):
+    """Driving the corpus from the tool's own checkout, and CI. Both are
+    outside it, and both mean everything -- not an error."""
+    from latexally.cli import _where
 
-    plain = tmp_path / "not-a-repo"
-    plain.mkdir()
-    monkeypatch.chdir(plain)
-    with pytest.raises(LatexAllyError, match="not.*in a git repository"):
-        _here()
+    root = tmp_path / "corpus"
+    (root / "hw").mkdir(parents=True)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert _where(_profile(root)) is None
 
 
-def test_here_puts_the_worklog_in_the_folder_not_inside_ally_out(
-    sample: list[Path], tmp_path: Path
-):
-    """The default output root is `ally-out` relative to the working directory,
-    and `--here` runs from inside the corpus -- where `_refuse_inside_corpus`
-    rightly refuses to put anything. So `--here` means the worklog goes beside
-    the sources, the same answer `--edit` gives."""
-    from latexally.catalog import build_catalog
+def test_worklogs_are_filed_by_semester_and_kind(sample: list[Path], tmp_path: Path):
+    """`<corpus>/ally-out/descriptions/<semester>/<kind>_fig_alt_texts.yaml`.
+
+    One directory rather than one file per source folder: a description is
+    content-addressed and serves every assignment using the figure, so copies
+    scattered through the tree make the shared ones ambiguous.
+    """
+    from latexally.catalog import build_catalog, worklog_dir
 
     root = _repo_from(sample, tmp_path / "corpus")
     profile = _profile(root)
-
-    result = build_catalog(profile, write=True, beside=root)
+    result = build_catalog(profile, write=True)
     assert result.worklogs, "nothing catalogued"
+
+    directory = worklog_dir(profile)
+    assert directory == root / "ally-out" / "descriptions"
     for path in result.worklogs:
-        assert path.name == WORKLOG_NAME
-        assert path.is_relative_to(root), f"{path} escaped the corpus"
+        assert path.name.endswith("_fig_alt_texts.yaml"), path.name
+        # exactly one semester folder between the root and the file
+        assert path.parent.parent == directory, path

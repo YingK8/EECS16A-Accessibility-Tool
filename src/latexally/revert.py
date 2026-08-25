@@ -67,6 +67,11 @@ def artifact_globs() -> tuple[str, ...]:
     # document's own jobname, and it exists only because this tool put the
     # math-speech machinery in the preamble.
     return stamped + (
+        # The worklog, under both names it has had. The old one put a
+        # `descriptions.yaml` in each source folder; a corpus converted before
+        # the move still has them, and a revert that does not know the old name
+        # leaves them scattered through the tree forever.
+        "*_fig_alt_texts.yaml",
         WORKLOG_NAME,
         "latexally-*.sty",
         "latexally-*.cls",

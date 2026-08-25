@@ -7,6 +7,8 @@ the existing Markdown worklogs without ever clobbering human text.
 
 from __future__ import annotations
 
+import re
+
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,7 +20,16 @@ from ..scan import FigureRef, scan_corpus
 from ..texlex import TexSource
 from .worklog import Entry, Worklog, merge, read_worklog, write_worklog
 
-__all__ = ["CatalogResult", "WORKLOG_NAME", "build_catalog", "load_entries", "worklog_dir"]
+__all__ = [
+    "BANK_BUCKET",
+    "CatalogResult",
+    "WORKLOG_NAME",
+    "build_catalog",
+    "default_output_root",
+    "load_entries",
+    "worklog_dir",
+    "worklog_path",
+]
 
 
 @dataclass(slots=True)
@@ -52,50 +63,116 @@ class CatalogResult:
 #: Where a run writes when nobody says otherwise. Kept here as well as on
 #: `Output.root` so a bare `scan` and a full `build` agree without one
 #: importing the other.
-DEFAULT_OUTPUT_ROOT = Path("ally-out")
 
 
 def worklog_dir(profile: Profile, output_root: Path | None = None) -> Path:
-    """Where description worklogs live: under the output root, never the corpus.
+    """Where description worklogs live: ``<corpus>/ally-out/descriptions``.
 
-    Resolved against ``output_root``, falling back to
-    :data:`DEFAULT_OUTPUT_ROOT` so a bare ``latexally scan`` writes where a
-    build does.
+    The default is inside the corpus on purpose, and this reverses an earlier
+    decision worth recording. Worklogs used to be forbidden there, on the
+    grounds that a tool which grows directories inside somebody's course
+    repository is a tool people stop trusting. What that reasoning missed is
+    that the alternative put them inside the *tool's* repository, which is
+    worse in the same way and additionally wrong: the descriptions are course
+    content, written by course staff, outliving any checkout of this tool.
+    They belong with the material they describe.
 
-    It used to default to ``<corpus>/<catalog_dir>/descriptions`` -- beside the
-    material, which reads well and is wrong. The corpus is somebody's course
-    repository, and a tool that quietly grows directories inside it is a tool
-    people stop trusting. Nothing this package produces belongs there.
+    One directory, not one per source folder: a description is
+    content-addressed and serves every assignment that uses the figure, so
+    scattering copies through the tree makes the shared ones ambiguous.
     """
-    root = Path(output_root) if output_root is not None else DEFAULT_OUTPUT_ROOT
-    directory = (root / "descriptions").resolve()
-    _refuse_inside_corpus(directory, profile)
-    return directory
+    root = (
+        Path(output_root)
+        if output_root is not None
+        else default_output_root(profile)
+    )
+    return (root / "descriptions").resolve()
 
 
-def _refuse_inside_corpus(directory: Path, profile: Profile) -> None:
-    """Fail loudly rather than write into the material being converted.
+def default_output_root(profile: Profile) -> Path:
+    """``<corpus>/ally-out``.
 
-    A guard, not a nicety: every other safeguard here assumes the corpus is
-    read-only in mirror mode, and a redirected output root is exactly the kind
-    of setting somebody points at the wrong place once.
+    Anchored to the corpus rather than the working directory. A bare
+    ``ally-out`` meant "wherever you happened to be standing", which put a
+    build's output inside the tool's own checkout when run from there, and
+    inside an assignment folder when run from one.
     """
-    corpus = profile.corpus.root.resolve()
-    if directory == corpus or corpus in directory.parents:
-        raise CatalogError(
-            f"worklogs would be written inside the corpus: {directory}",
-            hint=(
-                "the corpus holds the course material and this tool never writes "
-                "into it; point --output somewhere else"
-            ),
-        )
+    return (profile.corpus.root.resolve() / "ally-out")
 
 
-
-#: What a worklog is called when it lives beside the sources it describes,
-#: rather than sharded by name into an output directory. One per folder, so a
-#: TA opening a homework sees exactly one file to fill in.
+#: Kept for reading worklogs written by older versions, which put one
+#: ``descriptions.yaml`` in each source folder.
 WORKLOG_NAME = "descriptions.yaml"
+
+#: Semester bucket for material belonging to no single semester -- above all
+#: the shared question bank, where about three quarters of this corpus's
+#: graphics live. Filing it under whichever semester happened to \input it
+#: would be wrong twice: the same figure would land in several semesters'
+#: files, and a description written in one would be invisible to the rest.
+#: Descriptions are content-addressed precisely so one serves every use.
+BANK_BUCKET = "bank"
+
+#: ``kind`` from the profile -> the slug that names its file.
+_KIND_SLUGS = {
+    "homework": "hw",
+    "discussion": "disc",
+    "exam": "exam",
+    "note": "notes",
+    "bank": "bank",
+    "extra-credit": "extra",
+    "lab": "lab",
+}
+_MISC_SLUG = "misc"
+
+#: ``sp26``, ``fa25``, ``su24`` -- the shape a semester directory has here.
+_SEMESTER = re.compile(r"^(?:sp|fa|su)\d{2}$")
+
+
+def _semester_of(relative: str) -> str:
+    """Which semester folder a source belongs under.
+
+    The first path component shaped like a semester wins, wherever it sits, so
+    ``exams/fa15/final`` files under ``fa15`` rather than under ``exams`` -- the
+    exam archive is organised by semester one level down. Material with no
+    semester anywhere in its path files under its top-level directory, except
+    the shared bank, which gets :data:`BANK_BUCKET`.
+    """
+    parts = [part for part in relative.split("/") if part not in ("", ".")]
+    for part in parts:
+        if _SEMESTER.match(part):
+            return part
+    if parts and parts[0] == "questionBank":
+        return BANK_BUCKET
+    return parts[0] if parts else BANK_BUCKET
+
+
+def _kind_slug(relative: str, profile: Profile) -> str:
+    """The material type, as the short word that names its file.
+
+    Classification is :func:`~latexally.discover._kind_of`, so the profile's
+    own ``kinds`` map is the single authority -- a course that spells
+    discussions ``sec`` says so in one place and both the runner's grouping and
+    these filenames follow.
+    """
+    from ..discover import _kind_of
+
+    # Inside the shared bank, "bank" is the bucket, not the material: every
+    # file there is bank material, so classifying by it would collapse nine
+    # years of homework, discussion and exam questions into one file. The
+    # question's own kind is one component further in.
+    parts = relative.split("/")
+    if parts and parts[0] == "questionBank":
+        relative = "/".join(parts[1:]) or relative
+    return _KIND_SLUGS.get(_kind_of(relative, profile.corpus.kinds), _MISC_SLUG)
+
+
+def worklog_path(relative: str, profile: Profile, directory: Path) -> Path:
+    """``<directory>/<semester>/<kind>_fig_alt_texts.yaml``."""
+    return (
+        directory
+        / _semester_of(relative)
+        / f"{_kind_slug(relative, profile)}_fig_alt_texts.yaml"
+    )
 
 
 def _dir_for(reference: FigureRef, root: Path) -> str:
@@ -136,7 +213,6 @@ def build_catalog(
     files: list[Path] | None = None,
     output_root: Path | None = None,
     shard_root: Path | None = None,
-    beside: Path | None = None,
 ) -> CatalogResult:
     """Scan a scope and refresh its worklogs.
 
@@ -149,12 +225,6 @@ def build_catalog(
     whose paths are not under it -- without it every mirrored file lands in one
     ``external`` worklog and each assignment overwrites the last.
 
-    ``beside`` writes each worklog into the directory holding its sources,
-    under that root, as ``descriptions.yaml`` -- rather than sharding every one
-    by name into a single output directory. Only ``edit`` mode passes it, and
-    only because that mode is already rewriting those very files: a folder the
-    tool has just edited should carry the one file saying what is left to
-    describe, not send its author to a directory elsewhere to find it.
     """
     root = (shard_root or profile.corpus.root).resolve()
     references = scan_corpus(profile, scope, files=files)
@@ -205,10 +275,7 @@ def build_catalog(
         shard_of[identity] = _shard_for(primary, root)
         dir_of[identity] = _dir_for(primary, root)
 
-    # Both are skipped entirely when `beside` is set: neither is used on that
-    # path, and `worklog_dir` refuses any location inside the corpus -- which
-    # is exactly where `beside` points, on purpose.
-    directory = worklog_dir(profile, output_root) if beside is None else None
+    directory = worklog_dir(profile, output_root)
     # Descriptions outlive any one run. They are content-addressed and were
     # written by a person, so the corpus catalogue is always the merge base --
     # even when `output_root` sends this run's worklogs somewhere else.
@@ -217,26 +284,20 @@ def build_catalog(
     # reports "0 described, 17 outstanding" while approved descriptions for six
     # of those very figures sit in the corpus, and the build ships the figures
     # with no /Alt. The corpus stays read-only -- it is read, never written.
-    baseline = worklog_dir(profile) if beside is None else None
-    # Keyed by both, because `beside` needs the unflattened directory and the
-    # shard name is still what names the file everywhere else. They are a
-    # 1:1 function of each other, so the pair never splits one folder in two.
-    grouped: dict[tuple[str, str], dict[str, Entry]] = defaultdict(dict)
+    baseline = worklog_dir(profile)
+    grouped: dict[Path, dict[str, Entry]] = defaultdict(dict)
     for identity, entry in entries.items():
-        grouped[(shard_of[identity], dir_of[identity])][identity] = entry
+        grouped[worklog_path(dir_of[identity], profile, directory)][identity] = entry
 
     worklogs: dict[Path, Worklog] = {}
-    for (shard, relative_dir), shard_entries in grouped.items():
-        if beside is not None:
-            path = (Path(beside) / relative_dir / WORKLOG_NAME).resolve()
-        else:
-            path = directory / f"{shard}.yaml"
+    for path, shard_entries in grouped.items():
+        shard = path.parent.name + "/" + path.stem
         previous = read_worklog(path)
-        if beside is None and baseline != directory:
+        if baseline != directory:
             # This run's own worklog wins over the corpus, so a description
             # edited inside an output directory is not reverted by an older
             # one carrying the same id.
-            inherited = read_worklog(baseline / f"{shard}.yaml")
+            inherited = read_worklog(baseline / path.relative_to(directory))
             inherited.entries.update(previous.entries)
             previous = inherited
         merged = merge(previous, shard_entries)
@@ -261,29 +322,20 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 def load_entries(
-    profile: Profile,
-    output_root: Path | None = None,
-    beside: Path | None = None,
+    profile: Profile, output_root: Path | None = None
 ) -> dict[str, Entry]:
     """Every description on disk, keyed by content hash.
 
     Read across all worklogs so a description written for one assignment is
     reused wherever the same figure appears -- the payoff of content addressing.
 
-    ``beside`` reads the ``descriptions.yaml`` files scattered through a source
-    tree instead of one output directory. It has to be honoured here and not
-    only on the write side: the whole point of putting the worklog next to the
-    ``.tex`` is that a TA fills it in there, and a run that wrote it there but
-    read from ``ally-out`` would silently ignore an afternoon of their work.
     """
     entries: dict[str, Entry] = {}
-    if beside is not None:
-        candidates = sorted(Path(beside).rglob(WORKLOG_NAME))
-    else:
-        directory = worklog_dir(profile, output_root)
-        if not directory.is_dir():
-            return entries
-        candidates = sorted(directory.glob("*.yaml"))
+    directory = worklog_dir(profile, output_root)
+    if not directory.is_dir():
+        return entries
+    # Recursive: the worklogs sit one semester folder down.
+    candidates = sorted(directory.rglob("*.yaml"))
     for path in candidates:
         for identity, entry in read_worklog(path).entries.items():
             existing = entries.get(identity)

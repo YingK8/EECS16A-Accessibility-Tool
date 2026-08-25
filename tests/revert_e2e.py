@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from latexally.build import build_assignment, relative_dependencies
-from latexally.catalog import WORKLOG_NAME
+from latexally.catalog import worklog_dir
 from latexally.config import load_profile
 from latexally.discover import iter_selected
 from latexally.revert import do_revert, plan_revert
@@ -117,7 +117,7 @@ def main() -> int:
         profile=profile.name,
         assignments=(ASSIGNMENT,),
         variants=("problem",),
-        output=Output(root=work / "ally-out", write_mode="edit"),
+        output=Output(root=root / "ally-out", write_mode="edit"),
         write=True,
     )
 
@@ -155,8 +155,8 @@ def main() -> int:
           sum(len(report.edited) for report in built))
     installed = sorted(path.name for path in folder.glob("latexally-*.sty"))
     check(bool(installed), "packages installed for a bare pdflatex", installed)
-    worklogs = sorted(path.relative_to(root).as_posix() for path in root.rglob(WORKLOG_NAME))
-    check(bool(worklogs), "worklog written beside the sources", worklogs)
+    worklogs = sorted(path.relative_to(root).as_posix() for path in root.rglob("*_fig_alt_texts.yaml"))
+    check(bool(worklogs), "worklog filed under ally-out/descriptions", worklogs)
 
     bare = subprocess.run(
         ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", DRIVER],

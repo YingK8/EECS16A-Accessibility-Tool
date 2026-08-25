@@ -97,6 +97,7 @@ from .summary import (
     proposal_for,
     show_path,
     swatch,
+    under,
 )
 
 __all__ = ["Checklist", "Choice", "LatexAllyApp", "Radio", "RevertScreen"]
@@ -1089,7 +1090,7 @@ class OutputScreen(StepScreen):
             yield Static(f"{label} — {note}", classes="hint")
             yield Input(
                 value=str(output.paths.get(slug, "")),
-                placeholder=show_path(output.path_for(slug)),
+                placeholder=under(output.path_for(slug), output.root),
                 id=f"path-{slug}",
                 name=slug,
                 compact=True,
@@ -1119,7 +1120,7 @@ class OutputScreen(StepScreen):
                 output.set_path(slug, field.value.strip() or None)
             except LatexAllyError as exc:
                 problems.append(f"{label}: {exc}")
-            field.placeholder = show_path(output.path_for(slug))
+            field.placeholder = under(output.path_for(slug), output.root)
         self.say("#output-note", "\n".join(problems))
         self.set_next(not problems, "Fix the paths above.")
 
@@ -1687,6 +1688,9 @@ class LatexAllyApp(App):
         self.theme = "ansi-light"
         self.profile = profile
         self.config = config or RunConfig(profile=profile.name)
+        # Same anchoring the CLI does, so the runner and the flags agree about
+        # where a defaulted output root points.
+        self.config.output.anchor(profile)
         self.should_run = False
         self.reports: list = []
         self.descriptions: dict = {}

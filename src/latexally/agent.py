@@ -197,7 +197,6 @@ def next_tasks(
     limit: int = 1,
     genre: str | None = None,
     refresh: bool = False,
-    beside: Path | None = None,
     scope: str | None = None,
 ) -> list[Task]:
     """The highest-value outstanding descriptions.
@@ -217,8 +216,8 @@ def next_tasks(
     # this already; this command had not.
     files = _files_for(profile, scope) if scope else None
     if refresh:
-        build_catalog(profile, scope, files=files, write=True, beside=beside)
-    result = build_catalog(profile, scope, files=files, write=False, beside=beside)
+        build_catalog(profile, scope, files=files, write=True)
+    result = build_catalog(profile, scope, files=files, write=False)
     root = profile.corpus.root.resolve()
 
     candidates = [entry for entry in result.entries.values() if entry.needs_human]
@@ -253,7 +252,7 @@ def next_tasks(
                 ),
                 still_needed=skeleton.needs if skeleton else [],
                 data_table=[list(row) for row in (skeleton.table if skeleton else [])],
-                worklog=str((beside or worklog_dir(profile)) / "…"),
+                worklog=str(worklog_dir(profile) / "…"),
             )
         )
     return tasks
@@ -268,19 +267,14 @@ def submit(
     notes: str = "",
     author: str = "agent",
     disposition: str | None = None,
-    beside: Path | None = None,
 ) -> dict:
     """Record a proposed description. Never marks it approved.
 
     Raises :class:`LatexAllyError` when the id is unknown, and returns the
     rejection list without writing when validation fails.
     """
-    # `beside` searches the worklogs scattered through the corpus rather than
-    # one output directory -- the layout `--here` and `--edit` produce.
-    if beside is not None:
-        candidates = sorted(Path(beside).rglob(WORKLOG_NAME))
-    else:
-        candidates = sorted(worklog_dir(profile).glob("*.md"))
+    # Recursive: worklogs sit one semester folder down.
+    candidates = sorted(worklog_dir(profile).rglob("*.yaml"))
     target: Path | None = None
     for path in candidates:
         if identity in read_worklog(path).entries:

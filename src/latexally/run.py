@@ -374,6 +374,9 @@ class Output:
     the promise is now kept by a mode that says so.
     """
 
+    #: Replaced with ``<corpus>/ally-out`` by :meth:`anchor` unless the caller
+    #: names one. A bare relative default meant "wherever you happened to be
+    #: standing", which put a run's output inside the tool's own checkout.
     root: Path = Path("ally-out")
     write_mode: str = "mirror"
     keep_pdf: bool = True
@@ -398,6 +401,15 @@ class Output:
                 f"unknown write mode {self.write_mode!r}",
                 hint="use one of: " + ", ".join(WRITE_MODES),
             )
+
+    def anchor(self, profile) -> None:
+        """Resolve a defaulted root against the corpus, in place.
+
+        Only the default moves. A root the user typed -- on the command line or
+        in a replayed ``run.yaml`` -- is theirs and is left exactly as given.
+        """
+        if self.root == Path("ally-out"):
+            self.root = (profile.corpus.root.resolve() / "ally-out")
 
     @property
     def in_place(self) -> bool:

@@ -287,14 +287,16 @@ def test_descriptions_survive_a_different_output_directory(tmp_path):
     # A person describes the figure, in the corpus catalogue.
     first = build_catalog(profile, files=[corpus / "hw" / "q.tex"])
     identity = next(iter(first.entries))
-    shard = next(iter(first.worklogs)).name
-    base = worklog_dir(profile)
-    base.mkdir(parents=True, exist_ok=True)
-    log = read_worklog(next(iter(first.worklogs)))
+    # The worklog's own path, not its bare filename: worklogs sit one semester
+    # folder down, so `worklog_dir() / name` is a different (missing) file.
+    written = next(iter(first.worklogs))
+    assert written.is_relative_to(worklog_dir(profile))
+    log = read_worklog(written)
     entry = log.entries[identity]
     entry.description = "A line rising to one comma one."
     entry.status = "approved"
-    (base / shard).write_text(write_worklog(log, scope=log.scope))
+    written.parent.mkdir(parents=True, exist_ok=True)
+    written.write_text(write_worklog(log, scope=log.scope))
 
     # A later run sends its worklogs somewhere else entirely.
     elsewhere = build_catalog(

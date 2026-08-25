@@ -44,14 +44,26 @@ def show_path(path: Path) -> str:
 
     Paths are absolute internally, because a relative ``-output-directory``
     resolves against the subprocess's directory rather than the user's. Printing
-    them raw puts a wrapped 80-character absolute path in every table, so
-    anything under the working directory is shown relative to it and everything
-    else is shown in full.
+    them raw puts a wrapped 80-character absolute path in every table.
+
+    Three candidate spellings, shortest wins: relative to the working
+    directory, relative to home as ``~/…``, or absolute. The home form earns
+    its place now that the output root is anchored to the corpus rather than to
+    wherever the command was run -- an absolute path to somebody's course
+    repository is long, and on the runner's Output screen it pushed the
+    artifact names off the side of the terminal.
     """
+    absolute = path.absolute()
+    candidates = [str(absolute)]
     try:
-        return str(path.absolute().relative_to(Path.cwd()))
-    except ValueError:
-        return str(path)
+        candidates.append(str(absolute.relative_to(Path.cwd())))
+    except (ValueError, OSError):
+        pass
+    try:
+        candidates.append(str("~" / absolute.relative_to(Path.home())))
+    except (ValueError, RuntimeError):
+        pass
+    return min(candidates, key=len)
 
 
 # ---------------------------------------------------------------------- #
@@ -250,3 +262,19 @@ def output_table(config: RunConfig) -> Table:
             Text(note),
         )
     return table
+
+
+def under(path: Path, root: Path) -> str:
+    """An artifact path spelled relative to the output root that contains it.
+
+    The Output screen's own hint says "a relative one hangs off the root", and
+    every default sits directly under it, so the useful thing to show is the
+    part that differs -- `pdf`, `descriptions` -- not the absolute path with
+    the root repeated on every one of six rows. Once the root became an
+    absolute corpus path, repeating it pushed the artifact names off the side
+    of the terminal entirely.
+    """
+    try:
+        return str(path.absolute().relative_to(Path(root).absolute()))
+    except ValueError:
+        return show_path(path)

@@ -115,6 +115,16 @@ def visible(app: LatexAllyApp) -> str:
     return " ".join(text.split())
 
 
+
+def _out(profile: Profile) -> Path:
+    """Where a defaulted output root now points: `<corpus>/ally-out`.
+
+    Anchored to the corpus rather than the working directory, so a run started
+    from the tool's own checkout does not write its output there.
+    """
+    return profile.corpus.root.resolve() / "ally-out"
+
+
 async def settle(pilot) -> None:
     """Let the scope worker finish. Scanning runs off the message loop.
 
@@ -648,7 +658,7 @@ async def test_each_artifact_path_can_be_moved_independently(
         await output(pilot)
         await type_into(pilot, "#path-descriptions", str(shared))
         assert app.config.output.worklog_dir() == shared
-        assert app.config.output.pdf_dir() == (Path("ally-out") / "pdf").absolute()
+        assert app.config.output.pdf_dir() == _out(profile) / "pdf"
 
 
 async def test_a_relative_artifact_path_hangs_off_the_root(profile: Profile):
@@ -656,7 +666,7 @@ async def test_a_relative_artifact_path_hangs_off_the_root(profile: Profile):
     async with app.run_test(size=SIZE) as pilot:
         await output(pilot)
         await type_into(pilot, "#path-pdf", "final")
-        assert app.config.output.pdf_dir() == (Path("ally-out") / "final").absolute()
+        assert app.config.output.pdf_dir() == _out(profile) / "final"
         # Stored as typed, so run.yaml stays portable between machines.
         assert app.config.output.as_dict()["paths"]["pdf"] == "final"
 
@@ -668,7 +678,7 @@ async def test_an_artifact_path_can_be_restored_to_its_default(profile: Profile)
         await type_into(pilot, "#path-pdf", "final")
         await type_into(pilot, "#path-pdf", "")
         assert app.config.output.paths == {}
-        assert app.config.output.pdf_dir() == (Path("ally-out") / "pdf").absolute()
+        assert app.config.output.pdf_dir() == _out(profile) / "pdf"
 
 
 async def test_a_path_field_survives_an_absolute_default(profile: Profile, tmp_path: Path):
@@ -683,9 +693,10 @@ async def test_a_path_field_survives_an_absolute_default(profile: Profile, tmp_p
         await output(pilot)
         await type_into(pilot, "#root", str(absolute))
         assert app.config.output.root == absolute
-        assert app.screen.query_one("#path-pdf", Input).placeholder.endswith(
-            "somewhere/pdf"
-        )
+        # The screen survived the absolute path -- which is the regression --
+        # and shows each artifact as the part that differs from the root it
+        # hangs off, not with the root repeated on all six rows.
+        assert app.screen.query_one("#path-pdf", Input).placeholder == "pdf"
 
 
 async def test_write_mode_can_be_set(profile: Profile):
@@ -705,7 +716,7 @@ async def test_backing_out_keeps_the_current_output_settings(profile: Profile):
     async with app.run_test(size=SIZE) as pilot:
         await output(pilot)
         await retreat(pilot)
-        assert app.config.output.root == Path("ally-out")
+        assert app.config.output.root == _out(profile)
         assert app.config.output.write_mode == "mirror"
 
 

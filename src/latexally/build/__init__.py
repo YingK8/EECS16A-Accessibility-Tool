@@ -457,11 +457,6 @@ def apply_descriptions(
     # makes the worklog list every figure instead of the handful reachable
     # before the repair. Ids are content hashes, so the two agree on any figure
     # both can see.
-    # In `edit` mode the worklog belongs beside the .tex, in the corpus. The
-    # scan runs against the mirror -- that is where the document is whole --
-    # so the sources are the mirror's and the destination is the corpus, which
-    # is exactly the pair of roots these two arguments name.
-    beside = profile.corpus.root.resolve() if config.output.edits_sources else None
     build_catalog(
         profile,
         files=files,
@@ -470,10 +465,9 @@ def apply_descriptions(
         # The mirror repeats the corpus's directory layout, so sharding against
         # its root yields exactly the worklog names a corpus scan would.
         shard_root=config.output.tex_dir(),
-        beside=beside,
     )
 
-    entries = load_entries(profile, config.output.root, beside=beside)
+    entries = load_entries(profile, config.output.root)
     if not entries:
         return 0
 
@@ -796,7 +790,7 @@ def mirror_dependencies(
     return copied
 
 
-def require_clean_worktree(root: Path) -> None:
+def require_clean_worktree(root: Path, ignore: Path | None = None) -> None:
     """Refuse to edit a corpus in place unless git can undo it.
 
     In-place conversion rewrites real course material. The guard is not that git
@@ -805,6 +799,9 @@ def require_clean_worktree(root: Path) -> None:
     did. With a dirty tree the tool's edits are tangled with someone's
     unfinished work and neither can be reviewed separately.
     """
+    # `ignore` is the run's own output directory. It now lives inside the
+    # corpus -- that is where the descriptions belong -- so without this the
+    # guard trips on the tool's output on the second run and refuses to start.
     if shutil.which("git") is None:
         raise LatexAllyError(
             "in-place conversion needs git to be undoable, and git is not installed",
@@ -828,7 +825,7 @@ def require_clean_worktree(root: Path) -> None:
         check=False,
     )
     dirty = [line for line in status.stdout.splitlines() if line.strip()]
-    dirty = [line for line in dirty if not _ours(line)]
+    dirty = [line for line in dirty if not _ours(line, root, ignore)]
     if dirty:
         listed = "\n    ".join(dirty[:8])
         more = f"\n    …and {len(dirty) - 8} more" if len(dirty) > 8 else ""
@@ -842,7 +839,7 @@ def require_clean_worktree(root: Path) -> None:
         )
 
 
-def _ours(status_line: str) -> bool:
+def _ours(status_line: str, root: Path, ignore: Path | None = None) -> bool:
     r"""Is this dirty entry a file this tool created, rather than somebody's work?
 
     The guard exists to keep a person's unfinished edits from being tangled
@@ -866,7 +863,13 @@ def _ours(status_line: str) -> bool:
         return False
     from ..revert import artifact_globs
 
-    name = PurePosixPath(status_line[3:].strip().strip('"')).name
+    entry = status_line[3:].strip().strip('"')
+    if ignore is not None:
+        candidate = (Path(root) / entry.rstrip("/")).resolve()
+        ignored = Path(ignore).resolve()
+        if candidate == ignored or ignored in candidate.parents:
+            return True
+    name = PurePosixPath(entry).name
     return any(fnmatch(name, pattern) for pattern in artifact_globs())
 
 
@@ -1374,7 +1377,9 @@ def build_assignment(
     # so a multi-document run cannot get half way; this one is for the callers
     # that reach here directly -- the agent API and the tests both do.
     if config.output.in_place:
-        require_clean_worktree(profile.corpus.root.resolve())
+        require_clean_worktree(
+            profile.corpus.root.resolve(), ignore=config.output.root
+        )
 
     # Approved descriptions become real /Alt HERE, in the mirror `materialise`
     # just wrote -- never in the corpus. Without this step a run scans figures,
@@ -1630,10 +1635,6 @@ def describe_run(config: RunConfig, profile: Profile) -> dict:
         files=files,
         write=config.write,
         output_root=config.output.root if config.write else None,
-        # Scanned from the corpus here, so the corpus is both source root and
-        # destination -- and the worklog this reports is the same file the
-        # build's own scan will refresh later.
-        beside=profile.corpus.root.resolve() if config.output.edits_sources else None,
     )
     return {
         "scanned": True,
@@ -1875,7 +1876,9 @@ def build_run(
     # 1..N-1 build before N discovered the corpus was dirty. It is a property of
     # the run, so it is checked once, before anything is written.
     if config.write and config.output.in_place:
-        require_clean_worktree(profile.corpus.root.resolve())
+        require_clean_worktree(
+            profile.corpus.root.resolve(), ignore=config.output.root
+        )
 
     reports: list[BuildReport] = []
     work: list[tuple[Assignment, str, str, frozenset[str]]] = []
