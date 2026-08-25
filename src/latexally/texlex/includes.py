@@ -24,7 +24,13 @@ from pathlib import Path
 
 from .scanner import TexSource
 
-__all__ = ["DocumentSpec", "IncludeGraph", "resolve_include", "is_document"]
+__all__ = [
+    "DocumentSpec",
+    "IncludeGraph",
+    "resolve_include",
+    "is_document",
+    "is_driver",
+]
 
 
 # \input{x}, \include{x}, \subfile{x}, \import{dir}{x}, \subimport{dir}{x}
@@ -49,6 +55,93 @@ def is_document(source: TexSource) -> bool:
     file a compilation entry point in this corpus.
     """
     return source.search(_DOCUMENTCLASS_RE) is not None
+
+
+def is_driver(path: Path, *, roots: list[Path] | None = None) -> bool:
+    r"""True when ``path`` can be handed to pdflatex as it stands.
+
+    A driver must do two things: **declare a class** and **open the document**.
+    Either one alone is a fragment, and this corpus has both halves lying around
+    separately:
+
+    * ``exams/fa15/mt1/body_practice.tex`` opens with ``\begin{document}`` on
+      line 1 and declares no class -- ``mt1.tex`` declares it and inputs this.
+      Compiling it dies on line 2 with ``\usepackage before \documentclass``.
+      Testing for ``\begin{document}``, as this code used to, picked exactly
+      these files.
+    * ``sp26/preambleFa25.tex`` declares a class and never opens a document.
+      It is the shared preamble half a dozen drivers ``\input``. Testing for
+      ``\documentclass`` alone picks these.
+    * ``sp26/dis/06B/dis06B.tex`` has *neither*: it inputs ``../preambleFa24``
+      for the class and ``body`` for the document. It is a real driver.
+
+    So both halves are looked for, following ``\input`` in each direction:
+    the class from the preamble (the text before ``\begin{document}``), the
+    document from anywhere. Depth is bounded and revisits are pruned, because
+    the corpus contains include cycles.
+    """
+    roots = roots or []
+    return _declares_class(path, roots, set(), 3) and _opens_document(
+        path, roots, set(), 3
+    )
+
+
+def _preamble_end(source: TexSource) -> int:
+    r"""Offset of ``\begin{document}``, or end of file if it never opens one."""
+    opened = source.search(_DOCUMENT_ENV_RE)
+    return opened.start() if opened else len(source.text)
+
+
+def _inputs_before(source: TexSource, path: Path, roots: list[Path], limit: int):
+    r"""Resolved ``\input`` targets of ``source`` appearing before ``limit``."""
+    for match in source.finditer(_INPUT_RE):
+        if match.start() >= limit:
+            return
+        argument = match.group("arg") or match.group("arg2") or match.group("bare")
+        if argument is None:
+            continue
+        target = resolve_include(
+            argument, from_file=path, roots=roots, subdir=match.group("dir") or ""
+        )
+        if target is not None:
+            yield target
+
+
+def _read(path: Path) -> TexSource | None:
+    try:
+        return TexSource.from_path(path)
+    except Exception:
+        return None
+
+
+def _declares_class(path: Path, roots: list[Path], seen: set, depth: int) -> bool:
+    r"""``\documentclass`` here or in something this file's preamble inputs."""
+    path = path.resolve()
+    if path in seen or depth < 0 or (source := _read(path)) is None:
+        return False
+    seen.add(path)
+    end = _preamble_end(source)
+    match = source.search(_DOCUMENTCLASS_RE)
+    if match is not None and match.start() < end:
+        return True
+    return any(
+        _declares_class(target, roots, seen, depth - 1)
+        for target in _inputs_before(source, path, roots, end)
+    )
+
+
+def _opens_document(path: Path, roots: list[Path], seen: set, depth: int) -> bool:
+    r"""``\begin{document}`` here or in anything this file inputs."""
+    path = path.resolve()
+    if path in seen or depth < 0 or (source := _read(path)) is None:
+        return False
+    seen.add(path)
+    if source.search(_DOCUMENT_ENV_RE) is not None:
+        return True
+    return any(
+        _opens_document(target, roots, seen, depth - 1)
+        for target in _inputs_before(source, path, roots, len(source.text))
+    )
 
 
 def resolve_include(

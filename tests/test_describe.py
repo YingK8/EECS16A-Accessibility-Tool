@@ -242,8 +242,7 @@ def test_worklog_round_trip_preserves_human_fields(tmp_path):
     worklog = Worklog(scope="demo", path=tmp_path / "demo.yaml", entries={entry.id: entry})
     worklog.path.write_text(write_worklog(worklog, scope="demo"), encoding="utf-8")
 
-    assert "file: a/b.tex" in worklog.path.read_text()
-    assert "lines: [12]" in worklog.path.read_text()
+    assert "at: a/b.tex:12" in worklog.path.read_text()
 
     # What a person does: type into the empty alt_text.
     worklog.path.write_text(
@@ -305,3 +304,86 @@ def test_descriptions_survive_a_different_output_directory(tmp_path):
     carried = elsewhere.entries[identity]
     assert carried.is_done, "approved description was lost by redirecting output"
     assert carried.description == "A line rising to one comma one."
+
+
+def test_the_location_is_one_pasteable_string(tmp_path):
+    r"""`path:line`, because the job is: glance, open the figure, type.
+
+    A path on one line and a line-number list on another is two fields to
+    assemble before you can jump anywhere, and in a folder where four of five
+    figures sit in the same file it is the line that tells them apart.
+    """
+    from latexally.catalog.worklog import Entry, Worklog, write_worklog
+
+    entry = Entry(id="fig-aaaaaaaaaaaa", sites=[("sp26/dis/13A/q_pca.tex", 10),
+                                                ("sp26/dis/13A/q_pca.tex", 204)])
+    worklog = Worklog(scope="s", path=tmp_path / "s.yaml", entries={entry.id: entry})
+
+    text = write_worklog(worklog, scope="s")
+
+    assert "  at: sp26/dis/13A/q_pca.tex:10\n" in text
+    assert "lines:" not in text and "file:" not in text
+
+
+def test_alt_text_written_against_the_old_field_names_still_loads(tmp_path):
+    """A field rename must not cost anyone an afternoon of alt text."""
+    from latexally.catalog.worklog import read_worklog
+
+    path = tmp_path / "old.yaml"
+    path.write_text(
+        "fig-0000000000aa:\n"
+        "  file: q.tex\n"
+        "  lines: [7, 9]\n"
+        "  alt_text: A resistive strip seen from above.\n"
+    )
+
+    entry = read_worklog(path).entries["fig-0000000000aa"]
+
+    assert entry.description == "A resistive strip seen from above."
+    assert entry.is_done
+
+
+def test_a_typed_colon_does_not_discard_the_file(tmp_path):
+    """The likeliest thing a person types, and it used to cost them the lot.
+
+    "Block diagram: input x enters block A" is a nested mapping to a YAML
+    parser, so the file fails to load. read_worklog caught the error and
+    returned an empty worklog, so every description in it vanished silently and
+    the run reported "no worklogs found; run scan first" -- which sends someone
+    to re-scan over the top of their own afternoon.
+    """
+    from latexally.catalog.worklog import read_worklog
+
+    path = tmp_path / "w.yaml"
+    path.write_text(
+        "fig-0000000000aa:\n"
+        "  at: q.tex:31\n"
+        "  alt_text: Block diagram: input x enters block A, giving y.\n"
+        "fig-0000000000bb:\n"
+        "  at: q.tex:66\n"
+        "  alt_text: A curve rising to one comma one.\n"
+    )
+
+    entries = read_worklog(path).entries
+
+    assert len(entries) == 2, "a colon in one entry must not lose the others"
+    assert entries["fig-0000000000aa"].description.startswith("Block diagram: input x")
+    assert entries["fig-0000000000bb"].description == "A curve rising to one comma one."
+
+
+def test_the_writer_quotes_what_the_parser_would_choke_on(tmp_path):
+    """So the file self-heals: type a colon, and the next scan makes it valid."""
+    from latexally.catalog.worklog import Entry, Worklog, write_worklog
+
+    entry = Entry(
+        id="fig-aaaaaaaaaaaa",
+        description="Block diagram: input x enters block A.",
+        sites=[("q.tex", 31)],
+    )
+    text = write_worklog(
+        Worklog(scope="s", path=tmp_path / "s.yaml", entries={entry.id: entry}), scope="s"
+    )
+
+    import yaml
+
+    assert yaml.safe_load(text)["fig-aaaaaaaaaaaa"]["alt_text"].startswith("Block diagram:")

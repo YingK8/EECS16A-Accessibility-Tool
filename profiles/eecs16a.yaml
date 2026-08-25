@@ -18,17 +18,18 @@ corpus:
   root: "../../questionBank"
 
   include:
-    - "questionBank/**/*.tex"
-    - "sp26/**/*.tex"
-    - "exams/**/*.tex"
+    # Everything, and let `exclude` below carry the policy. Naming the live
+    # directories here instead hid whole categories: `notes/note0` builds
+    # cleanly but was never offered, and so was every pre-sp26 semester.
+    - "**/*.tex"
 
   exclude:
     # Frozen per-semester snapshots: ~17k of the 17.6k .tex files are archived
     # copies. Converting them rewrites material nobody reads and multiplies the
     # alt-text authoring cost by the number of semesters.
     - "**/*_questionBank/**"
-    - "**/generatedTests*/**"
     - "**/candidateQuestions/**"
+    - "**/candidate_questions/**"
     # Vendored upstream packages, not course material.
     - "**/circuitikz.sty"
     - "**/kbordermatrix.sty"
@@ -64,10 +65,15 @@ corpus:
   kinds:
     hw: homework
     dis: discussion
+    # `sec` is what discussions were called before fa21; the material is the
+    # same and a reader looking for "discussions" expects to find it there.
+    sec: discussion
     exams: exam
-    notes: note
+    # Glob, so the eight `notes_<semester>` snapshots classify as notes too.
+    notes*: note
     questionBank: bank
     extraCredit: extra-credit
+    lab: lab
 
 # How this course's home-grown macros map onto tagged heading levels.
 # Level 1 = document title (Title + H1), 2 = question, 3 = part, 4 = solution.

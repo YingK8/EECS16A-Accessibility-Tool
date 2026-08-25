@@ -141,7 +141,7 @@ def plan_file(
                 plan.pending.append((reference.id, reference.line))
                 continue
             plan.skipped.append(
-                (reference.id, f"status is {entry.status!r}; only approved text is written")
+                (reference.id, "no description written yet")
             )
             continue
         try:

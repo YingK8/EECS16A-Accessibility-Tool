@@ -503,3 +503,87 @@ def test_latex_lab_write_dummy_artifacts_are_not_treated_as_formulas(tmp_path: P
     formulas = read_dummy(dummy)
 
     assert [f.tex for f in formulas] == ["$x + 1$"]
+
+
+def test_a_label_is_not_spelled_out_mid_equation():
+    r"""`\label{eq:vref}` is heard as "label e q colon v r e f" if left in.
+
+    It places a `\ref` target, typesets nothing, and means nothing aloud. The
+    converter has no reason to know that, so it reads the key as content and
+    spells it letter by letter in the middle of the equation. Measured on a
+    109-document sample: 25 formulas across 10 documents.
+    """
+    from latexally.mathspeech import expand_macros
+
+    assert "label" not in expand_macros(r"V_{ref} = \frac{R_2}{R_1} \label{eq:vref}")
+    assert "notag" not in expand_macros(r"a = b \notag")
+    assert "nonumber" not in expand_macros(r"a = b \nonumber")
+
+
+def test_stripping_bookkeeping_leaves_real_content_alone():
+    r"""Only the bookkeeping goes. `\text{...}` saying "label" is content."""
+    from latexally.mathspeech import expand_macros
+
+    kept = expand_macros(r"x = 1 \text{ the label reads } y")
+    assert "label" in kept and "\\text" in kept
+
+
+def test_prose_between_equations_is_spoken_not_spelled():
+    r"""`\shortintertext` carries the author's reasoning and was lost twice over.
+
+    latex-lab tags a whole align as one Formula, so its /Alt replaces the
+    subtree and the interleaved sentences are never announced. The converter
+    meanwhile read the macro name as content: "backslash shortintertext,
+    Subtract colon t w o", spelling the words one letter at a time.
+
+    299 occurrences across 39 files. Measured through the real converter,
+    `\text{}` says the same prose properly.
+    """
+    from latexally.mathspeech import Formula, convert, expand_macros
+
+    assert expand_macros(r"a \shortintertext{Subtract: two} b") == r"a \text{Subtract: two} b"
+    assert expand_macros(r"a \intertext{Now plug in} b") == r"a \text{Now plug in} b"
+
+    spoken = convert(
+        [
+            Formula(
+                hash="test-intertext",
+                tex=r"\begin{align} a &= b \\ \shortintertext{Subtract: two} \\ c &= d \end{align}",
+            )
+        ]
+    ).get("test-intertext")
+
+    assert spoken, "the align must convert at all"
+    assert "Subtract: two" in spoken[1]
+    assert "intertext" not in spoken[1]
+
+
+def test_a_cross_reference_is_said_not_spelled():
+    r"""`\eqref{eqn:one}` spelled its key AND broke the prose around it.
+
+    The number it typesets is assigned by LaTeX during the build, so it is not
+    knowable here. Left in, the converter read the macro and key as content --
+    "eqref, e q n, colon o n e" -- and its presence inside a `\text` broke the
+    text handling, so the surrounding sentence was spelled out too. This is a
+    real /Alt from fa20/hw/1:
+
+        w e g e t t h e u n i q u e s o l u t i o n
+
+    "the referenced equation" does not say which one, and is a phrase rather
+    than a spelled-out key.
+    """
+    from latexally.mathspeech import Formula, convert, expand_macros
+
+    assert expand_macros(r"\eqref{eqn:one}") == "the referenced equation"
+    assert expand_macros(r"\ref{fig:a}") == "the referenced equation"
+
+    tex = (
+        r"\begin{align} a &= b \\ "
+        r"\shortintertext{Subtract: \eqref{eqn:one} - 2*\eqref{eqn:two}} \\ "
+        r"c &= d \end{align}"
+    )
+    spoken = convert([Formula(hash="test-eqref", tex=tex)]).get("test-eqref")
+
+    assert spoken, "the align must still convert"
+    assert "Subtract: the referenced equation" in spoken[1]
+    assert "eqref" not in spoken[1]

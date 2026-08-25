@@ -71,9 +71,15 @@ def corpus(tmp_path: Path) -> Path:
         "\\documentclass{article}\n\\usepackage{../../term}\n"
     )
 
-    # A directory with no \begin{document} anywhere: a shared includes folder.
+    # A directory holding nothing compilable: a shared includes folder.
     (tmp_path / "sem" / "figures").mkdir()
     (tmp_path / "sem" / "figures" / "common.tex").write_text("% fragments only\n")
+
+    # Compilable, but under no directory name the profile classifies.
+    (tmp_path / "sem" / "misc").mkdir()
+    (tmp_path / "sem" / "misc" / "handout.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\\end{document}\n"
+    )
     return tmp_path
 
 
@@ -104,7 +110,7 @@ def test_driver_falls_back_to_content(corpus: Path, tmp_path: Path):
     odd = corpus / "sem" / "hw" / "9"
     odd.mkdir(parents=True)
     (odd / "zzz.tex").write_text("fragment\n")
-    (odd / "main-document.tex").write_text("\\begin{document}\\end{document}\n")
+    (odd / "main-document.tex").write_text("\\documentclass{article}\n\\begin{document}\\end{document}\n")
     assert find_driver(odd) == "main-document.tex"
 
 
@@ -124,18 +130,28 @@ def test_discovery_classifies_by_profile_kinds(profile: Profile):
 
 
 def test_unclassified_directories_are_other_not_dropped(profile: Profile):
-    kinds = {item.kind for item in discover_assignments(profile, "sem")}
-    assert "other" in kinds
+    """A directory the profile has no `kinds` entry for is still an assignment.
 
-
-def test_non_buildable_directories_are_reported_not_hidden(profile: Profile):
-    """A folder with no driver may be a shared includes dir -- or a broken one.
-
-    Either way it appears in the listing with ``buildable`` False, so the runner
-    can say how many it skipped instead of quietly narrowing the job.
+    It builds like any other; all that is missing is the label. Dropping it
+    would silently narrow a conversion to the folder names someone remembered
+    to declare.
     """
     found = {item.path: item for item in discover_assignments(profile, "sem")}
-    assert found["sem/figures"].buildable is False
+    assert found["sem/misc"].kind == "other"
+    assert found["sem/misc"].buildable is True
+
+
+def test_directories_with_nothing_compilable_are_not_assignments(profile: Profile):
+    """A shared includes folder is not an assignment that happens to be broken.
+
+    The corpus is full of `figures/`, `questions/` and `*_figs/` directories
+    holding fragments. Listing them as unbuildable assignments put a hundred
+    rows in the scope picker that can never be selected and can never build,
+    which reads as "the tool cannot handle these" rather than "these are not
+    documents".
+    """
+    found = {item.path: item for item in discover_assignments(profile, "sem")}
+    assert "sem/figures" not in found
     assert found["sem/hw/3"].buildable is True
 
 
@@ -226,7 +242,7 @@ def test_a_discussion_adds_a_student_handout_and_answers(tmp_path: Path):
     directory = tmp_path / "01A"
     directory.mkdir()
     for name in ("sol01A", "dis01A", "ans01A"):
-        (directory / f"{name}.tex").write_text("\\begin{document}\\end{document}\n")
+        (directory / f"{name}.tex").write_text("\\documentclass{article}\n\\begin{document}\\end{document}\n")
     assert find_drivers(directory) == {
         "solution": "sol01A.tex",
         "problem": "dis01A.tex",
@@ -238,7 +254,7 @@ def test_an_unconventional_driver_is_still_built(tmp_path: Path):
     """No prefix match must not mean "skip it"."""
     directory = tmp_path / "odd"
     directory.mkdir()
-    (directory / "main.tex").write_text("\\begin{document}\\end{document}\n")
+    (directory / "main.tex").write_text("\\documentclass{article}\n\\begin{document}\\end{document}\n")
     assert find_drivers(directory) == {"document": "main.tex"}
 
 
@@ -250,8 +266,8 @@ def test_variant_prefixes_come_from_the_profile(tmp_path: Path):
     """A course spelling them differently changes one line of YAML."""
     directory = tmp_path / "ps1"
     directory.mkdir()
-    (directory / "keyps1.tex").write_text("\\begin{document}\\end{document}\n")
-    (directory / "blankps1.tex").write_text("\\begin{document}\\end{document}\n")
+    (directory / "keyps1.tex").write_text("\\documentclass{article}\n\\begin{document}\\end{document}\n")
+    (directory / "blankps1.tex").write_text("\\documentclass{article}\n\\begin{document}\\end{document}\n")
     found = find_drivers(directory, {"key": "solution", "blank": "problem"})
     assert found == {"solution": "keyps1.tex", "problem": "blankps1.tex"}
 

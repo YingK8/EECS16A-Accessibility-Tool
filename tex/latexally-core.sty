@@ -368,14 +368,29 @@
   }
 
 %% Inline command form, for wrapping a single graphic without a display block.
+\cs_new_protected:Npn \__access_hover:nn #1#2
+  {
+    %% #1 is the description, #2 the already-built content. Guarded twice: the
+    %% key may be on while the document never loaded pdfcomment, and a missing
+    %% \pdftooltip must degrade to "no tooltip" rather than to a build failure.
+    \bool_lazy_and:nnTF
+      { \g__access_hover_bool }
+      { \cs_if_exist_p:N \pdftooltip }
+      { \pdftooltip {#2} {#1} }
+      {#2}
+  }
+
 \NewDocumentCommand \described { m +m }
   {
     \__access_validate_alt:nn {#1} { \string\described }
-    \mbox
+    \__access_hover:nn {#1}
       {
-        \__access_described_open:n {#1}
-        #2
-        \__access_described_close:
+        \mbox
+          {
+            \__access_described_open:n {#1}
+            #2
+            \__access_described_close:
+          }
       }
   }
 
@@ -753,6 +768,18 @@
     %% the drawing's own glyphs. See \__access_text_layer:n.
     text-layer        .bool_gset:N = \g__access_textlayer_bool ,
     text-layer        .initial:n   = true ,
+    %% Show the description as a hover tooltip as well as speaking it. Off by
+    %% default: it needs `pdfcomment', which the document must load, and a
+    %% figure is fully accessible without it -- /Alt is the channel assistive
+    %% technology reads, and hover reaches only a sighted mouse user.
+    %%
+    %% Measured with veraPDF 1.30.2 against PDF/UA-1 before adding this: the
+    %% \pdftooltip Widget annotation introduces NO additional failure -- the
+    %% same document with and without it fails on exactly the same clause -- and
+    %% the description is spoken once, not twice. Its value is review: a sighted
+    %% TA can check a description by hovering instead of running a reader.
+    hover             .bool_gset:N = \g__access_hover_bool ,
+    hover             .initial:n   = false ,
   }
 
 \NewDocumentCommand \accesssetup { m } { \keys_set:nn { latexally } {#1} }

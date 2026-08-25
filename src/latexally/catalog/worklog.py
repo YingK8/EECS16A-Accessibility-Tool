@@ -140,22 +140,51 @@ class Worklog:
 # ---------------------------------------------------------------------- #
 
 
+def _read_literally(text: str, worklog: "Worklog") -> "Worklog":
+    r"""Recover ``alt_text`` from a file the YAML parser rejected.
+
+    Line-oriented and deliberately dumb: an id is a line ending in ``:`` at
+    column 0, alt text is whatever follows ``alt_text:`` on its line. That is
+    the whole format, so this loses nothing a valid file would have carried,
+    and it survives the punctuation a person actually writes.
+    """
+    identity = ""
+    for line in text.splitlines():
+        if line and not line[0].isspace() and line.rstrip().endswith(":"):
+            identity = line.rstrip()[:-1].strip()
+        elif identity and line.strip().startswith("alt_text:"):
+            alt = line.split("alt_text:", 1)[1].strip().strip("\"'")
+            worklog.entries[identity] = Entry(id=identity, description=alt)
+    return worklog
+
+
 def read_worklog(path: Path) -> Worklog:
     """Parse a worklog. Only ``alt_text`` is read back.
 
-    ``file`` and ``lines`` are re-derived by the next scan, so they are written
-    for a human to navigate by and ignored on the way in. Parsing is forgiving:
-    a worklog is hand-edited, and a malformed entry must not take the run down
-    with it.
+    ``at`` is re-derived by the next scan, so it is written for a human to
+    navigate by and ignored on the way in. Parsing is forgiving: a worklog is
+    hand-edited, and a malformed entry must not take the run down with it.
+
+    Entries written before ``at`` replaced ``file``/``lines`` still load: only
+    ``alt_text`` is read, and it did not move. Someone's afternoon of alt text
+    must survive a change to the field beside it.
     """
     path = Path(path)
     worklog = Worklog(scope="", path=path)
     if not path.is_file():
         return worklog
+    text = path.read_text(encoding="utf-8")
     try:
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        loaded = yaml.safe_load(text) or {}
     except yaml.YAMLError:
-        return worklog
+        # A hand-typed colon is enough to make the whole file invalid YAML --
+        # "Block diagram: input x enters block A" is a nested mapping to the
+        # parser -- and returning an empty worklog here silently discarded
+        # every description in the file. The run then said "no worklogs found;
+        # run scan first", which sends someone to re-scan over the top of an
+        # afternoon's work. Read it literally instead: what a person typed is
+        # recoverable even when the syntax is not.
+        return _read_literally(text, worklog)
     if not isinstance(loaded, dict):
         return worklog
 
@@ -191,12 +220,31 @@ def write_worklog(worklog: Worklog, *, scope: str = "") -> str:
     )
     out: list[str] = []
     for entry in entries:
-        file, lines = _primary_site(entry)
         out.append(f"{entry.id}:")
-        out.append(f"  file: {file}")
-        out.append(f"  lines: [{', '.join(str(n) for n in lines)}]")
+        out.append(f"  at: {_where(entry)}")
         out.append(f"  alt_text: {_scalar(entry.description)}")
     return "\n".join(out).rstrip() + "\n" if out else ""
+
+
+def _where(entry: Entry) -> str:
+    """``path/to/file.tex:12`` -- one string, pasteable into an editor.
+
+    The job this file exists for is: glance, open the figure, type a sentence.
+    A path on one line and a line-number list on another is two fields to
+    assemble before you can jump anywhere, and in a folder where four of five
+    figures live in the same file it is the line number that tells them apart.
+    So the location is written the way every editor, ``less +``, and IDE
+    already accept.
+
+    Only the first call site. A figure is content-addressed, so one description
+    can serve several -- but the others are recovered by the next scan, they do
+    not help you find the drawing, and the entries are already ordered
+    most-cited-first so the shared ones come to hand anyway.
+    """
+    file, lines = _primary_site(entry)
+    if not file:
+        return ""
+    return f"{file}:{lines[0]}" if lines else file
 
 
 def _primary_site(entry: Entry) -> tuple[str, list[int]]:

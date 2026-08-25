@@ -83,6 +83,23 @@ _ALWAYS_EXCLUDE = (
 )
 
 
+def _excluded(relative: str, pattern: str) -> bool:
+    """Does the corpus-relative path ``relative`` match exclude ``pattern``?
+
+    ``fnmatch`` has no notion of a path separator, so ``**/`` compiles to
+    ``.*/`` -- which demands *at least one* directory before the match and
+    therefore never fires at the corpus root. ``**/*_questionBank/**`` skipped
+    ``fa19/su24_questionBank/...`` and let ``su24_questionBank/...`` straight
+    through. Matching the pattern with its ``**/`` prefix stripped as well makes
+    the leading ``**/`` mean "at any depth, including none", which is what every
+    profile that writes one intends.
+    """
+    pattern = pattern.lstrip("/")
+    if fnmatch.fnmatch(relative, pattern):
+        return True
+    return pattern.startswith("**/") and fnmatch.fnmatch(relative, pattern[3:])
+
+
 def builtin_profile_dir() -> Path:
     """Directory holding the profiles that ship with the package."""
     return Path(__file__).resolve().parent.parent.parent / "profiles"
@@ -174,9 +191,7 @@ class CorpusScope:
                 if not path.is_file() or path in seen:
                     continue
                 relative = path.relative_to(root).as_posix()
-                if any(
-                    fnmatch.fnmatch(relative, pat.lstrip("/")) for pat in excludes
-                ):
+                if any(_excluded(relative, pat) for pat in excludes):
                     continue
                 seen.add(path)
                 results.append(path)
@@ -243,6 +258,12 @@ class EnginePolicy:
     #: against ISO 32000-1, which is PDF 1.7. Raise this to 2.0 only alongside
     #: pdf_standard=ua-2.
     pdf_version: str = "1.7"
+    #: ``package.sty -> commands to \let \relax before it loads``.
+    #:
+    #: Turning tagging on makes the kernel define names it did not define
+    #: before, and a course package that defines the same name then dies with
+    #: "Command \x already defined" on a source that has always compiled.
+    unlet_before: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: testphase modules used on older toolchains, in declaration order.
     legacy_testphase: tuple[str, ...] = DEFAULT_TESTPHASE
     latexmk_args: tuple[str, ...] = DEFAULT_LATEXMK_ARGS
@@ -290,6 +311,22 @@ def _as_tuple(value: Any, field_name: str) -> tuple[str, ...]:
     if isinstance(value, Iterable):
         return tuple(str(item) for item in value)
     raise ConfigError(f"{field_name} must be a string or a list of strings")
+
+
+def _as_command_map(value: Any, field_name: str) -> dict[str, tuple[str, ...]]:
+    """``{package.sty: [cmd, ...]}`` from YAML, values normalised to tuples.
+
+    A bare string is accepted as a one-element list, because
+    ``ulem.sty: "\\normalem"`` is what people write.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"{field_name} must be a mapping of package to commands")
+    return {
+        str(key): _as_tuple(item, f"{field_name}.{key}")
+        for key, item in value.items()
+    }
 
 
 def load_profile(
@@ -420,11 +457,10 @@ def load_profile(
             name=str(engine_data.get("name", "pdflatex")),
             min_format_date=str(engine_data.get("min_format_date", "2025-06-01")),
             pdf_standard=str(engine_data.get("pdf_standard", "ua-1")),
-            unlet_before={
-                str(package): tuple(str(name) for name in names)
-                for package, names in (engine_data.get("unlet_before") or {}).items()
-            },
             pdf_version=str(engine_data.get("pdf_version", "1.7")),
+            unlet_before=_as_command_map(
+                engine_data.get("unlet_before"), "engine.unlet_before"
+            ),
             legacy_testphase=_as_tuple(
                 engine_data.get("legacy_testphase"), "engine.legacy_testphase"
             )

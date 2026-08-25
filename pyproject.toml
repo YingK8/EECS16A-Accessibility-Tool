@@ -69,3 +69,11 @@ latexally = ["py.typed"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = ["error::DeprecationWarning"]
+markers = [
+    # Builds real documents with pdflatex: about a minute each, so it is opt-in
+    # rather than part of the default run.
+    "corpus: compiles documents from the live corpus",
+]
+# `pytest` stays a thing you can run while you work. `pytest -m corpus`
+# overrides this and runs only the slow tier.
+addopts = ["-m", "not corpus"]

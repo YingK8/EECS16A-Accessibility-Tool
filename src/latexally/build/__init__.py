@@ -135,7 +135,6 @@ def preamble_for(
         else:
             keys.append("testphase={" + ",".join(engine.legacy_testphase) + "}")
         lines.append("\\DocumentMetadata{" + ",".join(keys) + "}")
-
         # Turning tagging on makes the kernel define names it did not define
         # before, and a course package that defines the same name then dies with
         # "Command \\proof already defined" -- on source that has compiled for
@@ -648,56 +647,110 @@ def relative_dependencies(
 def repair_missing(
     driver: Path, corpus_root: Path, mirror_root: Path, assignment_path: str
 ) -> list:
-    """Place a stand-in for every include this document cannot resolve.
+    r"""Place a stand-in for every include this document cannot resolve.
 
     Historical assignments reference questions the live bank has since retired;
     the files survive in the frozen per-semester snapshots. See
     :mod:`latexally.repair` for how one is chosen, and why choosing carefully
-    matters. Nothing is written to the corpus -- the replacement lands in the
+    matters. Nothing is written to the corpus: the replacement lands in the
     mirror at the path the source asked for, so the source is never edited and
     the substitution is a file you can diff.
-    """
-    from ..repair import assets_beside, find_replacements, unresolved_packages
-    from ..texlex.includes import IncludeGraph
 
-    graph = IncludeGraph([corpus_root])
-    resolved, _ = graph.transitive_inputs(driver)
-    unresolved: list[tuple[Path, str]] = []
-    for source in [driver, *resolved]:
-        try:
-            _, missing = graph.direct_inputs(source)
-        except OSError:
-            continue
-        unresolved.extend((source, target) for target in missing)
-        # A package loaded by path is a dependency the include graph never
-        # followed, so a missing one stopped the build with nothing to point at.
-        unresolved.extend((source, target) for target in unresolved_packages(source))
-    if not unresolved:
-        return []
+    Two questions are being asked, and each needs a different view of the
+    document:
+
+    what the SOURCE asks for
+        Answered against the corpus. It is the same answer for every variant of
+        an assignment. Asking the mirror instead lets the second variant see the
+        first variant's stand-ins already in place and call itself clean, so
+        ``prob9.tex`` -- the file students actually receive -- would ship a
+        substituted question with nothing on the report saying so.
+    what the STAND-INS ask for
+        Answered against the mirror, and only once they are on disk. fa18's
+        ``q_matrix_visualization`` says
+        ``\input{../../../fa18_questionBank/sec/dis2A/figures/rotate1}``, which
+        no single pass can see.
+
+    So: the corpus once, then the mirror until a round finds nothing new. Four
+    rounds is the observed depth plus headroom, and ``seen`` terminates a cycle
+    regardless of depth.
+
+    @param driver: the corpus driver being converted
+    @param corpus_root: where stand-ins are searched for; never written to
+    @param mirror_root: the output ``tex/`` tree; every write lands under it
+    @param assignment_path: corpus-relative assignment directory, e.g. ``sp26/hw/9``
+    @return: every :class:`~latexally.repair.Substitution` made, gaps included
+    """
+    from ..repair import (
+        assets_beside,
+        find_replacements,
+        unresolved_references,
+        write_gap_note,
+    )
 
     semester = assignment_path.split("/", 1)[0]
-    substitutions = find_replacements(
-        unresolved,
-        corpus_root=corpus_root,
-        mirror_root=mirror_root,
-        semester=semester,
-    )
-    for substitution in substitutions:
-        for target in (substitution.destination, substitution.alias):
-            if target is None:
+    mirrored_driver = mirror_root / assignment_path / driver.name
+    placed: list = []
+    seen: set[tuple[str, str]] = set()
+
+    # Round 0 reads the corpus, the rest read the mirror. See the docstring.
+    for round_number in range(4):
+        from_corpus = round_number == 0 or not mirrored_driver.is_file()
+        scan_from = driver if from_corpus else mirrored_driver
+        scan_root = corpus_root if from_corpus else mirror_root
+        fresh = [
+            (source, target)
+            for source, target in unresolved_references(scan_from, scan_root)
+            if (str(source), target) not in seen
+        ]
+        if not fresh:
+            if from_corpus:
+                continue  # the corpus is clean; the stand-ins may not be
+            break
+        seen.update((str(source), target) for source, target in fresh)
+        substitutions = find_replacements(
+            # Distance is measured in the corpus, so a mirrored file is asked
+            # about under the name it has there. A file that exists only in the
+            # mirror -- a stand-in placed a moment ago -- keeps its mirror path
+            # and simply ranks from where it sits.
+            [(_in_corpus(source, mirror_root, corpus_root), target) for source, target in fresh],
+            corpus_root=corpus_root,
+            mirror_root=mirror_root,
+            semester=semester,
+            build_dir=assignment_path,
+        )
+        for substitution in substitutions:
+            if substitution.placeholder:
+                # Nothing to copy: the file exists nowhere. Say so in the
+                # document rather than letting the build die over a question
+                # nobody can recover.
+                if not substitution.destination.exists():
+                    write_gap_note(substitution.destination, substitution.wanted)
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if not target.exists():
-                shutil.copy2(substitution.used, target)
-        # A question carries its figures beside it. Copying the .tex alone
-        # builds a PDF with blank boxes where the circuits should be.
-        for asset, target in assets_beside(
-            substitution.used, substitution.destination
-        ):
-            if target.is_relative_to(mirror_root) and not target.exists():
+            for target in (substitution.destination, substitution.alias):
+                if target is None:
+                    continue
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(asset, target)
-    return substitutions
+                if not target.exists():
+                    shutil.copy2(substitution.used, target)
+            # A question carries its figures beside it. Copying the .tex alone
+            # builds a PDF with blank boxes where the circuits should be.
+            for asset, target in assets_beside(
+                substitution.used, substitution.destination
+            ):
+                if target.is_relative_to(mirror_root) and not target.exists():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(asset, target)
+        placed.extend(substitutions)
+    return placed
+
+
+def _in_corpus(path: Path, mirror_root: Path, corpus_root: Path) -> Path:
+    """A mirrored path expressed under the corpus, when it has an original."""
+    try:
+        return corpus_root / path.resolve().relative_to(mirror_root.resolve())
+    except ValueError:
+        return path
 
 
 def mirror_dependencies(
@@ -922,6 +975,8 @@ class BuildReport:
     note: str | None = None
     #: Includes the corpus could not resolve, and what stood in for them.
     substitutions: list = field(default_factory=list)
+    #: Errors the UNTOUCHED source produces. See :attr:`inherited`.
+    baseline_errors: list[str] = field(default_factory=list)
 
     @property
     def substituted(self) -> bool:
@@ -936,6 +991,29 @@ class BuildReport:
         be reported as a clean one.
         """
         return any(item.ambiguous for item in self.substitutions)
+
+    @property
+    def inherited(self) -> bool:
+        """True when the untouched source fails too: this tool did not break it.
+
+        A decade-old exam whose era's `ee16.sty` no longer defines the macro it
+        calls fails identically before and after conversion. Reporting that as a
+        conversion failure sends someone hunting through the injected preamble
+        for a bug that is not there, and -- worse -- hides the failures that
+        *are* this tool's, in a list too long to read.
+        """
+        return bool(self.baseline_errors)
+
+    @property
+    def regression(self) -> list[str]:
+        """Errors that appeared only after conversion, the ones worth chasing.
+
+        Compared as messages with the line numbers stripped, because injecting a
+        preamble shifts every line below it and an unchanged error would
+        otherwise read as a new one.
+        """
+        before = {_error_shape(item) for item in self.baseline_errors}
+        return [item for item in self.errors if _error_shape(item) not in before]
 
     @property
     def built(self) -> bool:
@@ -972,7 +1050,20 @@ class BuildReport:
             "diff_note": self.diff_note,
             "injected": self.injected,
             "note": self.note,
+            "inherited": self.inherited,
+            "regression": self.regression,
         }
+
+
+def _error_shape(message: str) -> str:
+    """One error message reduced to what makes it the *same* error.
+
+    ``body.tex:19: Missing number`` and ``body.tex:26: Missing number`` are one
+    defect seen through a preamble that pushed everything seven lines down.
+    Dropping the line number is what lets :attr:`BuildReport.regression` tell an
+    inherited failure from one this conversion introduced.
+    """
+    return re.sub(r":\d+:", ":", message.strip())
 
 
 #: `-file-line-error` output: "<path>.tex:12: message". The path may be relative
@@ -1298,6 +1389,13 @@ def _compile_assignment(
             )
         except LatexAllyError:
             original_pdf = None
+        # What the source does on its own, before a single line was injected.
+        # Without this a 2015 exam that has not compiled since 2015 reads
+        # exactly like a document this tool broke, and there is no way to tell
+        # a regression from an inheritance.
+        report.baseline_errors, _ = _log_findings(
+            config.output.baseline_dir() / f"{slug}-original.log"
+        )
 
     pdf = compile_document(
         prepared.driver,

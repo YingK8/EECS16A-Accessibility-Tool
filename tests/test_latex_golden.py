@@ -503,3 +503,59 @@ def test_a_clashing_environment_still_works_where_it_is_used(tmp_path):
     assert "Environment proof undefined" not in log, log[-1200:]
     assert "already defined" not in log, log[-1200:]
     assert (tmp_path / "d.pdf").is_file(), "the document must still build"
+
+
+def test_hover_switch_produces_exactly_one_tooltip_and_one_utterance(tmp_path):
+    r"""Measured, because a form field is announced by some readers.
+
+    The risk in adding a tooltip is that the description gets spoken twice, once
+    from `/Alt` and once from the annotation. It does not: one annotation, one
+    utterance. veraPDF 1.30.2 against PDF/UA-1 reports the same clause with the
+    switch on and off, so the annotation introduces no conformance failure.
+
+    Skipped unless pdflatex and pdfcomment are both present.
+    """
+    import shutil
+    import subprocess
+
+    import pytest
+
+    if shutil.which("pdflatex") is None:
+        pytest.skip("no pdflatex")
+    if subprocess.run(["kpsewhich", "pdfcomment.sty"], capture_output=True).returncode:
+        pytest.skip("pdfcomment not installed")
+
+    tex = tmp_path / "hover.tex"
+    tex.write_text(
+        "\\DocumentMetadata{lang=en-US,pdfversion=1.7,tagging=on,pdfstandard=ua-1}\n"
+        "\\documentclass{article}\n"
+        "\\usepackage{tikz}\\usepackage{pdfcomment}\\usepackage{latexally-core}\n"
+        "\\accesssetup{hover=true}\n"
+        "\\title{Hover}\n"
+        "\\begin{document}\n"
+        "\\described{A line rising to one comma one.}"
+        "{\\begin{tikzpicture}\\draw (0,0)--(1,1);\\end{tikzpicture}}\n"
+        "\\end{document}\n"
+    )
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "tex"
+    subprocess.run(
+        ["pdflatex", "-interaction=nonstopmode", tex.name],
+        cwd=tmp_path,
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin:/usr/local/texlive/2025/bin/universal-darwin",
+             "TEXINPUTS": f"{root}:"},
+        capture_output=True,
+    )
+    pdf = tmp_path / "hover.pdf"
+    assert pdf.is_file(), "the document must build"
+
+    import pikepdf
+
+    from latexally.check.speech import spoken_utterances
+
+    annots = sum(len(page.get("/Annots", [])) for page in pikepdf.open(pdf).pages)
+    spoken = sum(1 for u in spoken_utterances(pdf) if "rising" in (u.text or ""))
+
+    assert annots == 1, "one tooltip, not one per nested box"
+    assert spoken == 1, "the description must not be announced twice"

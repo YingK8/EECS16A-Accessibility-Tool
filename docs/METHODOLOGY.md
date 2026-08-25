@@ -463,7 +463,7 @@ ally-out/
   tex/           converted sources, with each driver's transitive relative
                  dependencies copied at the same offsets so the tree builds
                  without the corpus beside it
-  descriptions/  the Markdown worklogs staff fill in
+  descriptions/  the YAML description files staff fill in
   baseline/      untouched originals, for the before/after pixel comparison
   run.yaml       the run's settings, replayable with `build --config`
 ```

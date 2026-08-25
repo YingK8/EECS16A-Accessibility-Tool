@@ -351,10 +351,10 @@ described: 0   outstanding: 234
 worklogs: .../questionBank/ally/descriptions (42 files)
 ```
 
-This creates `questionBank/ally/descriptions/*.md` — one Markdown file per assignment
+This creates `questionBank/ally/descriptions/*.yaml` — one file per assignment
 folder. **This is the only thing `scan` writes, and it writes nothing inside
-your `.tex` files.** Safe to re-run: it regenerates the machine-written parts
-and never overwrites text a person typed.
+your `.tex` files.** Safe to re-run: it rebuilds the list of figures from the
+source and never overwrites a description a person typed.
 
 Add `--no-write` to see the counts without creating any files.
 
@@ -363,14 +363,33 @@ Add `--no-write` to see the counts without creating any files.
 Open a worklog, e.g.:
 
 ```bash
-open "/Users/meli/Desktop/Kevin/UCB/EECS 16A/questionBank/ally/descriptions/questionBank-hw-10.md"
+open "/Users/meli/Desktop/Kevin/UCB/EECS 16A/questionBank/ally/descriptions/questionBank-hw-10.yaml"
 ```
 
-Each entry shows the machine-derived facts, the question the figure belongs to,
-and an empty `### description` section. Type the description there and change
-`- status: todo` to `- status: approved`. The rules are in `ALT_TEXT_SPEC.md`.
+Each entry is three lines: the figure's id, where it is first used, and an
+empty `description:`. Type the description there — that is the whole step.
 
-### Write approved descriptions into the .tex files
+```yaml
+  - figure: fig-3870069f66da
+    file: sp26/dis/13A/questions/q_pca.tex:10
+    description: >-
+      Scatter plot on x and y axes running about minus 4 to 4, with four
+      transactions marked.
+```
+
+The `>-` is YAML for "this paragraph continues on the following indented
+lines"; it exists so a one-word edit is a one-line diff. A single-line
+description can go straight after `description:` with no `>-`. The rules for
+what to write are in `ALT_TEXT_SPEC.md`.
+
+**Anything you write here is written into the PDF.** There is no separate
+approval step, so an unfinished sentence ships as alt text. Leave
+`description:` empty until it is ready. To see the machine-derived facts for a
+figure — extracted circuit topology, plot data, labels — use
+`latexally agent next-task`, which reports them without putting them in the
+file.
+
+### Write descriptions into the .tex files
 
 **Dry run first** — this changes nothing and prints the diff:
 

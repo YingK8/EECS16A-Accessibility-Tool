@@ -1058,8 +1058,8 @@ class OutputScreen(StepScreen):
                     name="mirror",
                 ),
                 Radio(
-                    "in-place — needs a clean git worktree. The PDF goes beside "
-                    "the original, in the corpus; no .tex is edited",
+                    "in-place — needs a clean git worktree; the PDF goes beside "
+                    "the original",
                     value=output.in_place,
                     name="in-place",
                 ),

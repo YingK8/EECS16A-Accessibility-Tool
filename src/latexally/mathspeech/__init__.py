@@ -355,6 +355,72 @@ def _expand_fence_by_content(body: str, name: str, choose) -> str:
         index = end + 1
 
 
+#: Cross-reference bookkeeping inside display maths. These place a target for
+#: ``\\ref``; they typeset nothing and mean nothing aloud. Left in, the converter
+#: treats the key as content and a reader spells it out letter by letter:
+#: `\\label{eq:vref}` is heard as "label e q colon v r e f" in the middle of an
+#: equation. Measured on a 109-document sample: 25 formulas across 10 documents.
+#:
+#: The braces are matched non-greedily and the whole call is dropped, argument
+#: and all -- unlike a macro whose argument is content, there is nothing here to
+#: keep.
+_BOOKKEEPING = re.compile(
+    r"\\(?:label|nonumber|notag|tag\s*\*?|(?:this)?tagsuffix)\s*\{[^{}]*\}"
+    r"|\\(?:nonumber|notag)\b"
+)
+
+
+#: Prose set BETWEEN the rows of an align, from mathtools. It carries the
+#: author's reasoning -- "Subtract: (1) - 2*(2)", "Now we plug in (3)" -- and
+#: 299 of them across 39 files in this corpus. latex-lab tags the whole align
+#: as one Formula, so its /Alt replaces the subtree and the sentences are never
+#: announced; the converter meanwhile reads the macro name as content and says
+#: "backslash shortintertext, Subtract colon t w o", spelling the words out.
+#:
+#: `\\text` is the same thing said properly: measured through the real
+#: converter, `\\text{Subtract: two}` speaks as "equation 2; Subtract: two".
+_INTERTEXT = re.compile(r"\\(?:short)?intertext\s*\{")
+
+#: A cross-reference inside maths. It typesets the equation's number, which is
+#: not knowable at this layer -- the number is assigned by LaTeX during the
+#: build, and this converts the source. Left in, the converter reads the macro
+#: and its key as content: "eqref, e q n, colon o n e", and worse, its presence
+#: inside a `\\text` breaks the text handling so the surrounding prose is
+#: spelled out letter by letter too -- "w e g e t t h e u n i q u e s o l u t i
+#: o n" is a real /Alt from fa20/hw/1.
+#:
+#: Said as words instead. "the referenced equation" is longer than "(1)" and
+#: does not say which, but it is a phrase rather than a spelled-out key, and it
+#: does not corrupt the sentence around it.
+_EQREF = re.compile(r"\\(?:eq)?ref\s*\{[^{}]*\}")
+
+
+def lift_intertext(body: str) -> str:
+    r"""Turn ``\intertext``/``\shortintertext`` into ``\text`` so it is spoken.
+
+    A rename, not a reflow: the prose stays exactly where the author put it, in
+    the row order they wrote, and only the macro carrying it changes to one the
+    converter understands.
+    """
+    return _INTERTEXT.sub(r"\\text{", body)
+
+
+def spell_out_references(body: str) -> str:
+    r"""Say ``\eqref{k}`` as words rather than spelling its key aloud."""
+    return _EQREF.sub("the referenced equation", body)
+
+
+def strip_bookkeeping(body: str) -> str:
+    r"""Remove cross-reference machinery that has no spoken form.
+
+    ``\label`` is the one that matters: it is common in this corpus, it is
+    invisible on the page, and a reader announces its key one letter at a time.
+    ``\nonumber`` and ``\notag`` are here for the same reason -- they control
+    numbering, not content.
+    """
+    return _BOOKKEEPING.sub("", body)
+
+
 def expand_macros(body: str) -> str:
     """Expand the course macros ``latex2mathml`` would otherwise read as text.
 
@@ -363,6 +429,7 @@ def expand_macros(body: str) -> str:
     converter on this corpus. Anything not on the list still reaches the reader
     as the macro's name, which ``ALLY-PDF-041`` reports.
     """
+    body = spell_out_references(lift_intertext(strip_bookkeeping(body)))
     for pattern, replacement in _MACRO_PREFIXES:
         body = pattern.sub(replacement, body)
     if "\\mat" in body:
@@ -491,7 +558,7 @@ def _to_mathml(formula: Formula) -> str:
 #: Bumped whenever anything upstream of the speech string changes -- the macro
 #: table, the engine, its preferences, the fork's rules. It is stored in the
 #: cache and checked on read, because the cache key cannot see any of them.
-RECIPE = "mathcat-0.7.5+augmented-matrix+temp-name/clearspeak/macros-4-matbody"
+RECIPE = "mathcat-0.7.5+augmented-matrix+temp-name/clearspeak/macros-5-intertext-label-eqref"
 
 #: Not a valid MD5, so it can never collide with a formula's hash.
 _RECIPE_KEY = "#recipe"

@@ -85,7 +85,21 @@ def test_a_directory_that_is_not_a_semester_still_gets_an_order(corpus: Path):
 # ---------------------------------------------------------------------- #
 
 
-def request(corpus: Path, target: str, *, referenced_by: str, semester: str):
+def request(
+    corpus: Path,
+    target: str,
+    *,
+    referenced_by: str,
+    semester: str,
+    build_dir: str | None = None,
+):
+    """Ask for one stand-in, as the build would.
+
+    ``build_dir`` is the assignment being compiled -- the directory pdflatex runs
+    in, which is what a ``../`` in the source counts its hops from. It defaults
+    to the referencing file's own folder, which is the common case where the two
+    are the same.
+    """
     source = corpus / referenced_by
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text(f"\\input{{{target}}}\n")
@@ -94,6 +108,7 @@ def request(corpus: Path, target: str, *, referenced_by: str, semester: str):
         corpus_root=corpus,
         mirror_root=corpus / "out" / "tex",
         semester=semester,
+        build_dir=build_dir or str(Path(referenced_by).parent),
     )
 
 
@@ -153,9 +168,36 @@ def test_a_target_climbing_out_of_the_mirror_is_refused(corpus: Path):
     assert found == []
 
 
-def test_a_question_nowhere_in_the_corpus_is_left_alone(corpus: Path):
+def test_a_question_nowhere_in_the_corpus_becomes_a_stated_gap(corpus: Path):
+    """Nothing to substitute is not the same as nothing to do.
+
+    A missing `\\input` stops pdflatex dead, so leaving it alone means no
+    accessible version of the document exists at all -- over a question nobody
+    can recover. Substituting the nearest-looking file instead would put a
+    *different* question into a document that claims to be a faithful
+    conversion. So the gap is stated: the build gets a note saying what is
+    missing, flagged `placeholder` so no report can mistake it for a repair.
+    """
     found = request(
         corpus, "../../../questionBank/hw/9/q_missing",
+        referenced_by="fa21/hw/9/body.tex", semester="fa21",
+    )
+    assert len(found) == 1
+    assert found[0].placeholder
+    assert found[0].candidates == []
+    assert found[0].destination.name == "q_missing.tex"
+    assert "exists" in found[0].fix and "nowhere" in found[0].fix
+
+
+def test_a_missing_figure_is_reported_but_not_stood_in_for(corpus: Path):
+    """A missing figure does not stop the build, so it does not get a note.
+
+    pdflatex draws an empty box and carries on. Writing a `.tex` note where a
+    `.png` was expected would not load, and inventing a picture is not on the
+    table -- the honest outcome is the blank box plus a line in the report.
+    """
+    found = request(
+        corpus, "../../../questionBank/hw/9/figures/nothing.png",
         referenced_by="fa21/hw/9/body.tex", semester="fa21",
     )
     assert found == []

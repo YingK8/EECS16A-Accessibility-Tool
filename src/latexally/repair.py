@@ -39,6 +39,7 @@ import hashlib
 import os
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 __all__ = [
@@ -46,7 +47,10 @@ __all__ = [
     "assets_beside",
     "bank_search_order",
     "find_replacements",
+    "unresolved_graphics",
+    "unresolved_listings",
     "unresolved_packages",
+    "unresolved_references",
 ]
 
 #: ``sp``/``su``/``fa`` in the order a year runs, so semesters sort.
@@ -125,10 +129,20 @@ class Substitution:
     ambiguous: bool = False
     #: Every bank that had a copy, in the order they were searched.
     candidates: list[Path] = field(default_factory=list)
+    #: True when nothing stood in because nothing exists: `used` is a generated
+    #: note saying the file is gone, not a copy of the question. See
+    #: :func:`write_gap_note`.
+    placeholder: bool = False
 
     @property
     def fix(self) -> str:
         """What a person should do to the corpus so this is not needed again."""
+        if self.placeholder:
+            return (
+                f"{self.wanted} (referenced by {self.referenced_by}) exists "
+                "nowhere in the corpus; restore it from a backup, or edit the "
+                "source to stop asking for it"
+            )
         return (
             f"copy {self.used} to {self.wanted} "
             f"(as resolved from {self.referenced_by}), "
@@ -141,6 +155,7 @@ class Substitution:
             "referenced_by": str(self.referenced_by),
             "used": str(self.used),
             "ambiguous": self.ambiguous,
+            "placeholder": self.placeholder,
             "candidates": [str(path) for path in self.candidates],
         }
 
@@ -164,21 +179,65 @@ def _tail_after_bank(target: str) -> Path | None:
     return None
 
 
-def _unique_by_name(corpus_root: Path, name: str) -> Path | None:
-    """Last resort: exactly one file of that name in the whole corpus.
+@lru_cache(maxsize=4)
+def _name_index(corpus_root: Path) -> dict[str, tuple[Path, ...]]:
+    """``{basename: every path in the corpus with that name}``, sorted.
 
-    Only when it is unique. Nearly every question file exists in a dozen
-    snapshots, so this fires for the stragglers -- a stylesheet at the corpus
-    root, a figure moved one directory sideways -- and never for a question.
+    One walk of a 17,600-file corpus, reused by every lookup. The alternative --
+    an ``rglob`` per missing reference -- is the same walk several thousand
+    times over, which turned a whole-corpus sweep from seconds into an hour.
+    Sorted so the fallbacks below break ties the same way on every machine.
     """
-    hits = [path for path in corpus_root.rglob(name) if path.is_file()]
+    index: dict[str, list[Path]] = {}
+    for path in corpus_root.rglob("*"):
+        if path.is_file():
+            index.setdefault(path.name, []).append(path)
+    return {name: tuple(sorted(paths)) for name, paths in index.items()}
+
+
+def _distance(source: Path, candidate: Path) -> tuple[int, int]:
+    """``(hops up, hops down)`` between the directories of two files.
+
+    The metric a person uses when they read ``\\usepackage{../ee16}`` in
+    ``exams/fa15/mt1/`` and go looking for the file: climb until the paths meet,
+    then descend. ``exams/ee16.sty`` is two up and none down; the corpus-root
+    copy is three up; ``notes/ee16.sty`` is three up and one down. Nearest is
+    the one the author most plausibly meant, and it is the one that shares the
+    most history with the file asking for it.
+    """
+    here = source.parent.resolve().parts
+    there = candidate.parent.resolve().parts
+    shared = 0
+    for left, right in zip(here, there):
+        if left != right:
+            break
+        shared += 1
+    return len(here) - shared, len(there) - shared
+
+
+def _nearest_by_name(
+    source: Path, corpus_root: Path, name: str
+) -> tuple[Path | None, list[Path]]:
+    """The copy of ``name`` nearest ``source``, and the copies tied with it.
+
+    This replaced a "use it only if the whole corpus holds exactly one copy"
+    rule. ``ee16.sty`` exists eleven times here and no two are identical, so
+    uniqueness always answered no and always gave up -- leaving every pre-2017
+    exam dead on ``File `../ee16.sty' not found``. Distance answers instead: an
+    exam reaching for ``../ee16`` gets the copy in ``exams/``, not the one under
+    ``notes/``.
+
+    The second return value is only the candidates at that *same* distance --
+    the ones the metric genuinely cannot separate. A caller flags a
+    substitution ambiguous when those disagree in content; farther copies are
+    not evidence of ambiguity, they are just farther away.
+    """
+    hits = _name_index(corpus_root).get(name, ())
     if not hits:
-        return None
-    # Several copies are fine when they are the same file. `kbordermatrix.sty`
-    # sits in thirteen snapshots and is byte-identical in all of them; refusing
-    # it on a count alone would leave a build broken over nothing.
-    digests = {hashlib.md5(path.read_bytes()).hexdigest() for path in hits}
-    return hits[0] if len(digests) == 1 else None
+        return None, []
+    ranked = sorted(hits, key=lambda path: (_distance(source, path), path))
+    nearest = _distance(source, ranked[0])
+    return ranked[0], [p for p in ranked if _distance(source, p) == nearest]
 
 
 #: ``\\usepackage{../../../fa19_questionBank/hw/7/kbordermatrix}`` -- a package
@@ -189,20 +248,37 @@ _PACKAGE = re.compile(
 )
 
 
-def unresolved_packages(source: Path) -> list[str]:
-    """Path-qualified packages this file loads that are not on disk."""
+def unresolved_packages(source: Path, *, cwd: Path | None = None) -> list[str]:
+    r"""Path-qualified packages this file loads that are not on disk.
+
+    Two things stop this from crying wolf on almost every file in the corpus.
+
+    **Only path-qualified names are ours to find.** ``\usepackage{../ee16,
+    graphicx, latexsym, epsf}`` is one match with four arguments, and three of
+    them live in the TeX distribution. Checking the whole comma list against the
+    filesystem reported ``graphicx`` missing 236 times.
+
+    **Relative means relative to the build directory, not to this file.** TeX
+    resolves ``../../../markup`` against the current directory -- the directory
+    pdflatex was invoked in, which is the driver's -- and a shared preamble one
+    level above the assignment counts its ``../`` hops from there, not from
+    itself. Checking against ``source.parent`` reported ``markup``,
+    ``timestamp`` and ``ee16`` missing 1,359 times each; they were never
+    missing, and every one of those would have had a stand-in copied over it.
+    """
     try:
         text = source.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
+    bases = [source.parent] if cwd is None else [cwd, source.parent]
     missing = []
     for match in _PACKAGE.finditer(text):
         for argument in match.group(1).split(","):
             target = argument.strip()
-            if not target:
+            if not target or "/" not in target:
                 continue
             candidate = Path(target if Path(target).suffix else f"{target}.sty")
-            if not (source.parent / candidate).exists():
+            if not any((base / candidate).exists() for base in bases):
                 missing.append(target)
     return missing
 
@@ -215,6 +291,187 @@ _GRAPHIC = re.compile(r"\\includegraphics\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}")
 
 #: What TeX will try when the source names a figure without an extension.
 _GRAPHIC_SUFFIXES = ("", ".pdf", ".png", ".jpg", ".jpeg", ".eps")
+
+#: ``\\lstinputlisting[...]{path}``: a source file typeset as a code block.
+#: Always written with its extension, and always fatal when missing.
+_LISTING = re.compile(r"\\lstinputlisting\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}")
+
+#: Extensions to try when a reference is written without one, in the order that
+#: makes the common case right: `\\input{q_x}` wants q_x.tex, a path-qualified
+#: `\\usepackage` wants .sty, and only then is it a figure. Getting this order
+#: wrong puts a PNG where TeX expects a source file, which fails identically to
+#: the missing file it replaced.
+_SEARCH_SUFFIXES = ("", ".tex", ".sty", ".pdf", ".png", ".jpg", ".jpeg", ".eps")
+
+
+#: Extensions a gap note may have to be written in, and each language's line
+#: comment. A `\\lstinputlisting` target is typeset verbatim, so a LaTeX note in
+#: a `.py` file would be printed as Python source rather than read as a message.
+_CODE_SUFFIXES = {
+    ".py": "#", ".m": "%", ".c": "//", ".cpp": "//", ".h": "//",
+    ".java": "//", ".js": "//", ".sh": "#", ".txt": "#",
+}
+
+#: TeX-special characters, so a path can be printed inside a document.
+_TEX_ESCAPES = {
+    "\\": r"\textbackslash{}", "{": r"\{", "}": r"\}", "$": r"\$", "&": r"\&",
+    "#": r"\#", "^": r"\textasciicircum{}", "_": r"\_", "%": r"\%",
+    "~": r"\textasciitilde{}",
+}
+
+
+def write_gap_note(destination: Path, wanted: str) -> None:
+    r"""Write a visible note where a question used to be.
+
+    Some of what this corpus asks for is simply gone -- not moved, not renamed,
+    not in any snapshot: 75 targets across 68 documents exist nowhere. There are
+    three things to do with those and only one of them is defensible.
+
+    Substituting the nearest-looking file would put a *different question* into
+    a document that claims to be a faithful conversion. Letting the build die
+    leaves 68 documents with no accessible version at all, over a question
+    nobody can recover anyway. So the document is built with the gap **stated**:
+    a reader is told what is missing, in the place it is missing from, in the
+    document's own reading order.
+
+    Written into the output mirror only. The corpus keeps its broken reference,
+    and the run report names every one of these so it reads as a corpus repair
+    to make rather than a conversion that succeeded.
+    """
+    wanted = wanted.strip()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.suffix.lower() in _CODE_SUFFIXES:
+        # `\lstinputlisting` typesets the file's bytes verbatim, so the note has
+        # to be a comment in THAT language or it lands in the PDF as a syntax
+        # error the reader has to decode.
+        comment = _CODE_SUFFIXES[destination.suffix.lower()]
+        body = "\n".join(
+            f"{comment} {line}"
+            for line in (
+                "Generated by latexally.",
+                f"The corpus has no copy of {wanted}, in any semester snapshot",
+                "or anywhere else, so there was nothing to stand in for it.",
+            )
+        ) + "\n"
+    else:
+        shown = "".join(_TEX_ESCAPES.get(char, char) for char in wanted)
+        body = (
+            "% Generated by latexally. The corpus has no copy of this file, in any\n"
+            "% semester snapshot or anywhere else, so there was nothing to stand in\n"
+            "% for it. The gap is stated rather than hidden. Nothing in the corpus\n"
+            "% was changed; delete the output directory and this file goes with it.\n"
+            "\\par\\noindent\\textbf{[Missing from the question bank: " + shown + "]}\\par\n"
+            "\\noindent This question is referenced by the assignment but no copy of\n"
+            "it survives in the corpus, so it could not be included.\\par\n"
+        )
+    destination.write_text(
+        body,
+        encoding="utf-8",
+    )
+
+
+def _unresolved_by_pattern(
+    source: Path,
+    pattern: re.Pattern[str],
+    suffixes: tuple[str, ...],
+    cwd: Path | None,
+) -> list[str]:
+    """Targets named by ``pattern`` in ``source`` that are not on disk.
+
+    @param pattern: one capturing group holding the path as written
+    @param suffixes: extensions TeX will try when none is written; ``""`` first
+    @param cwd: the build directory, searched before the referencing file's own
+    """
+    try:
+        text = source.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    bases = [source.parent] if cwd is None else [cwd, source.parent]
+    missing = []
+    for match in pattern.finditer(text):
+        target = match.group(1).strip()
+        if not target:
+            continue
+        if any(
+            (base / f"{target}{suffix}").is_file()
+            for base in bases
+            for suffix in suffixes
+        ):
+            continue
+        missing.append(target)
+    return missing
+
+
+def unresolved_graphics(source: Path, *, cwd: Path | None = None) -> list[str]:
+    r"""Figures this file draws that are not on disk.
+
+    A missing figure does not stop pdflatex. It prints "using draft setting",
+    leaves an empty rectangle where the circuit was, and produces a PDF that
+    looks finished -- the quietest way for this pipeline to ship a page with the
+    content removed, and one that no amount of tagging can make accessible.
+    So a missing figure goes through the same stand-in search as a missing
+    question, and the same report says which document got one.
+
+    Resolved against the build directory as well as the referencing file, for
+    the reason :func:`unresolved_packages` gives.
+    """
+    return _unresolved_by_pattern(source, _GRAPHIC, _GRAPHIC_SUFFIXES, cwd)
+
+
+def unresolved_listings(source: Path, *, cwd: Path | None = None) -> list[str]:
+    r"""Code files this document typesets with ``listings`` and cannot find.
+
+    Fatal, unlike a missing figure: ``Package Listings Error: File `x(.py)' not
+    found`` stops the build. The corpus does this for Python solutions kept
+    beside a question, and when the question is substituted in from another
+    semester the ``.py`` beside it has to come too.
+
+    The path is written in full, extension included, so no suffix is guessed.
+    """
+    return _unresolved_by_pattern(source, _LISTING, ("",), cwd)
+
+
+def unresolved_references(driver: Path, corpus_root: Path) -> list[tuple[Path, str]]:
+    r"""Every ``(referencing file, target as written)`` this document cannot find.
+
+    Walks the whole ``\input`` graph, not just the driver, because the reference
+    that stops a build is almost never in the file you handed pdflatex --
+    ``body.tex`` is what reaches the retired bank question three directories
+    away. Path-qualified ``\usepackage`` is collected alongside, since the
+    include graph does not follow package loads and a missing one stopped the
+    build with nothing to point at.
+
+    Read-only, and shared by the build (which then repairs) and the corpus sweep
+    (which then counts). One answer, so a green sweep means a build that finds
+    its files, rather than two implementations that agree by luck.
+
+    The driver's own directory leads the search roots because that is pdflatex's
+    current directory, and a ``../``-spelled path resolves against it -- not
+    against whichever included file happens to spell it. A shared preamble one
+    level above the assignment relies on exactly that.
+    """
+    from .texlex.includes import IncludeGraph
+
+    build_dir = driver.parent.resolve()
+    graph = IncludeGraph([build_dir, corpus_root])
+    resolved, _ = graph.transitive_inputs(driver)
+    unresolved: list[tuple[Path, str]] = []
+    for source in [driver, *resolved]:
+        try:
+            _, missing = graph.direct_inputs(source)
+        except OSError:
+            continue
+        unresolved.extend((source, target) for target in missing)
+        unresolved.extend(
+            (source, target) for target in unresolved_packages(source, cwd=build_dir)
+        )
+        unresolved.extend(
+            (source, target) for target in unresolved_graphics(source, cwd=build_dir)
+        )
+        unresolved.extend(
+            (source, target) for target in unresolved_listings(source, cwd=build_dir)
+        )
+    return unresolved
 
 
 def assets_beside(source: Path, destination: Path) -> list[tuple[Path, Path]]:
@@ -250,14 +507,24 @@ def find_replacements(
     corpus_root: Path,
     mirror_root: Path,
     semester: str,
+    build_dir: str,
 ) -> list[Substitution]:
-    """Locate a stand-in for each ``(referencing file, target as written)``.
+    r"""Locate a stand-in for each ``(referencing file, target as written)``.
 
-    ``destination`` is computed in the mirror, at the same offset from the
-    referencing file's mirrored copy as the target was from the original. Place
-    the file there and the source resolves it without being edited.
+    ``destination`` is where the file has to be placed for the source to find it
+    unedited, and that is an offset from the **build directory** -- the mirrored
+    assignment folder pdflatex is invoked in -- not from the referencing file.
+    TeX resolves a relative path against the current directory, so a preamble
+    one level up, or a bank question already substituted in from two directories
+    sideways, both count their ``../`` hops from the assignment being built.
+
+    Measuring from the referencing file instead sent every such destination
+    climbing out of the mirror, where a guard below correctly refused to write
+    it -- and 44 documents stayed broken because the stand-in was found and then
+    thrown away.
     """
     banks = bank_search_order(corpus_root, semester)
+    build_mirror = (mirror_root / build_dir).resolve()
     found: list[Substitution] = []
     for source, target in unresolved:
         tail = _tail_after_bank(target)
@@ -277,25 +544,58 @@ def find_replacements(
         ]
         used = candidates[0] if candidates else None
         if used is None:
+            # Not a bank reference, or the banks do not have it. Fall back to
+            # the file's own neighbourhood: `\usepackage{../ee16}` in
+            # exams/fa15/mt1 means the ee16.sty that era shipped, which is in
+            # exams/, not the one at the corpus root and not the one under
+            # notes/. Distance decides; the whole-corpus uniqueness test is the
+            # rung after, for names too rare to have a near copy.
             stem = Path(target.strip().rstrip("/")).name
-            for suffix in ("", ".tex", ".sty"):
+            for suffix in _SEARCH_SUFFIXES:
                 if suffix and Path(stem).suffix:
                     break
-                used = _unique_by_name(corpus_root, f"{stem}{suffix}")
+                used, candidates = _nearest_by_name(
+                    source, corpus_root, f"{stem}{suffix}"
+                )
                 if used is not None:
                     break
-            if used is None:
-                continue
 
-        try:
-            mirrored = mirror_root / source.relative_to(corpus_root)
-        except ValueError:
-            continue
         wanted = target.strip()
+        if used is None:
+            # Nothing anywhere. A missing figure is not fatal -- pdflatex draws
+            # an empty box and carries on -- so it is reported and left alone.
+            # A missing `\input` stops the build dead, and the document is worth
+            # more with the gap stated than not existing at all.
+            if Path(wanted).suffix.lower() in _GRAPHIC_SUFFIXES[1:]:
+                continue
+            # The extension the source wrote, because the reader of this file
+            # is whatever macro asked for it: `\\input` wants LaTeX,
+            # `\\lstinputlisting{x.py}` wants something Python can be shown as.
+            gap = Path(
+                os.path.normpath(
+                    build_mirror / (wanted if Path(wanted).suffix else f"{wanted}.tex")
+                )
+            )
+            if not gap.is_relative_to(mirror_root):
+                continue
+            # Recorded, not written. This function only ever decides; every
+            # write is done by the caller, which is what lets the corpus sweep
+            # ask "what would happen" against a mirror root that does not exist.
+            found.append(
+                Substitution(
+                    wanted=wanted,
+                    referenced_by=source,
+                    used=gap,
+                    destination=gap,
+                    placeholder=True,
+                )
+            )
+            continue
+
         # The suffix is whatever was actually found: forcing .tex put a .sty
         # file at a .tex name, which TeX could not load either.
         offset = wanted if Path(wanted).suffix else f"{wanted}{used.suffix}"
-        destination = Path(os.path.normpath(mirrored.parent / offset))
+        destination = Path(os.path.normpath(build_mirror / offset))
 
         # `fall19_questionBank /hw/6/...` carries a space the author typed.
         # \input keeps it and looks for the spaced path; \usepackage strips it
@@ -303,7 +603,7 @@ def find_replacements(
         # write both -- they are a few kilobytes and only differ where the
         # corpus has the typo.
         squeezed = "/".join(part.strip() for part in offset.split("/") if part.strip())
-        alias = Path(os.path.normpath(mirrored.parent / squeezed))
+        alias = Path(os.path.normpath(build_mirror / squeezed))
         if alias == destination or not alias.is_relative_to(mirror_root):
             alias = None
         if not destination.is_relative_to(mirror_root):

@@ -252,14 +252,38 @@ def files(ctx: Context, scope: str | None, documents: bool, limit: int) -> None:
 )
 @pass_context
 def scan(ctx: Context, scope: str | None, no_write: bool) -> None:
-    """Find every figure, derive a description skeleton, refresh the worklogs.
+    r"""Find every figure, derive a description skeleton, refresh the worklogs.
 
-    Safe to re-run: machine sections are regenerated, and human-written alt
-    text, status and disposition are always preserved.
+    Safe to re-run: the figure list is rebuilt from the source every time and
+    human-written alt text is never overwritten.
+
+    Scans what each document CONTAINS, not what its folder holds. An assignment
+    here is a thin wrapper that ``\input``s its questions from the shared bank:
+    ``sp26/dis/13A`` owns five figures in a ``questions/`` folder the document
+    never includes, and renders four others from ``questionBank/sec/13``. A
+    folder-scoped scan described the five orphans and none of the four, then
+    reported a clean sweep. Measured across sp26, 76.5% of graphics are reached
+    by ``\input`` rather than living in the assignment's own folder.
+
+    ``build`` has always resolved the real file set this way; only this command
+    did not, so a worklog filled in by hand disagreed with the one a build
+    produced.
     """
+    from .build import source_files_for
     from .catalog import build_catalog, worklog_dir
+    from .discover import discover_assignments
 
-    result = build_catalog(ctx.profile, scope, write=not no_write)
+    files: list[Path] = []
+    for assignment in discover_assignments(ctx.profile, scope):
+        files.extend(source_files_for(assignment, ctx.profile))
+
+    # No assignment in scope means the scope is a bare glob, not a document.
+    # Fall back to it rather than scanning nothing.
+    result = (
+        build_catalog(ctx.profile, files=sorted(set(files)), write=not no_write)
+        if files
+        else build_catalog(ctx.profile, scope, write=not no_write)
+    )
     payload = result.as_dict() | {"scope": scope, "directory": str(worklog_dir(ctx.profile))}
 
     if ctx.as_json:
@@ -324,20 +348,38 @@ def _files_to_check(profile: Profile, scope: str | None) -> set[Path]:
 @click.option("--show-diff", is_flag=True, help="Print the unified diff for each file.")
 @pass_context
 def apply(ctx: Context, scope: str | None, write: bool, show_diff: bool) -> None:
-    """Write approved descriptions into the .tex sources.
+    r"""Write descriptions into the .tex sources.
 
-    Defaults to a dry run. Only descriptions marked `approved` are written; a
-    draft or empty description is skipped rather than shipped.
+    Defaults to a dry run. A figure with no description written is skipped
+    rather than shipped.
+
+    Resolves the same file set ``scan`` does: what each document \input s, not
+    what its folder holds. Scanning one way and applying the other is worse than
+    either alone -- ``scan`` describes the figures the document renders and
+    ``apply`` then walks a folder full of different ones, reporting every id as
+    "not in any worklog; run scan first" immediately after a successful scan.
     """
     from .apply import apply_scope
+    from .build import source_files_for
     from .catalog import load_entries
+    from .discover import discover_assignments
 
     entries = load_entries(ctx.profile)
     if not entries:
         click.echo("error: no worklogs found; run `latexally scan` first", err=True)
         sys.exit(EXIT_ERROR)
 
-    plans = apply_scope(ctx.profile, scope, entries, dry_run=not write)
+    files: list[Path] = []
+    for assignment in discover_assignments(ctx.profile, scope):
+        files.extend(source_files_for(assignment, ctx.profile))
+
+    plans = apply_scope(
+        ctx.profile,
+        scope,
+        entries,
+        dry_run=not write,
+        files=sorted(set(files)) or None,
+    )
     wrapped = sum(plan.wrapped for plan in plans)
     artifacts = sum(plan.artifacts for plan in plans)
     skipped = [item for plan in plans for item in plan.skipped]
@@ -844,7 +886,17 @@ def _print_failures(console: Console, failures: list) -> None:
     them no way to find out what.
     """
     for report in failures:
-        if report.built:
+        if report.inherited and not report.regression:
+            # The untouched source fails the same way. Saying so first is the
+            # difference between "this tool broke your exam" and "this exam has
+            # not compiled since 2015" -- opposite problems with opposite fixes,
+            # and only one of them is worth reading the injected preamble for.
+            console.print(
+                f"\n[yellow]{escape(report.assignment)} "
+                f"({escape(report.variant)}): the source does not compile "
+                f"either; conversion did not cause this[/yellow]"
+            )
+        elif report.built:
             console.print(
                 f"\n[yellow]{escape(report.assignment)} "
                 f"({escape(report.variant)}) built, with "

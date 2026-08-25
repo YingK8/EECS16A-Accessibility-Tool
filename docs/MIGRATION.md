@@ -19,7 +19,7 @@ silently produce untagged output.
 ```bash
 latexally doctor                    # gate
 latexally scan sp26                 # build worklogs for one semester
-#   … staff and agents fill in ally/descriptions/*.md, a human approves …
+#   … staff and agents fill in ally/descriptions/*.yaml …
 latexally apply sp26 --show-diff    # review
 latexally apply sp26 --write
 latexally check sp26

@@ -13,6 +13,7 @@ students actually receive -- untagged.
 
 from __future__ import annotations
 
+import fnmatch
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,7 @@ from typing import Iterable, Iterator
 from .config import Profile
 from .errors import ConfigError
 from .run import RunConfig
+from .texlex.includes import is_driver
 
 __all__ = [
     "Assignment",
@@ -115,30 +117,37 @@ def find_drivers(
 ) -> dict[str, str]:
     """Every buildable variant in an assignment directory, ``{variant: file}``.
 
-    A driver is a file carrying ``\\begin{document}``; the rest of an assignment
-    is ``\\input`` fragments that do not compile alone. Variants are recognised
-    by the naming convention the corpus uses -- ``<prefix><name>.tex`` -- and
-    anything that opens a document without matching one is returned under
-    ``document`` so it is still built rather than silently skipped.
+    A driver is a file pdflatex can compile as it stands -- see
+    :func:`latexally.texlex.includes.is_driver`, which is the authority on what
+    that means and on why ``\\begin{document}`` is the wrong test. The rest of an
+    assignment is ``\\input`` fragments that do not compile alone.
+
+    Variants are recognised by the naming convention the corpus uses --
+    ``<prefix><name>.tex`` -- and anything compilable that matches no prefix is
+    returned under ``document`` so it is still built rather than silently
+    skipped. A directory with nothing compilable in it returns ``{}``.
     """
     prefixes = prefixes or DEFAULT_VARIANT_PREFIXES
     name = directory.name
     found: dict[str, str] = {}
 
     for prefix, variant in prefixes.items():
-        for candidate in (f"{prefix}{name}.tex", f"{prefix}.tex"):
-            if variant not in found and (directory / candidate).is_file():
-                found[variant] = candidate
+        if variant in found:
+            continue
+        # `<prefix><dirname>.tex` and a bare `<prefix>.tex` first, then any
+        # `<prefix>*.tex`: sp26/hw/15 holds sol14.tex and prob14.tex, so the
+        # directory is not always named after the files inside it.
+        exact = (directory / f"{prefix}{name}.tex", directory / f"{prefix}.tex")
+        for candidate in (*exact, *sorted(directory.glob(f"{prefix}*.tex"))):
+            if candidate.is_file() and is_driver(candidate):
+                found[variant] = candidate.name
+                break
 
     if not found:
-        # No convention match: fall back to whatever really opens a document.
+        # No convention match: fall back to whatever really compiles.
         # Sorted, so the choice is deterministic rather than filesystem-ordered.
         for path in sorted(directory.glob("*.tex")):
-            try:
-                head = path.read_text(encoding="utf-8", errors="replace")[:20_000]
-            except OSError:  # pragma: no cover
-                continue
-            if "\\begin{document}" in head:
+            if is_driver(path):
                 found["document"] = path.name
                 break
     return found
@@ -158,11 +167,19 @@ def _kind_of(relative: str, kinds: dict[str, str]) -> str:
 
     Longest-first matters: ``sp26/hw`` must beat a bare ``hw`` when a profile
     declares both, otherwise the answer depends on dict order.
+
+    Each segment of a pattern is a glob, so one ``notes*`` entry covers
+    ``notes``, ``notes_fa24`` and the six other snapshots a decade of renames
+    left behind, instead of eight profile lines that go stale on the next one.
     """
     parts = relative.split("/")
     for pattern in sorted(kinds, key=len, reverse=True):
         needle = pattern.strip("/").split("/")
-        if any(parts[i : i + len(needle)] == needle for i in range(len(parts))):
+        window = range(len(parts) - len(needle) + 1)
+        if any(
+            all(fnmatch.fnmatch(part, glob) for part, glob in zip(parts[i:], needle))
+            for i in window
+        ):
             return kinds[pattern]
     return "other"
 
@@ -224,8 +241,19 @@ def discover_assignments(
     prefixes = profile.corpus.variants or DEFAULT_VARIANT_PREFIXES
     found: list[Assignment] = []
     for relative, count in sorted(counts.items(), key=lambda item: newest_first(item[0])):
+        # `.` is the corpus root. It holds loose files -- `circuitikz_version.tex`
+        # and the like -- and calling that an assignment puts "the whole corpus"
+        # in a list of homeworks.
+        if relative == ".":
+            continue
         directory = root / relative
         drivers = find_drivers(directory, prefixes)
+        # A directory with nothing compilable in it is not an assignment. The
+        # corpus is full of `figures/`, `questions/` and `*_figs/` directories
+        # holding fragments; listing them as unbuildable assignments padded the
+        # scope picker with a hundred rows nobody can ever select.
+        if not drivers:
+            continue
         found.append(
             Assignment(
                 path=relative,

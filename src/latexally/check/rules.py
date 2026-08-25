@@ -87,6 +87,14 @@ _DATATABLE = re.compile(r"\\begin\s*\{(?:DataTable|LayoutTable)\}")
 #: snapshots (`fa19_questionBank/`, `fa23_questionBank/`, ...). The assignment
 #: compiled the year it was written and has been dead ever since; nothing
 #: noticed, because nobody rebuilds old homeworks until a conversion tool does.
+def _relative_dir(target: Path, base: Path) -> str:
+    """``target``'s directory, relative to ``base``; empty when it is outside."""
+    try:
+        return str(target.resolve().relative_to(base).parent)
+    except ValueError:
+        return ""
+
+
 def _missing_inputs(path: Path, profile: Profile, name: str) -> list[Finding]:
     from ..texlex.includes import IncludeGraph
 
@@ -112,6 +120,10 @@ def _missing_inputs(path: Path, profile: Profile, name: str) -> list[Finding]:
             corpus_root=root,
             mirror_root=root,
             semester=semester,
+            # Linting one file, with no assignment around it: the file's own
+            # directory is the best stand-in for the build directory, which is
+            # what a `../`-spelled path actually resolves against.
+            build_dir=_relative_dir(path, root),
         )
     }
 
@@ -934,6 +946,18 @@ _FILENAME = re.compile(r"\.(?:png|jpg|jpeg|pdf|eps|svg)\s*$", re.IGNORECASE)
 #: point of ALLY-PDF-041.
 _RAW_LATEX = re.compile(r"LaTeX formula (?:starts|ends)|[\\$]")
 
+#: A description that names a symbol instead of speaking it. A reader utters
+#: these verbatim: "x underscore i" where the author meant "x sub i", "backslash
+#: vec x" where they meant "vector x". They enter alt text when someone pastes
+#: source into the field, or when a converter gives up and spells the markup
+#: out. Word-bounded, because "understated" and "cared" are ordinary prose.
+_SPOKEN_SYMBOL = re.compile(
+    r"\b(?:backslash|underscore|caret|circumflex|tilde|"
+    r"dollar sign|open brace|close brace|left brace|right brace|"
+    r"ampersand|asterisk|hat symbol)\b",
+    re.IGNORECASE,
+)
+
 
 def _bookmark_navigation(structure, name: str) -> list[Finding]:
     """Do the bookmarks actually go anywhere?
@@ -1078,6 +1102,7 @@ def _typeset_internals(pdf_path: Path, name: str) -> list[Finding]:
 def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> list[Finding]:
     """Assert the structural contract on a built PDF."""
     from .content import read_page_content
+    from .speech import unreachable_text
     from .structure import read_structure
 
     findings: list[Finding] = []
@@ -1097,7 +1122,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
         ]
 
     for figure in structure.of_tag("Figure"):
-        if not figure.alt:
+        if not (figure.alt or "").strip():
             findings.append(
                 Finding(
                     "ALLY-PDF-002",
@@ -1123,6 +1148,37 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
                     ),
                 )
             )
+        if _RAW_LATEX.search(figure.alt):
+            findings.append(
+                Finding(
+                    "ALLY-PDF-006",
+                    Severity.ERROR,
+                    f"Figure /Alt is markup, not speech: {figure.alt[:60]!r}",
+                    file=name,
+                    standard="WCAG 2.1 A SC 1.1.1",
+                    hint=(
+                        "a reader utters this verbatim, backslashes and all. "
+                        "Write what the drawing shows, in plain words"
+                    ),
+                )
+            )
+            continue
+        if _SPOKEN_SYMBOL.search(figure.alt):
+            findings.append(
+                Finding(
+                    "ALLY-PDF-007",
+                    Severity.ERROR,
+                    f"Figure /Alt names a symbol instead of speaking it: "
+                    f"{figure.alt[:60]!r}",
+                    file=name,
+                    standard="WCAG 2.1 A SC 1.1.1",
+                    hint=(
+                        "say what the notation means -- \"x sub i\", not "
+                        "\"x underscore i\""
+                    ),
+                )
+            )
+            continue
         if _FILENAME.search(figure.alt):
             findings.append(
                 Finding(
@@ -1147,7 +1203,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
             )
 
     for formula in structure.of_tag("Formula"):
-        if not formula.alt:
+        if not (formula.alt or "").strip():
             findings.append(
                 Finding(
                     "ALLY-PDF-040",
@@ -1313,4 +1369,23 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
                         data={"text": region.text[:100]},
                     )
                 )
+    # What a reader actually says, in the order it says it. Every rule above
+    # inspects the tag tree or the content stream; this one inspects the join,
+    # which is where a document that passes both can still be read out wrong.
+    for tag, text in unreachable_text(pdf_path):
+        findings.append(
+            Finding(
+                "ALLY-PDF-050",
+                Severity.ERROR,
+                f"text inside <{tag}> is never announced: {text[:60]!r}",
+                file=name,
+                standard="PDF/UA-1, Matterhorn 09-001",
+                hint=(
+                    "an ancestor carries /Alt, which REPLACES its whole subtree. "
+                    "Move the readable content out of it, or describe the "
+                    "element without wrapping the words in it"
+                ),
+            )
+        )
+
     return findings

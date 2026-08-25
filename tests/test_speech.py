@@ -225,3 +225,136 @@ def test_extracted_text_speaks_the_maths_too(built: Path):
         "a positional extractor still sees the glyphs, not the description"
     )
     assert "ssubi" in extracted
+
+
+# ---------------------------------------------------------------------- #
+# the audit, checked against defects planted on purpose
+# ---------------------------------------------------------------------- #
+
+
+def _audit_with(monkeypatch, utterances, unreachable=()):
+    """Run the audit over a fabricated transcript."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    import speech_audit
+
+    monkeypatch.setattr(speech_audit, "spoken_utterances", lambda _p: utterances)
+    monkeypatch.setattr(speech_audit, "unreachable_text", lambda _p: list(unreachable))
+    return speech_audit.audit_speech(Path("unused.pdf"))
+
+
+class _Said:
+    """One utterance, as speech_audit consumes it."""
+
+    def __init__(self, text, tag="Figure"):
+        self.text, self.tag, self.node, self.source = text, tag, 0, "alt"
+
+
+def test_the_audit_hears_silence(monkeypatch):
+    """An /Alt of punctuation is silence, and the checker counts it described.
+
+    `if not alt` is False for " " and for "-", so both reach a listener as
+    nothing at all while every count in the report says the figure has a
+    description.
+    """
+    for quiet in (" ", "-", "...", ""):
+        audit = _audit_with(monkeypatch, [_Said(quiet)])
+        assert audit.of_kind("silence"), f"{quiet!r} should read as silence"
+
+
+def test_the_audit_hears_markup_and_named_symbols(monkeypatch):
+    r"""Two ways a description reaches the reader as gibberish.
+
+    Markup is uttered verbatim: ``\vec{x}`` is "backslash vec x". A named
+    symbol is worse, because it looks like prose: "x underscore i" is what a
+    converter writes when it gives up, and nothing downstream flags it.
+    """
+    assert _audit_with(monkeypatch, [_Said(r"the vector \vec{x} shown")]).of_kind("markup")
+    assert _audit_with(monkeypatch, [_Said("x underscore i against t")]).of_kind("named-symbol")
+    assert _audit_with(monkeypatch, [_Said("1000cmd/emph/after0Interpretation")]).of_kind(
+        "internals"
+    )
+
+
+def test_the_audit_passes_ordinary_prose(monkeypatch):
+    """It must stay quiet on the descriptions people actually write.
+
+    Including the ones whose words merely contain a symbol name: "understated"
+    is not "underscore", and a colon is ordinary punctuation in this corpus.
+    """
+    clean = [
+        _Said("Scatter plot on x and y axes, four transactions marked."),
+        _Said("Block diagram: input x enters block A, then block B, giving y."),
+        _Said("An understated curve rising to one comma one."),
+    ]
+    assert _audit_with(monkeypatch, clean).ok
+
+
+def test_the_audit_reports_text_a_reader_never_reaches(monkeypatch):
+    """Words in the tag tree that no reader announces are lost, not present."""
+    audit = _audit_with(monkeypatch, [_Said("fine", "P")], [("Figure", "swallowed prose")])
+    assert audit.of_kind("unreachable")
+
+
+def test_prose_may_carry_what_an_alt_may_not(monkeypatch):
+    r"""A dollar sign is money in a paragraph and LaTeX in a description.
+
+    Calibrated against the corpus, not guessed: "$0.12 per kilowatt-hour" and
+    "PG&E" are real sentences in fa23/dis/08A, and the content reader returns
+    raw show-text operators so the `fl` ligature in "flowing" arrives as \x03.
+    Flagging those reported the extractor rather than the document -- 11 of 109
+    PDFs failed on it. Substitute text is held to the stricter standard, because
+    an /Alt is what a reader says *instead of* the content.
+    """
+    prose = [
+        _Said("Suppose PG&E charges $0.12 per kilowatt-hour.", "P"),
+        _Said("What are the currents \x03owing into the terminals?", "P"),
+    ]
+    for said in prose:
+        said.source = "content"
+    assert _audit_with(monkeypatch, prose).ok
+
+    described = _Said("the region $x_1$ shaded", "Figure")
+    described.source = "alt"
+    assert _audit_with(monkeypatch, [described]).of_kind("markup")
+
+
+def test_a_backslash_is_wrong_wherever_it_appears(monkeypatch):
+    """notes_fa25/note20 ships a heading reading `Design Example: \\Almost"`.
+
+    Nothing in this corpus says a backslash aloud on purpose, so unlike the
+    dollar sign it needs no exemption for prose.
+    """
+    heading = _Said(r'Design Example: \\Almost" current source', "H1")
+    heading.source = "content"
+    assert _audit_with(monkeypatch, [heading]).of_kind("markup")
+
+
+def test_prose_the_alt_does_say_is_not_reported_as_lost(monkeypatch):
+    r"""An align's /Alt speaks the prose between its rows, so it is not lost.
+
+    "Replaced" is not "lost". The words reach the listener through the
+    substitute rather than the subtree, interleaved with equation numbers that
+    are not in the /Alt at all -- so demanding the buried text appear verbatim
+    can never pass. Prose that is entirely absent is the real defect.
+    """
+    said = _Said("fine", "P")
+    audit = _audit_with(
+        monkeypatch,
+        [said],
+        [("equation 3; Subtract: the referenced equation; y", "(1) (2) Subtract: ( )")],
+    )
+    assert audit.ok, "the /Alt says 'Subtract', so nothing was lost"
+
+
+def test_prose_the_alt_never_says_is_still_reported(monkeypatch):
+    """The original defect: an /Alt that speaks none of what it replaced."""
+    said = _Said("fine", "P")
+    audit = _audit_with(
+        monkeypatch,
+        [said],
+        [("2 x plus 3 y is equal to 5", "Subtract the first equation from the second")],
+    )
+    assert audit.of_kind("unreachable")
