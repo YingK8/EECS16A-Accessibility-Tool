@@ -134,10 +134,6 @@ def plan_file(
             continue
         if reference.already_described:
             continue  # idempotent: a second run changes nothing
-        if entry.disposition == "artifact":
-            _wrap_decorative(plan, reference)
-            plan.artifacts += 1
-            continue
         if not entry.is_done:
             if placeholders:
                 _wrap_placeholder(plan, reference)

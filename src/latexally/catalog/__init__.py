@@ -190,13 +190,13 @@ def build_catalog(
 
     worklogs: dict[Path, Worklog] = {}
     for shard, shard_entries in grouped.items():
-        path = directory / f"{shard}.md"
+        path = directory / f"{shard}.yaml"
         previous = read_worklog(path)
         if baseline != directory:
             # This run's own worklog wins over the corpus, so a description
             # edited inside an output directory is not reverted by an older
             # one carrying the same id.
-            inherited = read_worklog(baseline / f"{shard}.md")
+            inherited = read_worklog(baseline / f"{shard}.yaml")
             inherited.entries.update(previous.entries)
             previous = inherited
         merged = merge(previous, shard_entries)
@@ -232,7 +232,7 @@ def load_entries(
     directory = worklog_dir(profile, output_root)
     if not directory.is_dir():
         return entries
-    for path in sorted(directory.glob("*.md")):
+    for path in sorted(directory.glob("*.yaml")):
         for identity, entry in read_worklog(path).entries.items():
             existing = entries.get(identity)
             # Prefer an approved description over a draft of the same figure.

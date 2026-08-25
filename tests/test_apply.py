@@ -108,30 +108,6 @@ def test_long_description_is_skipped_when_there_is_no_room(profile: Profile, tmp
     assert any("long description not written" in reason for _, reason in plan.skipped)
 
 
-def test_empty_long_section_does_not_parse_as_the_entry_rule(tmp_path: Path):
-    """The `---` between worklog entries is punctuation, not a description."""
-    from latexally.catalog.worklog import read_worklog
-
-    path = tmp_path / "w.md"
-    path.write_text(
-        "# Description worklog — t\n\n<!-- latexally worklog v1 -->\n\n---\n\n"
-        "## fig-0000000000aa\n\n"
-        "- status: approved\n\n"
-        "### description\n\nA single node.\n\n"
-        "### long\n\n<!-- optional: only when the short description cannot carry it all -->\n\n"
-        "---\n\n"
-        "## fig-0000000000bb\n\n"
-        "- status: approved\n\n"
-        "### description\n\nAnother node.\n\n"
-        "### long\n\n<!-- optional -->\n"
-    )
-
-    entries = read_worklog(path).entries
-    assert entries["fig-0000000000aa"].long_description == ""
-    assert entries["fig-0000000000bb"].long_description == ""
-    assert entries["fig-0000000000aa"].description == "A single node."
-
-
 @pytest.mark.parametrize(
     ("body", "wrapper"),
     [

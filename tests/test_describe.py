@@ -227,6 +227,11 @@ def test_escape_description_collapses_whitespace():
 
 
 def test_worklog_round_trip_preserves_human_fields(tmp_path):
+    """A description survives the edit-and-rescan cycle; nothing else has to.
+
+    Only `alt_text` is read back. `file` and `lines` are written for a human to
+    navigate by and re-derived on the next scan, so a stale one is not a bug.
+    """
     entry = Entry(
         id="fig-0123456789ab",
         kind="circuitikz",
@@ -234,19 +239,21 @@ def test_worklog_round_trip_preserves_human_fields(tmp_path):
         sites=[("a/b.tex", 12)],
         caption="A caption",
     )
-    worklog = Worklog(scope="demo", path=tmp_path / "demo.md", entries={entry.id: entry})
+    worklog = Worklog(scope="demo", path=tmp_path / "demo.yaml", entries={entry.id: entry})
     worklog.path.write_text(write_worklog(worklog, scope="demo"), encoding="utf-8")
 
-    text = worklog.path.read_text()
-    text = text.replace(
-        PLACEHOLDER, "Two capacitors joined by a switch."
-    ).replace("- status: todo", "- status: approved")
-    worklog.path.write_text(text)
+    assert "file: a/b.tex" in worklog.path.read_text()
+    assert "lines: [12]" in worklog.path.read_text()
 
-    reloaded = read_worklog(worklog.path)
-    restored = reloaded.entries[entry.id]
+    # What a person does: type into the empty alt_text.
+    worklog.path.write_text(
+        worklog.path.read_text().replace(
+            "alt_text:", "alt_text: Two capacitors joined by a switch."
+        )
+    )
+
+    restored = read_worklog(worklog.path).entries[entry.id]
     assert restored.description == "Two capacitors joined by a switch."
-    assert restored.status == "approved"
     assert restored.is_done
 
 
