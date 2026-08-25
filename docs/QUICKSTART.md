@@ -542,11 +542,29 @@ python3 -m pytest tests/ -q
 ```
 
 ```
-75 passed
+457 passed, 1 skipped
 ```
 
-These compile real LaTeX and assert on the resulting PDF structure, so they take
-about 15 seconds and need `pdflatex` on your `PATH`.
+Some of these compile real LaTeX and assert on the resulting PDF structure, so
+they need `pdflatex` on your `PATH`.
+
+Two things are deliberately **not** in that run, because both cost a full build:
+
+```bash
+uv run python tests/revert_e2e.py    # --edit, a bare pdflatex, then revert
+uv run pytest -m corpus              # build a sample of the live corpus
+```
+
+`revert_e2e.py` is the one that proves the weekly workflow: it copies one
+assignment's whole dependency closure into a throwaway git repository, runs
+`--edit` over it, builds it with a bare `pdflatex`, reverts, and checks that
+every file is byte-identical and nothing is left behind. Roughly 25 seconds.
+
+It is a script rather than a `pytest` test on purpose. Inspecting a built PDF
+imports `pymupdf`, whose native module deadlocks on import under pytest in this
+virtualenv — the same reason the text-extraction check in
+`test_latex_golden.py` shows as the one skip above. Under `python` directly it
+imports fine.
 
 ---
 

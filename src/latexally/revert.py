@@ -59,7 +59,18 @@ def _artifact_globs() -> tuple[str, ...]:
     # The worklog, and the packages `copy_back` installs so a bare pdflatex can
     # find them. Both are named by this package, which is what makes them
     # recognisable a week later.
-    return stamped + (WORKLOG_NAME, "latexally-*.sty", "latexally-*.cls")
+    #
+    # `*-mathml-dummy.html` is there because the documented workflow ends in
+    # the user running `pdflatex` themselves. The build engine unlinks its own
+    # copy (`_collect_log`); a hand-run pdflatex leaves one behind under the
+    # document's own jobname, and it exists only because this tool put the
+    # math-speech machinery in the preamble.
+    return stamped + (
+        WORKLOG_NAME,
+        "latexally-*.sty",
+        "latexally-*.cls",
+        "*-mathml-dummy.html",
+    )
 
 
 @dataclass(slots=True)

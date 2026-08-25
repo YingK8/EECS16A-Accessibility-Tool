@@ -20,6 +20,12 @@ The third is the one that catches this tool's own droppings. The corpus
 ``.gitignore`` covers ``*.pdf``, ``*.log``, ``*.aux`` and ``*.annotations``, so
 a leftover ``descriptions.yaml`` or an installed ``latexally-core.sty`` would
 pass the second assertion while sitting in somebody's homework folder.
+
+Nothing here compiles anything. The half that needs a real LaTeX run -- does
+``--edit`` actually leave a folder a bare ``pdflatex`` can build, and is *that*
+undone completely -- is ``tests/revert_e2e.py``, a script rather than a test
+because inspecting a built PDF imports ``pymupdf``, whose native module
+deadlocks on import under pytest in this virtualenv.
 """
 
 from __future__ import annotations
@@ -263,88 +269,3 @@ def test_revert_reports_rather_than_hides_what_it_could_not_restore(
 
     with pytest.raises(LatexAllyError, match="still modified"):
         do_revert(plan)
-
-
-# ---------------------------------------------------------------------- #
-# the slow tier: a real build, in edit mode, then reverted
-# ---------------------------------------------------------------------- #
-
-
-def _closure(driver: Path) -> set[Path]:
-    """Every file the driver reaches by a relative path, plus its figures.
-
-    16A drivers say ``\\usepackage{../../../ee16}`` and
-    ``\\input{../../../questionBank/hw/13/q_perpetual_motion}``, so an
-    assignment folder copied on its own does not build -- before this tool
-    touches it. Copying the closure at the same relative offsets is what makes
-    the throwaway repository a faithful stand-in for the corpus.
-    """
-    from latexally.build import relative_dependencies
-
-    files = set(relative_dependencies(driver))
-    for path in list(files):
-        figures = path.parent / "figures"
-        if figures.is_dir():
-            files.update(item for item in figures.rglob("*") if item.is_file())
-    return files
-
-
-@pytest.mark.corpus
-def test_an_edit_mode_build_is_undone_completely(tmp_path: Path):
-    r"""The end-to-end claim, with a real pdflatex in the middle.
-
-    This is the only test that exercises :func:`~latexally.build.copy_back` --
-    the step that writes converted sources over the corpus originals -- and the
-    ``latexally-*.sty`` install that lets the folder build with a bare
-    ``pdflatex`` afterwards. Everything in the fast tier above stops at
-    ``apply_scope``.
-    """
-    from latexally.build import build_run
-
-    assignment = BANK / "sp26" / "hw" / "13"
-    driver = assignment / "prob13.tex"
-    if not driver.is_file():
-        pytest.skip(f"no driver at {driver}")
-
-    root = tmp_path / "corpus"
-    for source in sorted(_closure(driver)):
-        try:
-            relative = source.relative_to(BANK)
-        except ValueError:
-            continue
-        target = root / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-    _repo_from([], root)
-
-    profile = _profile(root)
-    config = _config(root, tmp_path / "ally-out")
-    config.assignments = ("sp26/hw/13",)
-    config.variants = ("problem",)
-
-    before = _manifest(root)
-    reports = build_run(config, profile)
-    built = [report for report in reports if report.pdf is not None]
-    if not built:
-        pytest.skip(
-            "pdflatex produced no PDF here: "
-            + "; ".join(report.note for report in reports if report.note)
-        )
-
-    # copy_back only runs on a clean build, so this is the assertion that says
-    # the mode did its job rather than quietly doing nothing.
-    assert any(report.edited for report in built), "edit mode wrote nothing back"
-    folder = root / "sp26" / "hw" / "13"
-    assert (folder / WORKLOG_NAME).is_file(), "no worklog beside the sources"
-    assert list(folder.glob("latexally-*.sty")), "no package installed for bare pdflatex"
-
-    do_revert(plan_revert(config, profile))
-
-    after = _manifest(root)
-    changed = {k for k in before.keys() & after.keys() if before[k] != after[k]}
-    assert not changed, f"{len(changed)} file(s) differ after revert"
-    assert before.keys() == after.keys(), (
-        f"added: {sorted(after.keys() - before.keys())[:5]}  "
-        f"lost: {sorted(before.keys() - after.keys())[:5]}"
-    )
-    assert not _git(root, "status", "--porcelain").stdout.strip()
