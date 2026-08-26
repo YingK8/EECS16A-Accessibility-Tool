@@ -57,6 +57,7 @@ from textual.widgets import (
     RadioButton,
     RadioSet,
     RichLog,
+    Rule,
     SelectionList,
     Static,
 )
@@ -1322,14 +1323,26 @@ class ReviewScreen(StepScreen):
     def container(self) -> Widget:
         return VerticalScroll(id="body")
 
+    @staticmethod
+    def section(title: str) -> Iterator[Widget]:
+        """A ruled heading. This screen is six unrelated answers in a column.
+
+        Bold text alone did not separate them: the preamble is thirty lines of
+        LaTeX and the document table has its own header row, so "Colours" read
+        as one more line of whatever was above it. A rule is the cheapest thing
+        that says "different question".
+        """
+        yield Rule(classes="divider")
+        yield Static(title, classes="section")
+
     def body(self) -> Iterator[Widget]:
         yield Static("", id="verdict", classes="heading")
         yield Static("", id="settings", classes="note")
-        yield Static("Selected directories", classes="label")
+
+        yield from self.section("Selected directories")
         yield Static("", id="scope-list", classes="note")
-        yield Static("Injected into each driver", classes="label")
-        yield Static("", id="preamble", classes="detail")
-        yield Static("What gets built", classes="label")
+
+        yield from self.section("What gets built")
         yield Static("", id="documents")
         yield Static(
             "'.tex used' counts every file the driver reaches, including "
@@ -1337,10 +1350,22 @@ class ReviewScreen(StepScreen):
             "figures live.",
             classes="hint",
         )
-        yield Static("Colours", classes="label")
+
+        yield from self.section("Figure descriptions")
+        yield Static("", id="alt", classes="note")
+        yield Static("", id="alt-markup", classes="detail")
+
+        yield from self.section("Colours")
         yield Static("", id="colors")
-        yield Static("Output", classes="label")
+
+        yield from self.section("Output")
         yield Static("", id="output")
+
+        # Last, and deliberately: thirty lines of LaTeX that almost nobody
+        # reads twice. Above the document table it pushed the one thing people
+        # do check -- which documents will be built -- below the fold.
+        yield from self.section("Injected into each driver")
+        yield Static("", id="preamble", classes="detail")
 
     def on_mount(self) -> None:
         from ..build import preamble_for
@@ -1376,7 +1401,9 @@ class ReviewScreen(StepScreen):
                         f"Standards: {len(config.standards.enabled())} of "
                         f"{len(STANDARD_TOGGLES)} applied",
                         f"Colours:   {config.colors.describe(profile)}",
-                        f"Alt text:  {config.alt.describe()}",
+                        # Alt text is not repeated here: it has a section of
+                        # its own below, which says the same thing and then
+                        # shows the markup it puts in the file.
                         f"Output:    {describe_output(config)}",
                     )
                 )
@@ -1392,10 +1419,41 @@ class ReviewScreen(StepScreen):
         self.query_one("#scope-list", Static).update(
             Content("\n".join(config.assignments) or "nothing selected")
         )
+        self._alt_text(config)
         self.query_one("#documents", Static).update(self._documents())
         self.query_one("#colors", Static).update(colors_table(profile, config))
         self.query_one("#output", Static).update(output_table(config))
         self.set_next(bool(count), "Nothing is selected; go back to Scope.")
+
+    def _alt_text(self, config) -> None:
+        r"""Say what reaches the .tex, in the characters that reach it.
+
+        The alt-text step warns that placeholders are written; it does not show
+        what they look like. This is the last screen before they are, and a
+        marker in somebody's course file is exactly the kind of thing that
+        should not be a surprise -- the previous generation of this tooling
+        shipped one into a PDF as real /Alt.
+        """
+        from ..apply import PLACEHOLDER
+
+        self.say("#alt", config.alt.describe())
+        if not config.alt.injects:
+            self.say("#alt-markup", "")
+            return
+        marker = PLACEHOLDER.format(id="fig-1a2b3c4d")
+        self.say(
+            "#alt-markup",
+            "Each undescribed figure is wrapped where it stands:\n"
+            f"  \\begin{{Described}}{{{marker}}}\n"
+            "    …the figure, byte for byte as you wrote it…\n"
+            "  \\end{Described}\n"
+            f"  \\described{{{marker}}}{{…}}   (for a graphic sharing its line)\n"
+            "\n"
+            "A figure that already has a description keeps it and is not "
+            "touched. The marker is refused as alt text, so the document does "
+            "NOT build until every one is filled in — which is what stops an "
+            "unfilled marker reaching a reader as if it were a description.",
+        )
 
     def _documents(self):
         from rich.table import Table
@@ -1825,6 +1883,10 @@ class LatexAllyApp(App):
     .heading { text-style: bold; padding: 0 1; }
     .hint { color: $text-muted; padding: 0 1; }
     .label { text-style: bold; padding: 0 1; }
+    /* Section headings on Review. The rule does the separating; the heading
+       is indented to sit with the block it names rather than with the rule. */
+    .section { text-style: bold; padding: 0 1; }
+    .divider { color: $text-muted; margin: 1 1 0 1; }
     .note { padding: 0 1; }
     .count { padding: 0 1; color: $text-muted; }
     .row { height: auto; }

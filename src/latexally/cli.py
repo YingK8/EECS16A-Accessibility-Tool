@@ -1011,38 +1011,21 @@ def _print_failures(console: Console, failures: list) -> None:
         )
 
 
-@main.command()
-@click.argument("scope", required=False)
-@click.option(
-    "--output",
-    "-o",
-    type=click.Path(file_okay=False, path_type=Path),
-    help="The output tree to delete. Defaults to ally-out.",
-)
-@click.option(
-    "--config",
-    "config_path",
-    type=click.Path(path_type=Path, exists=True),
-    help="Read the artifact locations from the run.yaml that produced them.",
-)
-@click.option("--write", is_flag=True, help="Actually revert (default is a dry run).")
-@pass_context
-def revert(
+def _undo(
     ctx: Context,
     scope: str | None,
     output: Path | None,
     config_path: Path | None,
     write: bool,
+    *,
+    restore: bool,
+    force: bool = False,
 ) -> None:
-    """Undo a run: restore the .tex and delete what the run produced.
+    """The body of both `clean` and `revert`.
 
-    A dry run by default, like `apply`. It prints the three groups it would
-    touch — files git will restore, files it will delete by name, and the
-    output tree — so nothing is a surprise.
-
-    Pass the run's own `--config ally-out/run.yaml` when its artifacts were
-    relocated; without it the defaults are assumed and a relocated directory is
-    left behind.
+    They differ by one argument. Keeping them one function is what stops
+    `clean` from quietly diverging into a second, less careful implementation
+    of the same deletion.
     """
     from .revert import do_revert, plan_revert
     from .tui.summary import show_path
@@ -1051,21 +1034,19 @@ def revert(
     config = _load_run_config(ctx, config_path, (), output, write)
     console = ctx.console
     try:
-        plan = plan_revert(config, ctx.profile, scope)
+        plan = plan_revert(config, ctx.profile, scope, restore=restore, force=force)
         if write:
-            do_revert(plan)
+            do_revert(plan, verify=restore)
     except LatexAllyError as exc:
         if ctx.as_json:
             ctx.emit({"ok": False, "error": str(exc)})
         else:
             console.print(f"[red]error:[/red] {escape(str(exc))}")
-            if getattr(exc, "hint", None):
-                console.print(f"[dim]{escape(exc.hint)}[/dim]")
         sys.exit(EXIT_ERROR)
 
-    ctx.emit({"ok": True, "written": write, **plan.as_dict()})
+    ctx.emit({"ok": True, "written": write, "restored": restore, **plan.as_dict()})
     if plan.empty and not plan.kept:
-        console.print("[dim]nothing to revert[/dim]")
+        console.print("[dim]nothing to do[/dim]")
         sys.exit(EXIT_OK)
 
     root = ctx.profile.corpus.root.resolve()
@@ -1075,7 +1056,7 @@ def revert(
             return
         console.print(f"[bold]{title}[/bold] ({len(paths)})")
         for path in paths[:10]:
-            shown: Path | str = path
+            shown: Path | str
             if relative_to is not None:
                 try:
                     shown = path.relative_to(relative_to)
@@ -1094,7 +1075,7 @@ def revert(
     if plan.kept:
         console.print(
             f"[bold]kept[/bold] ({len(plan.kept)}) — descriptions written by hand; "
-            "git never had these, so they are not deleted"
+            "git never had these, so they are not deleted. --force removes them"
         )
         for path in plan.kept[:10]:
             console.print(f"  {escape(str(path.relative_to(root)))}")
@@ -1102,6 +1083,92 @@ def revert(
     if not write:
         console.print("\n[dim]dry run — pass --write to do it[/dim]")
     sys.exit(EXIT_OK)
+
+
+@main.command()
+@click.argument("scope", required=False)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="The output tree to delete. Defaults to <corpus>/ally-out.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, exists=True),
+    help="Read the artifact locations from the run.yaml that produced them.",
+)
+@click.option("--write", is_flag=True, help="Actually delete (default is a dry run).")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Also delete worklogs somebody has written descriptions into.",
+)
+@pass_context
+def clean(
+    ctx: Context,
+    scope: str | None,
+    output: Path | None,
+    config_path: Path | None,
+    write: bool,
+    force: bool,
+) -> None:
+    """Delete what a run produced. Never touches your .tex.
+
+    The residual worklogs, the `*-accessible.*` PDFs and logs, the
+    `latexally-*.sty` installed beside a driver, and the output tree. Files this
+    tool did not write are left alone, and so is every source file — including
+    ones a previous `--edit` run modified. Use `revert` for those.
+
+    Needs no git and no repository. A worklog somebody has written descriptions
+    into is reported and kept; `--force` deletes it too.
+    """
+    _undo(ctx, scope, output, config_path, write, restore=False, force=force)
+
+
+@main.command()
+@click.argument("scope", required=False)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="The output tree to delete. Defaults to <corpus>/ally-out.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path, exists=True),
+    help="Read the artifact locations from the run.yaml that produced them.",
+)
+@click.option("--write", is_flag=True, help="Actually revert (default is a dry run).")
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Also delete worklogs somebody has written descriptions into.",
+)
+@pass_context
+def revert(
+    ctx: Context,
+    scope: str | None,
+    output: Path | None,
+    config_path: Path | None,
+    write: bool,
+    force: bool,
+) -> None:
+    """Everything `clean` does, and restore the .tex a run rewrote.
+
+    The restore is `git checkout`, so this needs the corpus to be a git
+    repository and it refuses outside one. That is not a limitation to work
+    around: `--edit` already refuses to start on a dirty worktree, so at the
+    moment a revert runs, the modifications in scope are this tool's and
+    nobody else's. If you have edited those files since, commit first — the
+    checkout cannot tell your work from the tool's.
+
+    Afterwards it re-reads `git status` and fails loudly rather than let a
+    half-done revert read as a clean one.
+    """
+    _undo(ctx, scope, output, config_path, write, restore=True, force=force)
 
 
 @main.command("run")

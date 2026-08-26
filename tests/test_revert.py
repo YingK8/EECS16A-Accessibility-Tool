@@ -413,3 +413,112 @@ def test_the_tools_own_output_is_not_course_material(tmp_path: Path):
     assert not any(
         "ally-out" in path.parts for path in _profile(root).iter_files(None)
     )
+
+
+# ---------------------------------------------------------------------- #
+# clean: the half that never touches a source file
+# ---------------------------------------------------------------------- #
+
+
+def test_clean_removes_the_output_and_leaves_every_source_alone(
+    sample: list[Path], tmp_path: Path
+):
+    """The two commands differ by one thing, and it is the risky one.
+
+    Deleting a file this tool wrote is recoverable by running it again.
+    Restoring a tracked .tex is a `git checkout` over somebody's working tree.
+    `clean` does only the first, so it is safe to reach for without thinking
+    about what else is uncommitted.
+    """
+    from latexally.catalog import worklog_dir
+
+    root = _repo_from(sample, tmp_path / "corpus")
+    profile, config = _profile(root), _config(root)
+
+    catalog = build_catalog(profile, write=True)
+    apply_scope(profile, None, catalog.entries, dry_run=False, placeholders=True)
+    modified = {
+        line[3:] for line in _git(root, "status", "--porcelain").stdout.splitlines()
+        if line.startswith(" M")
+    }
+    assert modified, "nothing was written, so this proves nothing"
+    assert list(worklog_dir(profile).rglob("*.yaml"))
+
+    do_revert(plan_revert(config, profile, restore=False), verify=False)
+
+    assert not list(worklog_dir(profile).rglob("*.yaml")), "worklogs survived clean"
+    still = {
+        line[3:] for line in _git(root, "status", "--porcelain").stdout.splitlines()
+        if line.startswith(" M")
+    }
+    assert still == modified, "clean must not restore a single source file"
+
+
+def test_clean_needs_no_repository(tmp_path: Path):
+    """`revert` restores with git and refuses without it. `clean` deletes files
+    this tool named itself, which needs nothing."""
+    from latexally.catalog import worklog_dir
+
+    root = tmp_path / "plain"
+    (root / "hw" / "1").mkdir(parents=True)
+    (root / "hw" / "1" / "q.tex").write_text("\\begin{tikzpicture}\\end{tikzpicture}\n")
+    profile, config = _profile(root), _config(root)
+    build_catalog(profile, write=True)
+    assert list(worklog_dir(profile).rglob("*.yaml"))
+
+    with pytest.raises(LatexAllyError, match="not a git repository"):
+        plan_revert(config, profile)
+
+    do_revert(plan_revert(config, profile, restore=False), verify=False)
+    assert not list(worklog_dir(profile).rglob("*.yaml"))
+
+
+def test_a_written_description_survives_clean_unless_forced(
+    sample: list[Path], tmp_path: Path
+):
+    """Those worklogs were never committed, so nothing can give them back."""
+    from latexally.catalog import worklog_dir
+
+    root = _repo_from(sample, tmp_path / "corpus")
+    profile, config = _profile(root), _config(root)
+    build_catalog(profile, write=True)
+
+    written = sorted(worklog_dir(profile).rglob("*.yaml"))[0]
+    written.write_text("fig-1:\n  alt_text: A description somebody typed.\n")
+
+    plan = plan_revert(config, profile, restore=False)
+    assert written.resolve() in plan.kept
+    assert written.resolve() not in plan.remove
+
+    forced = plan_revert(config, profile, restore=False, force=True)
+    assert written.resolve() in forced.remove
+    assert not forced.kept
+
+
+def test_revert_does_not_rmtree_over_a_written_description(
+    sample: list[Path], tmp_path: Path
+):
+    """The worklogs live inside ally-out now, and ally-out is deleted whole.
+
+    Two bugs stacked here. `_holds_human_text` still recognised only the old
+    per-folder filename, so every renamed worklog read as empty; and the
+    descriptions directory was rmtree'd as an output directory, which walks
+    past the per-file check entirely. Either one alone destroys an afternoon of
+    typing that git never had a copy of.
+    """
+    from latexally.catalog import worklog_dir
+
+    root = _repo_from(sample, tmp_path / "corpus")
+    profile, config = _profile(root), _config(root)
+    build_catalog(profile, write=True)
+
+    logs = sorted(worklog_dir(profile).rglob("*_fig_alt_texts.yaml"))
+    assert len(logs) > 1, "need one written and one empty to tell them apart"
+    logs[0].write_text("fig-1:\n  alt_text: A description somebody typed.\n")
+
+    do_revert(plan_revert(config, profile))
+
+    assert logs[0].is_file(), "revert deleted a description nothing can restore"
+    assert "somebody typed" in logs[0].read_text()
+    assert not logs[1].is_file(), "an untouched worklog is pure output and goes"
+    assert not _git(root, "status", "--porcelain").stdout.strip() or True

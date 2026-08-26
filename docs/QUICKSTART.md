@@ -449,10 +449,15 @@ rollback is `latexally revert`, below.
 ### Undo everything a run did
 
 ```bash
-latexally revert bank            # the list, without doing it
-latexally revert bank --write    # do it
-latexally revert --write         # or just: wherever you are standing
+latexally clean                  # the list, without doing it
+latexally clean --write          # delete the run's output; sources untouched
+latexally revert --write         # that, and restore the .tex it rewrote
 ```
+
+`clean` is `revert` without the restore. It needs no git and cannot touch a
+source file, so it is the one to reach for when a run has left residue. `revert`
+adds `git checkout` over the files a run rewrote — commit your own work first,
+because the checkout cannot tell it from the tool's.
 
 Three groups, and they are undone three different ways because they have to be:
 

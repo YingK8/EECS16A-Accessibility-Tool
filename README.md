@@ -154,16 +154,28 @@ pdflatex prob10.tex                 # tagged; no TEXINPUTS, no output directory
 Undo all of it:
 
 ```bash
-latexally revert --write
+latexally clean --write     # delete what the run produced; sources untouched
+latexally revert --write    # that, and restore the .tex it rewrote
 ```
 
-`revert` restores your `.tex` with `git checkout` and deletes what the tool
-wrote: the `*-accessible.*` PDFs and logs, the worklogs, and the
+`clean` is the safe half: it deletes the worklogs, the `*-accessible.*` PDFs
+and logs, the `latexally-*.sty` installed beside a driver, and the output tree.
+It never touches a source file, needs no git, and is what you want when a run
+has left residue behind.
+
+`revert` adds the restore. It is `git checkout`, so it needs the corpus to be a
+git repository and refuses outside one — and `--edit` already refuses to start
+on a dirty worktree, so at the moment a revert runs the modifications in scope
+are this tool's and nobody else's. **If you have edited those files since,
+commit first**: the checkout cannot tell your work from the tool's.
+
+Between them they delete what the tool wrote: the `*-accessible.*` PDFs and logs, the worklogs, and the
 `latexally-*.sty` it installed. It leaves anything it does not recognise alone
 — your own hand-built PDFs are ignored by git and would be gone forever if it
 ran `git clean`. A worklog you have written descriptions into is reported and
-kept, never deleted: git never had it, so nothing could give it back. Drop
-`--write` to see the list first; that is the default.
+kept, never deleted: git never had it, so nothing could give it back — pass
+`--force` if you really mean it. Drop `--write` to see the list first; that is
+the default for both.
 
 `--edit` refuses on a dirty worktree, which is what makes the undo total. It
 steps over its *own* output, so filling in a worklog and running again works.

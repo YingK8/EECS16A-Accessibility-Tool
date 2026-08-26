@@ -153,11 +153,28 @@ def _modified(root: Path, scope: Path | None) -> list[Path]:
 
 
 def plan_revert(
-    config: RunConfig, profile: Profile, scope: str | None = None
+    config: RunConfig,
+    profile: Profile,
+    scope: str | None = None,
+    *,
+    restore: bool = True,
+    force: bool = False,
 ) -> RevertPlan:
-    """Work out what undoing this run means. Writes nothing."""
+    """Work out what undoing this run means. Writes nothing.
+
+    ``restore=False`` is ``clean``: delete what the run produced and leave every
+    source file alone. That is the whole difference between the two commands,
+    and it is worth having as its own because the halves carry different risk.
+    Deleting a file this tool wrote is recoverable by re-running it. Restoring
+    a tracked ``.tex`` is a ``git checkout`` over somebody's working tree, and
+    it needs git, a repository, and a person who knows what is in it.
+
+    ``force`` also removes worklogs somebody has written descriptions into. Off
+    by default: those were never committed, so nothing can give them back.
+    """
     root = profile.corpus.root.resolve()
-    _require_repository(root)
+    if restore:
+        _require_repository(root)
 
     target = (root / scope).resolve() if scope else root
     if target != root and root not in target.parents:
@@ -167,7 +184,8 @@ def plan_revert(
         )
 
     plan = RevertPlan(root=root)
-    plan.restore = _modified(root, None if target == root else target)
+    if restore:
+        plan.restore = _modified(root, None if target == root else target)
 
     # Everywhere this scope's material actually lives, not just the folder
     # named. A worklog goes beside the .tex holding the FIGURE, and three
@@ -189,7 +207,7 @@ def plan_revert(
                 resolved = path.resolve()
                 if not path.is_file() or resolved in tracked:
                     continue
-                if _holds_human_text(resolved):
+                if not force and _holds_human_text(resolved):
                     plan.kept.append(resolved)
                     continue
                 plan.remove.append(resolved)
@@ -199,9 +217,28 @@ def plan_revert(
     seen: set[Path] = set()
     for slug, _, _ in ARTIFACTS:
         directory = config.output.path_for(slug)
-        if directory.is_dir() and directory not in seen:
-            seen.add(directory)
-            plan.outputs.append(directory)
+        if not directory.is_dir() or directory in seen:
+            continue
+        seen.add(directory)
+        if slug == "descriptions":
+            # NOT deleted wholesale. This is where the worklogs live now, and
+            # rmtree over the directory walks straight past the check that
+            # keeps a description somebody typed -- which is the one file here
+            # that git never had and nothing can rebuild. Its files go through
+            # the same per-file decision as everything else, and the directory
+            # itself only goes if none of them was worth keeping.
+            for path in sorted(directory.rglob("*.yaml")):
+                resolved = path.resolve()
+                if not force and _holds_human_text(resolved):
+                    plan.kept.append(resolved)
+                else:
+                    plan.remove.append(resolved)
+            if not plan.kept:
+                plan.outputs.append(directory)
+            continue
+        plan.outputs.append(directory)
+    plan.remove = sorted(set(plan.remove))
+    plan.kept = sorted(set(plan.kept))
     for name in ("run.yaml", "build-log.txt"):
         stray = (config.output.root / name).resolve()
         if stray.is_file():
@@ -244,7 +281,7 @@ def _holds_human_text(path: Path) -> bool:
     Only worklogs are asked: a PDF or a ``.sty`` this tool wrote carries no
     typing of anybody's.
     """
-    if path.name != WORKLOG_NAME:
+    if path.name != WORKLOG_NAME and not path.name.endswith("_fig_alt_texts.yaml"):
         return False
     try:
         return any(
@@ -257,7 +294,14 @@ def _holds_human_text(path: Path) -> bool:
 
 
 def _tracked(root: Path, scope: Path | None) -> set[Path]:
-    """Every path git has under version control in ``scope``, resolved."""
+    """Every path git has under version control in ``scope``, resolved.
+
+    Empty outside a repository, which is the right answer for ``clean``: with
+    no git there is nothing tracked to protect, and every candidate reached
+    this point by matching a name only this tool writes.
+    """
+    if shutil.which("git") is None:
+        return set()
     args = ["ls-files", "-z"]
     if scope is not None:
         args += ["--", str(scope)]
@@ -269,7 +313,7 @@ def _tracked(root: Path, scope: Path | None) -> set[Path]:
     }
 
 
-def do_revert(plan: RevertPlan) -> RevertPlan:
+def do_revert(plan: RevertPlan, *, verify: bool = True) -> RevertPlan:
     """Carry the plan out, then check that it worked.
 
     The verification is not decoration. A revert that half-succeeds leaves
@@ -293,7 +337,10 @@ def do_revert(plan: RevertPlan) -> RevertPlan:
         else:
             path.unlink(missing_ok=True)
 
-    left = _modified(plan.root, None)
+    # Nothing was restored, so there is nothing to check: `clean` leaves every
+    # modification in place on purpose, and reporting them as failures would
+    # make a successful clean look broken.
+    left = _modified(plan.root, None) if verify else []
     if left:
         listed = "\n    ".join(str(path) for path in left[:8])
         more = f"\n    …and {len(left) - 8} more" if len(left) > 8 else ""

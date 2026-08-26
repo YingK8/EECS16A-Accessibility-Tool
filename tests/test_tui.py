@@ -864,10 +864,21 @@ async def test_the_review_lists_every_document_that_will_be_built(profile: Profi
 
 
 async def test_the_review_names_the_preamble_it_will_inject(profile: Profile):
+    """It is the last section, and reachable by scrolling to it.
+
+    Thirty lines of LaTeX above the document table pushed the one thing people
+    actually check -- which documents get built -- off the bottom of the
+    screen. It is still shown in full; it is just no longer shown first.
+    """
     config = RunConfig().with_assignments(["sem/hw/1"])
     app = LatexAllyApp(profile, config)
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, ReviewScreen)
+        # What matters at a glance is above the fold.
+        assert "sem-hw-1-solution-accessible.pdf" in visible(app)
+
+        app.screen.query_one("#body").scroll_end(animate=False)
+        await pilot.pause()
         assert "DocumentMetadata" in visible(app)
 
 
@@ -1582,3 +1593,74 @@ async def test_the_reason_next_is_disabled_says_which_situation_it_is(
 
         await set_scope(pilot, "nowhere-at-all")
         assert "Nothing here to convert" in visible(app)
+
+
+async def test_review_separates_its_sections(profile: Profile):
+    """Six unrelated answers in one column need more than bold text.
+
+    The preamble is thirty lines of LaTeX and the document table has a header
+    row of its own, so "Colours" read as one more line of whatever was above
+    it. Every section carries a rule now.
+    """
+    from textual.widgets import Rule
+
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await scope_all_homework(pilot)
+        await walk_to(pilot, ReviewScreen)
+        # Order matters: the preamble is long and rarely read, so it goes last
+        # rather than pushing the document table below the fold.
+        titles = [
+            "Selected directories",
+            "What gets built",
+            "Figure descriptions",
+            "Colours",
+            "Output",
+            "Injected into each driver",
+        ]
+        headings = [
+            widget.render().plain for widget in app.screen.query(".section")
+        ]
+        assert headings == titles
+        assert len(app.screen.query(Rule)) == len(titles)
+
+
+async def test_review_shows_the_placeholder_markup_that_will_be_written(
+    profile: Profile,
+):
+    r"""The last screen before a marker lands in somebody's course file.
+
+    The alt-text step warns that placeholders are written; it does not show
+    what they look like. A `<<TODO:...>>` appearing in a .tex should not be the
+    first time anyone sees one.
+    """
+    from latexally.apply import PLACEHOLDER
+
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await scope_all_homework(pilot)
+        await walk_to(pilot, AltScreen)
+        app.config.alt = replace(app.config.alt, mode="placeholders")
+        await walk_to(pilot, ReviewScreen)
+
+        markup = app.screen.query_one("#alt-markup").render().plain
+        assert PLACEHOLDER.format(id="fig-1a2b3c4d") in markup
+        assert "\\begin{Described}" in markup
+        assert "\\described" in markup, "the inline form is written too"
+        assert "does NOT build" in markup, "the guarantee has to be stated"
+
+
+async def test_review_says_nothing_about_markup_when_none_is_written(
+    profile: Profile,
+):
+    """`worklog` mode edits no .tex, so there is no markup to warn about and a
+    warning would be a lie about what the run does."""
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await scope_all_homework(pilot)
+        await walk_to(pilot, AltScreen)
+        app.config.alt = replace(app.config.alt, mode="worklog")
+        await walk_to(pilot, ReviewScreen)
+
+        assert app.screen.query_one("#alt-markup").render().plain == ""
+        assert "your .tex files are not edited" in visible(app)
