@@ -1,0 +1,162 @@
+# EECS 16A — Designing Information Devices and Systems I
+#
+# Reference profile. Copy this file to onboard another course; nothing in the
+# Python package is 16A-specific.
+
+name: eecs66
+
+course:
+  number: "EE 66"
+  name: "Designing Information Devices and Systems I"
+  university: "UC Berkeley"
+  short_university: "UCB"
+  semester: "Spring 2026"
+  language: en-US
+
+corpus:
+  # Relative to this file. Override on the CLI with --corpus.
+  root: "../../questionBank"
+
+  include:
+    # Everything, and let `exclude` below carry the policy. Naming the live
+    # directories here instead hid whole categories: `notes/note0` builds
+    # cleanly but was never offered, and so was every pre-sp26 semester.
+    - "**/*.tex"
+
+  exclude:
+    # Frozen per-semester snapshots: ~17k of the 17.6k .tex files are archived
+    # copies. Converting them rewrites material nobody reads and multiplies the
+    # alt-text authoring cost by the number of semesters.
+    - "**/*_questionBank/**"
+    - "**/candidateQuestions/**"
+    - "**/candidate_questions/**"
+    # Vendored upstream packages, not course material.
+    - "**/circuitikz.sty"
+    - "**/kbordermatrix.sty"
+    - "**/algpseudocodex.sty"
+
+  scopes:
+    sp26: ["sp26/**/*.tex"]
+    bank: ["questionBank/**/*.tex"]
+    exams: ["exams/**/*.tex"]
+    # By material type, for "convert all the homeworks" without naming a semester.
+    homeworks: ["*/hw/**/*.tex"]
+    discussions: ["*/dis/**/*.tex"]
+    notes: ["notes*/**/*.tex"]
+    # The approved conversion scope: live material plus the exam archive.
+    live:
+      - "questionBank/**/*.tex"
+      - "sp26/**/*.tex"
+      - "exams/**/*.tex"
+
+  # Path fragment -> what that material IS. The runner groups its scope picker by
+  # these, so "all homeworks" works without the Python knowing this course spells
+  # that directory `hw`. A course using `problem-sets/` changes one line here.
+  # An assignment is several documents built from ONE body, differing only in
+  # how \sol is defined. sol9.tex prints solutions; prob9.tex swallows them and
+  # is what students receive. Discussions add dis<N> (handout) and ans<N>.
+  # Filename prefix -> which document it is:
+  variants:
+    sol: solution
+    prob: problem
+    dis: problem
+    ans: answer
+
+  kinds:
+    hw: homework
+    dis: discussion
+    # `sec` is what discussions were called before fa21; the material is the
+    # same and a reader looking for "discussions" expects to find it there.
+    sec: discussion
+    exams: exam
+    # Glob, so the eight `notes_<semester>` snapshots classify as notes too.
+    notes*: note
+    questionBank: bank
+    extraCredit: extra-credit
+    lab: lab
+
+# How this course's home-grown macros map onto tagged heading levels.
+# Level 1 = document title (Title + H1), 2 = question, 3 = part, 4 = solution.
+headings:
+  macros:
+    title: 1          # \def\title{Homework 9} in every body.tex
+    qns: 2            # \qns{Noisy Images}       -> Question N
+    q: 2              # \q{10}{Title}            -> Question N, with points
+    qitem: 3          # \qitem = \qpart\item     -> Part (a)
+    sol: 4            # \sol{...}                -> Solution
+    solans: 4
+    ans: 4
+  autonumbered:
+    # Heading text is synthesised because the macro numbers itself.
+    qns: "Question {n}"
+    q: "Question {n}"
+    qitem: "Part ({alpha})"
+    sol: "Solution"
+    solans: "Solution"
+    ans: "Answer"
+
+figures:
+  description_max_chars: 200
+  max_inline_data_points: 12
+  max_series: 2
+  max_graph_edges: 6
+
+  figure_environments:
+    - tikzpicture
+    - circuitikz
+    - axis
+    - pgfpicture
+
+  # Decorative by human decision only. Never inferred from a filename:
+  # lefthalfpic.jpg / righthalfpic.jpg look decorative and are load-bearing
+  # panorama halves in the image-stitching question.
+  artifact_allowlist:
+    - "figures/Berkeley_banner_1.jpg"
+    - "figures/Berkeley_banner_2.jpg"
+    - "figures/stacked_pieces.jpg"
+
+colors:
+  min_contrast_normal: 4.5
+  min_contrast_large: 3.0
+  background: "#FFFFFF"
+  # What the course actually defines. Every replacement is derived from these:
+  # the colour is darkened, hue and saturation held, until it just clears the
+  # floor above. Nothing is chosen from a fixed palette, so a colour that
+  # already conforms is left exactly as the course wrote it.
+  originals:
+    solutionColor: "#3399E6"   # rgb(0.2,0.6,0.9)  -> 3.07:1, fails -> #187AC4
+    solansColor:   "#3399E6"
+    answerColor:   "#3399E6"
+    redish:        "#FF0000"   # 4.00:1, fails by a hair -> #EE0000
+    blueish:       "#B31AB3"   # rgb(0.7,0.1,0.7)  -> 5.65:1, passes, kept
+    # xcolor's own names, used directly as \color{red} with no \definecolor to
+    # read -- sp26.sty's \edit{} macro and the discussion tally boxes both set
+    # body text this way. Listed here so they go through the same derivation as
+    # anything else. Remapping `red` moves every use of the name, drawings
+    # included; #FF0000 -> #EE0000 is a deltaE of 6.4, which is invisible.
+    red:           "#FF0000"   # 4.00:1, fails -> #EE0000
+    blue:          "#0000FF"   # 8.59:1, passes; listed to record that it was checked
+
+engine:
+  name: pdflatex
+  # `tagging=on` and `pdfstandard=ua-*` require this LaTeX format or newer.
+  # Below it the tool falls back to testphase modules and warns loudly.
+  min_format_date: "2025-06-01"
+  pdf_standard: "ua-1"
+  # 1.7, matching the standard above: PDF/UA-1 *is* ISO 14289-1, "Use of
+  # ISO 32000-1", and ISO 32000-1 is PDF 1.7. PDF 2.0 pairs with PDF/UA-2.
+  # It is also what readers handle: macOS Preview goes through PDFKit, whose
+  # PDF 2.0 support is incomplete. /AF still attaches -- verified, 181 elements
+  # carry it in either version -- because readers ignore keys they do not know.
+  pdf_version: "1.7"
+  # Names the kernel now defines for itself once tagging is on, which ee16.sty
+  # also defines. Without this every document that loads it dies with
+  # "Command \proof already defined" -- a failure the untagged source does not
+  # have, so it is conversion-induced and ours to absorb. `\endproof` goes with
+  # it: \newenvironment defines both halves.
+  unlet_before:
+    ee16.sty: [proof]
+  legacy_testphase: [phase-III, math, table, graphic, firstaid]
+  min_runs: 3
+  timeout_seconds: 300
+

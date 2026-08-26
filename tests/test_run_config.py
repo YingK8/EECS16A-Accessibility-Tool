@@ -25,7 +25,10 @@ from latexally.toolchain import TaggingMode
 
 @pytest.fixture
 def profile() -> Profile:
-    return load_profile()
+    # Named, not inferred: the inference only fires while exactly one profile
+    # is installed, and a second course appearing in profiles/ must not change
+    # what every other test in this file is testing.
+    return load_profile("eecs16a")
 
 
 # ---------------------------------------------------------------------- #
@@ -192,6 +195,7 @@ def test_math_speech_loads_its_package_independently(profile):
     config = RunConfig(
         standards=Standards(retrofit=False, bookmarks=False, question_tags=False),
     )
+    config.standards.math_speech = True  # off by default now
     lines = preamble_for(config, profile, TaggingMode.LEGACY_TESTPHASE)
     assert "\\usepackage{latexally-math}" in lines
 
@@ -348,3 +352,34 @@ def test_the_baseline_is_off_by_default_and_round_trips():
     assert RunConfig().baseline is False
     assert RunConfig.from_yaml(RunConfig(baseline=True).to_yaml()).baseline is True
     assert RunConfig.from_yaml(RunConfig().to_yaml()).baseline is False
+
+
+def test_two_profiles_and_no_choice_is_refused_not_guessed(tmp_path, monkeypatch):
+    """Adding a second course must not look like it broke the first.
+
+    `_only_builtin_profile` returns None once there are two, which is right --
+    silently picking one of two courses would convert the wrong corpus. But the
+    caller then fell through to an EMPTY profile rooted at the working
+    directory, so every command found nothing and said "0 documents in scope
+    default". The refusal has to be said out loud.
+    """
+    from latexally import config as config_module
+    from latexally.config import load_profile
+    from latexally.errors import ConfigError
+
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    for name in ("eecs16a", "eecs66"):
+        (profiles / f"{name}.yaml").write_text(f"name: {name}\n")
+    monkeypatch.setattr(config_module, "builtin_profile_dir", lambda: profiles)
+
+    with pytest.raises(ConfigError, match="more than one profile"):
+        load_profile(None)
+    # Naming one still works, and so does a path.
+    assert load_profile("eecs66").name == "eecs66"
+    assert load_profile(profiles / "eecs16a.yaml").name == "eecs16a"
+
+    # With exactly one installed, it is still inferred -- that is the case the
+    # inference exists for.
+    (profiles / "eecs66.yaml").unlink()
+    assert load_profile(None).name == "eecs16a"

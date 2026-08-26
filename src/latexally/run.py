@@ -159,12 +159,15 @@ STANDARD_TOGGLES: tuple[Toggle, ...] = (
     Toggle(
         "math_speech",
         "Spoken math (Formula /Alt)",
-        True,
+        False,
         "none",
         "Converts every tagged formula to a spoken string, so a reader hears "
         "\"the fraction with numerator x squared minus 1\" rather than "
         "latex-lab's default, which is the LaTeX source read out as "
-        "backslashes. Needs Node and the [math] extra.",
+        "backslashes. Needs Node and the [math] extra.\n\n"
+        "Off by default: it is the slowest stage of a run and it needs a "
+        "toolchain the rest does not. Turn it on for a document going to a "
+        "reader -- without it every formula is announced as its source.",
     ),
     Toggle(
         "unicode_map",
@@ -187,7 +190,7 @@ class Standards:
     retrofit: bool = True
     bookmarks: bool = True
     question_tags: bool = True
-    math_speech: bool = True
+    math_speech: bool = False
     unicode_map: bool = True
 
     @classmethod
@@ -316,7 +319,11 @@ class AltChoice:
     /Alt" check and veraPDF, producing a silent false claim of conformance.
     """
 
-    mode: str = "worklog"
+    #: ``off`` by default. Scanning figures is the step that asks a person for
+    #: something -- a sentence per figure -- and a run should not start making
+    #: that list unasked. Turn it on when describing figures is the work being
+    #: done; the conversion is useful without it.
+    mode: str = "off"
     #: False downgrades the placeholder error to a warning. Draft builds only.
     strict: bool = True
 

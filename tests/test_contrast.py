@@ -5,6 +5,7 @@ conform". Both are easy; only the first keeps the document looking like itself.
 """
 
 import colorsys
+import shutil
 
 import pytest
 
@@ -172,14 +173,25 @@ def test_each_name_is_reported_once_however_often_it_is_used(tmp_path):
     assert len(found) == 1
 
 
-def test_the_only_installed_profile_is_used_without_being_named():
+def test_the_only_installed_profile_is_used_without_being_named(tmp_path, monkeypatch):
     """`-p eecs16a` on every command is noise while there is one course.
 
     Not cosmetic: the flag was required, and omitting it loaded empty defaults
     -- no corpus, no palette -- rather than failing, so a forgotten flag looked
     like an empty corpus.
     """
-    from latexally.config import load_profile
+    from latexally import config as config_module
+    from latexally.config import builtin_profile_dir, load_profile
+
+    # Pinned to a directory holding exactly one profile, because that is the
+    # condition the inference is about. Reading the repo's own profiles/ made
+    # this test's result depend on how many courses happen to be installed --
+    # adding a second one turned a passing assertion into a failure about
+    # something else entirely.
+    only = tmp_path / "profiles"
+    only.mkdir()
+    shutil.copy(builtin_profile_dir() / "eecs16a.yaml", only / "eecs16a.yaml")
+    monkeypatch.setattr(config_module, "builtin_profile_dir", lambda: only)
 
     profile = load_profile()
 

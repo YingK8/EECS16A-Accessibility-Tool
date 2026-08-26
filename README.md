@@ -1,11 +1,15 @@
-# latexally
+# latexally (Alpha)
 
 Convert LaTeX instructional materials into tagged PDFs that meet the structural
 requirements of **ADA Title II / WCAG 2.1 AA / PDF-UA**. See [Conformance](#conformance) 
 for which requirements are covered and not covered.
 
-Written for the UC Berkeley EECS 16A question bank. A YAML profile onboards any
-other course!
+Written for the UC Berkeley EECS 16A question bank. Customise yaml in /profile for any
+other courses!
+
+Contributors / Tools:
+Kevin Ying
+Claude Opus 5
 ---
 
 ## Capabilities

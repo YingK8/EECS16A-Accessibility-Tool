@@ -112,6 +112,14 @@ def builtin_profile_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "profiles"
 
 
+def _builtin_profile_names() -> list[str]:
+    """Every shipped profile, by name, for error messages and completion."""
+    directory = builtin_profile_dir()
+    if not directory.is_dir():
+        return []
+    return sorted(item.stem for item in directory.glob("*.yaml"))
+
+
 def _only_builtin_profile() -> str | None:
     """The one shipped profile, when there is exactly one.
 
@@ -348,6 +356,20 @@ def load_profile(
     """
     if path is None:
         path = _only_builtin_profile()
+    if path is None and _builtin_profile_names():
+        # Two or more courses installed and none named. Refusing is the whole
+        # point of `_only_builtin_profile` returning None here -- but it used
+        # to fall through to an empty profile rooted at the working directory,
+        # which found no documents and said "0 in scope default". Adding a
+        # second profile therefore looked like it had broken the corpus.
+        raise ConfigError(
+            "more than one profile is installed, so which course is not obvious",
+            hint=(
+                "name one with -p: "
+                + ", ".join(_builtin_profile_names())
+                + "  (or pass a path to a profile YAML)"
+            ),
+        )
     if path is None:
         data: dict[str, Any] = {}
         source: Path | None = None

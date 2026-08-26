@@ -78,6 +78,7 @@ from ..run import (
     normalise_hex,
 )
 from ..discover import (
+    DEFAULT_VARIANTS,
     scope_from_cwd,
     VARIANT_LABELS,
     VARIANTS,
@@ -796,8 +797,8 @@ class DocumentsScreen(ListStepScreen):
 
     heading = "Which documents of each assignment?"
     hint = (
-        "Everything selected is the same as nothing selected: "
-        "build every version each assignment has."
+        "Solutions and the blank handout by default — the two students are "
+        "given. Answers-only is for staff marking; tick it if you want it."
     )
     list_id = "variants"
 
@@ -817,7 +818,7 @@ class DocumentsScreen(ListStepScreen):
                         )
                     ),
                     name,
-                    not chosen or name in chosen,
+                    name in chosen if chosen else name in DEFAULT_VARIANTS,
                 )
                 for name, note in VARIANT_LABELS
             ),
@@ -837,9 +838,11 @@ class DocumentsScreen(ListStepScreen):
             name for name, _ in VARIANT_LABELS if name in set(self.choices.selected)
         )
         if chosen:
-            # Everything is stored as no filter, so turning one off and on again
+            # The default set is stored as no filter, so ticking back to it
             # returns to the default rather than freezing today's list.
-            self.config.variants = () if set(chosen) == set(VARIANTS) else chosen
+            self.config.variants = (
+                () if set(chosen) == set(DEFAULT_VARIANTS) & set(VARIANTS) else chosen
+            )
         self.say("#variants-note", describe_variants(self.config))
         self.set_next(
             bool(chosen),

@@ -804,23 +804,37 @@ async def test_every_version_is_built_by_default(profile: Profile):
         assert "every version each assignment has" in visible(app)
 
 
+async def test_answers_only_is_not_built_unless_asked_for(profile: Profile):
+    """It is an answers-only extract, produced for staff marking rather than
+    handed out, and converting it doubles what a discussion costs in alt text
+    for a document nobody reads with a screen reader."""
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await scope_all_homework(pilot)
+        await walk_to(pilot, DocumentsScreen)
+        shown = visible(app)
+        assert "[x] solution" in shown
+        assert "[x] problem" in shown
+        assert "[ ] answer" in shown, "answers-only starts unticked"
+
+
 async def test_a_version_can_be_deselected(profile: Profile):
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await scope_all_homework(pilot)
         await walk_to(pilot, DocumentsScreen)
-        await untick(pilot, "answer", list_id="variants")
-        assert app.config.variants == ("solution", "problem")
+        await untick(pilot, "solution", list_id="variants")
+        assert app.config.variants == ("problem",)
 
 
-async def test_selecting_everything_is_stored_as_no_filter(profile: Profile):
+async def test_returning_to_the_default_set_is_stored_as_no_filter(profile: Profile):
     """Off then on again must return to the default, not freeze a list."""
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await scope_all_homework(pilot)
         await walk_to(pilot, DocumentsScreen)
-        await untick(pilot, "answer", list_id="variants")
-        await tick(pilot, "answer", list_id="variants")
+        await untick(pilot, "solution", list_id="variants")
+        await tick(pilot, "solution", list_id="variants")
         assert app.config.variants == ()
 
 
@@ -1336,13 +1350,14 @@ async def test_arrows_choose_between_options_rather_than_shopping(
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, AltScreen)
         assert app.focused is app.screen.query_one("#alt-mode")
-        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", True)
-        # Three options now: on, draft, off. Each arrow moves the value by one.
-        await press(pilot, "down")
-        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", False)
-        await press(pilot, "down")
+        # Figures are off by default now, so the screen opens on the last row.
         assert app.config.alt.mode == "off"
+        # Three options: on, draft, off. Each arrow moves the value by one.
         await press(pilot, "up")
+        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", False)
+        await press(pilot, "up")
+        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", True)
+        await press(pilot, "down")
         assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", False)
 
 

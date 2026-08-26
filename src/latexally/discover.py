@@ -27,6 +27,7 @@ from .texlex.includes import is_driver
 __all__ = [
     "Assignment",
     "newest_first",
+    "DEFAULT_VARIANTS",
     "VARIANTS",
     "VARIANT_LABELS",
     "discover_assignments",
@@ -64,14 +65,28 @@ class Assignment:
     def variants_for(self, wanted: Iterable[str] | None = None) -> dict[str, str]:
         """The variants to build, ``{variant: driver}``, in declared order.
 
-        An empty or absent selection means *everything this assignment has* --
-        the honest default, since a course ships both files and a student only
-        ever sees the blank one.
+        An empty or absent selection means :data:`DEFAULT_VARIANTS` -- every
+        version a student or a reader is given. A course ships both the
+        solutions and the blank handout and both must be converted, since the
+        blank one is what students actually receive.
+
+        ``answer`` is not in that set. It is an answers-only extract, produced
+        for staff marking rather than handed out, and converting it doubles the
+        alt text a discussion costs for a document nobody reads with a screen
+        reader. Ask for it by name when you want it.
         """
         available = self.drivers or ({"document": self.driver} if self.driver else {})
         wanted = tuple(wanted or ())
         if not wanted:
-            return dict(available)
+            chosen = {
+                name: driver
+                for name, driver in available.items()
+                if name in DEFAULT_VARIANTS
+            }
+            # Never build nothing: an assignment that has only an answers file
+            # still has a document, and silently skipping it would look like a
+            # broken discovery rather than a deliberate default.
+            return chosen or dict(available)
         chosen = {name: available[name] for name in wanted if name in available}
         # Never build nothing because a filter matched nothing: an assignment
         # with only an unconventional driver still has to convert.
@@ -102,6 +117,10 @@ VARIANT_LABELS: tuple[tuple[str, str], ...] = (
     ("answer", "answers only"),
 )
 VARIANTS: tuple[str, ...] = tuple(name for name, _ in VARIANT_LABELS)
+
+#: Built when nothing is asked for by name. Everything a student or a reader
+#: is handed; `answer` is an answers-only extract for staff and is opt-in.
+DEFAULT_VARIANTS: tuple[str, ...] = ("solution", "problem", "document")
 
 #: Filename prefix -> variant. Overridable per course via ``corpus.variants``.
 DEFAULT_VARIANT_PREFIXES: dict[str, str] = {
