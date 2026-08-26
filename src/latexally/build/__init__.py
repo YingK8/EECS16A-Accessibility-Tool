@@ -777,6 +777,15 @@ def _in_corpus(path: Path, mirror_root: Path, corpus_root: Path) -> Path:
         return path
 
 
+def _same_bytes(left: Path, right: Path) -> bool:
+    """Cheap equality that treats an unreadable file as different, so it is
+    replaced rather than silently kept."""
+    try:
+        return left.read_bytes() == right.read_bytes()
+    except OSError:  # pragma: no cover
+        return False
+
+
 def mirror_dependencies(
     driver: Path, source_dir: Path, target_dir: Path, mirror_root: Path
 ) -> list[Path]:
@@ -803,7 +812,18 @@ def mirror_dependencies(
             continue
         offset = os.path.relpath(dependency, source_dir)
         destination = Path(os.path.normpath(target_dir / offset))
-        if destination == dependency or destination.exists():
+        if destination == dependency:
+            continue
+        # Refreshed when the corpus copy differs, NOT skipped because a copy is
+        # already there. `destination.exists()` meant a shared question file
+        # was mirrored once and never again: editing it in the corpus had no
+        # effect on any later build, and last run's <<TODO:>> wrappers stayed
+        # in the mirror -- where `already_described` then read them as work
+        # already done and skipped the figure, so a description filled in
+        # afterwards was never applied. Found by timestamps: the drivers were
+        # from 17:22 and the questions they \input from 14:36 and the previous
+        # day.
+        if destination.exists() and _same_bytes(destination, dependency):
             continue
         if not destination.is_relative_to(mirror_root):
             continue

@@ -710,3 +710,56 @@ def test_the_baseline_survives_wrappers_in_the_shared_question_files(
     assert baseline.index("\\providecommand") < baseline.index("\\begin{document}")
     # And the document body is untouched.
     assert "\\input{q}" in baseline
+
+
+def test_a_changed_question_reaches_the_next_build(profile, tmp_path):
+    r"""The mirror refreshes a dependency, it does not keep the first copy.
+
+    `destination.exists()` meant a shared question file was mirrored once and
+    never again. Two consequences, both silent: editing the question in the
+    corpus had no effect on any later build, and last run's `<<TODO:>>`
+    wrappers stayed in the mirror -- where `already_described` read them as
+    work already done and skipped the figure, so a description filled in
+    afterwards was never applied.
+
+    Found by timestamps in a real output tree: drivers from 17:22, the
+    questions they \input from 14:36 and the previous day.
+    """
+    from latexally.build import mirror_dependencies
+
+    corpus = tmp_path / "corpus"
+    assignment = corpus / "sem" / "hw" / "1"
+    assignment.mkdir(parents=True)
+    # `../../bank/q` from sem/hw/1 is sem/bank/q -- resolved against the
+    # driver's directory, which is TeX's own rule and what the walk follows.
+    (corpus / "sem" / "bank").mkdir(parents=True)
+    question = corpus / "sem" / "bank" / "q.tex"
+    question.write_text("first version\n")
+    driver = assignment / "prob1.tex"
+    driver.write_text(
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\input{../../bank/q}\n"
+        "\\end{document}\n"
+    )
+
+    mirror_root = tmp_path / "out" / "tex"
+    target = mirror_root / "sem" / "hw" / "1"
+    target.mkdir(parents=True)
+    # `../../bank/q` from sem/hw/1 lands at the same offset inside the mirror,
+    # which is the whole point of mirror_dependencies.
+    mirrored = mirror_root / "sem" / "bank" / "q.tex"
+
+    mirror_dependencies(driver, assignment, target, mirror_root)
+    assert mirrored.read_text() == "first version\n"
+
+    # The author edits the question, and runs again.
+    question.write_text("second version\n")
+    mirror_dependencies(driver, assignment, target, mirror_root)
+    assert mirrored.read_text() == "second version\n", "the build used a stale copy"
+
+    # And a mirror the apply step has since wrapped starts pristine next run,
+    # so the wrapper is not read back as a description already written.
+    mirrored.write_text("\\described{<<TODO:x>>}{second version}\n")
+    mirror_dependencies(driver, assignment, target, mirror_root)
+    assert mirrored.read_text() == "second version\n"
