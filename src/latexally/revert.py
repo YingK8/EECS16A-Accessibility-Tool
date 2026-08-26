@@ -313,6 +313,23 @@ def _tracked(root: Path, scope: Path | None) -> set[Path]:
     }
 
 
+def _prune_empty(outputs: list[Path]) -> None:
+    """Remove the output root once nothing is left in it.
+
+    Emptying `ally-out/` and leaving the directory behind is a clean that does
+    not look like one: the folder is still there in a listing, and there is no
+    way to tell from outside whether it holds a run or nothing at all. Only
+    ever removed when genuinely empty -- a worklog kept because somebody wrote
+    in it keeps its directory too.
+    """
+    for root in {path.parent for path in outputs}:
+        try:
+            if root.is_dir() and not any(root.iterdir()):
+                root.rmdir()
+        except OSError:  # pragma: no cover - raced or not ours to remove
+            pass
+
+
 def do_revert(plan: RevertPlan, *, verify: bool = True) -> RevertPlan:
     """Carry the plan out, then check that it worked.
 
@@ -336,6 +353,7 @@ def do_revert(plan: RevertPlan, *, verify: bool = True) -> RevertPlan:
             shutil.rmtree(path, ignore_errors=True)
         else:
             path.unlink(missing_ok=True)
+    _prune_empty(plan.outputs)
 
     # Nothing was restored, so there is nothing to check: `clean` leaves every
     # modification in place on purpose, and reporting them as failures would

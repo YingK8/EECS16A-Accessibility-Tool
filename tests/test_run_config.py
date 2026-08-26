@@ -311,3 +311,28 @@ def test_a_clashing_environment_is_saved_and_restored_not_merely_freed(profile):
     # ...and the after hook puts it back, undoing the package's own \let.
     assert "latexallykept" in after[0]
     assert "endproof" in after[0], "\\newenvironment defines both halves"
+
+
+def test_a_line_number_is_not_read_as_an_emoji():
+    """Rich reads `:100:` as an emoji shortcode.
+
+    A real error line came out of a build as
+    `q_image_compression.tex💯 Package latexally Error`, which is not a
+    location anyone can open. This tool prints file:line references constantly
+    and LaTeX source is full of colons, so the substitution is turned off
+    rather than escaped at each call site.
+    """
+    import io
+
+    from latexally.cli import Context
+    from latexally.config import Profile
+
+    context = Context(Profile(name="test"), as_json=False, quiet=False)
+    # Print through the real console, captured, so this asserts on the object
+    # the CLI actually uses rather than on a rebuilt copy of it.
+    context.console.file = io.StringIO()
+    context.console.width = 120
+    context.console.print("q_image_compression.tex:100: Package latexally Error")
+    shown = context.console.file.getvalue()
+    assert ":100:" in shown
+    assert "\N{HUNDRED POINTS SYMBOL}" not in shown

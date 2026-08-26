@@ -54,7 +54,14 @@ class Context:
     ) -> None:
         self.profile = profile
         self.as_json = as_json
-        self.console = Console(stderr=as_json, quiet=quiet and not as_json)
+        # emoji=False, because this tool prints file:line references all day
+        # and Rich reads `:100:` as an emoji shortcode. A real error line came
+        # out as `q_image_compression.tex💯 Package latexally Error`, which is
+        # not a location anyone can open. `:8ball:`, `:x:` and `:v:` are the
+        # same hazard on other line numbers and in LaTeX source.
+        self.console = Console(
+            stderr=as_json, quiet=quiet and not as_json, emoji=False
+        )
         #: Corpus-relative path of the directory `--here` was run from, or None.
         #: Commands that take a scope fall back to it when given none.
         self.here_scope = here_scope
