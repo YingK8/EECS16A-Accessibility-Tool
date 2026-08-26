@@ -205,7 +205,7 @@ questionBank/ally-out/          ← in the corpus, beside the material
   pdf/                          the converted PDFs
   logs/                         build logs
   tex/                          the converted sources
-  baseline/                     untouched builds, for the before/after comparison
+  baseline/                     untouched builds, only with --baseline
   descriptions/                 the alt-text worklogs staff fill in
     bank/hw_fig_alt_texts.yaml      the shared question bank
     bank/disc_fig_alt_texts.yaml
@@ -234,9 +234,12 @@ Every version of each assignment is converted, not just the solutions. `sol9.tex
 and `prob9.tex` share one body and differ only in whether `\sol` prints, and the
 blank one is what students receive.
 
-Each build reports a `pixel diff` against the untouched original. It is a
-difference, not a score: 2.34% means 97.66% of the page is pixel-identical, and
-the residue is tagging's own repagination.
+`--baseline` also builds the untouched original and reports a `pixel diff`
+against it. It is a difference, not a score: 2.34% means 97.66% of the page is
+pixel-identical, and the residue is tagging's own repagination. Off by default,
+because it is a second full LaTeX run of every document — 70s against 50s on
+sp26/hw/10 — and it answers a question you ask while adopting the tool, not on
+every rebuild of a homework.
 
 ---
 

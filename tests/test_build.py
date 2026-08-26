@@ -810,3 +810,31 @@ def test_a_clean_build_is_still_reported_without_a_draft_section(profile, tmp_pa
     text = write_report(config, [report]).read_text()
     assert "DRAFT" not in text
     assert "sem/hw/1" in text
+
+
+def test_no_baseline_means_no_original_in_the_mirror(profile, tmp_path):
+    r"""Written unconditionally it was a second copy of every driver that
+    nothing read: `_compile_assignment` only touches it when comparing."""
+    from dataclasses import replace
+
+    from latexally.build import materialise
+    from latexally.discover import Assignment
+    from latexally.run import Output, RunConfig
+
+    corpus = tmp_path / "corpus"
+    folder = corpus / "sem" / "hw" / "1"
+    folder.mkdir(parents=True)
+    (folder / "prob1.tex").write_text(
+        "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n"
+    )
+    profile = replace(profile, corpus=replace(profile.corpus, root=corpus))
+    assignment = Assignment(path="sem/hw/1", kind="homework", driver="prob1.tex")
+
+    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    prepared = materialise(assignment, config, profile, lines=[])
+    assert prepared.original is None
+    assert not list((tmp_path / "out" / "tex").rglob("*-original.tex"))
+
+    config.baseline = True
+    prepared = materialise(assignment, config, profile, lines=[])
+    assert prepared.original is not None and prepared.original.is_file()

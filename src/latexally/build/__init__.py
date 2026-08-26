@@ -552,7 +552,7 @@ def materialise(
     mirror_root = config.output.tex_dir().resolve()
     target_dir = (mirror_root / assignment.path).resolve()
     driver = target_dir / driver_name
-    original = target_dir / f"{Path(driver_name).stem}-original.tex"
+    original: Path | None = None
     if write:
         target_dir.mkdir(parents=True, exist_ok=True)
         for path in sorted(source_dir.iterdir()):
@@ -572,8 +572,13 @@ def materialise(
         # repaired document produced no "before" PDF and its pixel diff read
         # "one side missing". Built from here, both sides see the same repaired
         # includes and the diff measures only what the conversion changed.
-        original = target_dir / f"{Path(driver_name).stem}-original.tex"
-        original.write_bytes(source.encode(inject(source, list(BASELINE_SHIM))))
+        # Only when something is going to build it. Written unconditionally it
+        # was a second copy of every driver in the mirror that nothing read.
+        if config.baseline:
+            original = target_dir / f"{Path(driver_name).stem}-original.tex"
+            original.write_bytes(source.encode(inject(source, list(BASELINE_SHIM))))
+        else:
+            original = None
         # Everything the driver reaches by an explicit relative path, at the
         # same offsets, so the mirror builds without the corpus beside it.
         mirror_dependencies(
@@ -1388,7 +1393,7 @@ def build_assignment(
     profile: Profile,
     *,
     lines: list[str] | None = None,
-    compare: bool = True,
+    compare: bool | None = None,
     variant: str = "document",
     driver: str | None = None,
     siblings_to_skip: frozenset[str] = frozenset(),
@@ -1441,6 +1446,11 @@ def build_assignment(
     # describe, and three of the four constructs below produce no PDF at all.
     report.rewrites = rewrite_incompatibilities(prepared, mode=probe(profile).tagging_mode)
     report.described = apply_descriptions(prepared, config, profile)
+    # `config.baseline` unless the caller insisted. Building the untouched
+    # original is a second full LaTeX run of every document, and the pixel diff
+    # it yields answers "what did conversion cost" -- a question asked while
+    # adopting the tool, not on every rebuild of a homework.
+    compare = config.baseline if compare is None else compare
     return _compile_assignment(prepared, report, assignment, config, profile, variant, compare)
 
 

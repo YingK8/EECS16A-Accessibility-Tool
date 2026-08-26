@@ -336,3 +336,15 @@ def test_a_line_number_is_not_read_as_an_emoji():
     shown = context.console.file.getvalue()
     assert ":100:" in shown
     assert "\N{HUNDRED POINTS SYMBOL}" not in shown
+
+
+def test_the_baseline_is_off_by_default_and_round_trips():
+    """It is a second full LaTeX run of every document.
+
+    The pixel diff it produces answers "what did conversion cost" -- worth
+    knowing while adopting the tool, not worth paying for on every rebuild of a
+    homework. Measured on sp26/hw/10: 70s with, 50s without.
+    """
+    assert RunConfig().baseline is False
+    assert RunConfig.from_yaml(RunConfig(baseline=True).to_yaml()).baseline is True
+    assert RunConfig.from_yaml(RunConfig().to_yaml()).baseline is False

@@ -818,6 +818,15 @@ def _report_table(reports: list) -> Table:
     help="Mark undescribed figures in the source. Build-failing unless --draft.",
 )
 @click.option(
+    "--baseline",
+    is_flag=True,
+    help=(
+        "Also build the untouched original and report the pixel diff against "
+        "it. About 40% slower (measured: 70s vs 50s on sp26/hw/10); off by "
+        "default."
+    ),
+)
+@click.option(
     "--draft",
     is_flag=True,
     help=(
@@ -839,6 +848,7 @@ def build(
     question_tags: bool,
     house_colors: bool,
     placeholders: bool,
+    baseline: bool,
     draft: bool,
 ) -> None:
     """Convert and build assignments. This is what `latexally run` runs.
@@ -868,6 +878,8 @@ def build(
         config.colors = ColorChoice(mode="house")
     if placeholders:
         config.alt = AltChoice(mode="placeholders", strict=config.alt.strict)
+    if baseline:
+        config.baseline = True
     if draft:
         config.alt = replace(config.alt, strict=False)
         ctx.console.print(

@@ -514,6 +514,12 @@ class RunConfig:
     #: which is the honest default: a course ships both the solutions and the
     #: blank handout, and it is the blank one students actually receive.
     variants: tuple[str, ...] = ()
+    #: Build the untouched original as well, to measure what conversion cost.
+    #: Off by default: it is a second full LaTeX run of every document -- 70s
+    #: against 50s on sp26/hw/10 -- and the pixel diff it yields answers "what
+    #: did conversion cost", which is a question asked while adopting the tool
+    #: rather than on every rebuild of a homework.
+    baseline: bool = False
     #: False is a dry run: nothing is written anywhere. The default, deliberately.
     write: bool = False
     #: Documents compiled at once. Each LaTeX run is three passes of a
@@ -534,6 +540,7 @@ class RunConfig:
             "alt": self.alt.as_dict(),
             "output": self.output.as_dict(),
             "variants": list(self.variants),
+            "baseline": self.baseline,
             # Unlike `write`, this is a how-fast and not a commitment, so a
             # replayed run is entitled to inherit it.
             "jobs": self.jobs,
@@ -552,6 +559,7 @@ class RunConfig:
             alt=AltChoice.from_dict(data.get("alt")),
             output=Output.from_dict(data.get("output")),
             variants=tuple(str(item) for item in (data.get("variants") or ())),
+            baseline=bool(data.get("baseline", False)),
             jobs=max(1, int(data.get("jobs") or 1)),
         )
 
