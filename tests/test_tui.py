@@ -569,20 +569,45 @@ async def test_accepting_the_proposal_clears_an_earlier_override(profile: Profil
         assert app.config.colors.replacements(profile)["redish"] == "#EE0000"
 
 
-async def test_selecting_a_colour_row_opens_it_for_editing(profile: Profile):
-    """Click the colour (or press Enter on it) rather than hunting for a field."""
+async def test_e_opens_the_colour_under_the_cursor_for_editing(profile: Profile):
+    """`e`, not Enter, rather than hunting for a field.
+
+    Enter is Next on every other step. A screen where it silently meant "edit
+    this row" instead was a screen you got stuck on: press the key that has
+    moved you forward four times and the cursor drops into a text field.
+    """
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await colors(pilot, REDISH)
-        table = app.screen.query_one("#colors", DataTable)
-        table.post_message(
-            DataTable.RowSelected(table, table.cursor_row, table.coordinate_to_cell_key(
-                table.cursor_coordinate).row_key)
-        )
-        await pilot.pause()
+        await press(pilot, "e")
         field = app.screen.query_one("#hex", Input)
         assert field.value == "#EE0000"
         assert field.has_focus
+
+
+async def test_enter_leaves_the_colour_screen_rather_than_editing(profile: Profile):
+    """The collision this replaced: Enter has to move on here like everywhere."""
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await colors(pilot, REDISH)
+        assert "e Edit hex" in visible(app)
+        await press(pilot, "enter")
+        await settle(pilot)
+        assert isinstance(app.screen, AltScreen)
+
+
+async def test_enter_in_the_hex_field_submits_it(profile: Profile):
+    """And inside the field Enter is still the field's own, or a typed hex
+    could never be committed."""
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await colors(pilot, REDISH)
+        name = app.screen.current
+        await press(pilot, "e")
+        app.screen.query_one("#hex", Input).value = "#123456"
+        await press(pilot, "enter")
+        assert isinstance(app.screen, ColorsScreen), "must not have moved on"
+        assert app.config.colors.overrides[name] == "#123456"
 
 
 async def test_a_typed_hex_previews_its_ink_and_ratio(profile: Profile):

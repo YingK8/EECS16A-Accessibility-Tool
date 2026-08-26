@@ -163,7 +163,8 @@ where you are standing.
 | `↑` `↓` `PgUp` `PgDn` `Home` `End` | move between rows — and on a choice like local / choose, or mirror / in-place / edit, they *are* the choice |
 | `space` | tick a row — `[x]` is ticked, `[ ]` is not |
 | `a` / `c` | tick all / clear |
-| `Enter` | Next. On Review it says `Build`, and that is what writes. In a text field it is the field's own — submitting the path you typed — and on the colour table it opens the hex field for the row you are on |
+| `Enter` | Next, on every step. On Review it says `Build`, and that is what writes. In a text field it stays the field's own — submitting the path or hex you typed |
+| `e` | on the colour table, type your own hex for the row you are on |
 | `Esc` or `b` | Back, keeping everything you already changed. Step 1 has no back |
 | `s` | write the settings to `<output>/run.yaml` without building — replay with `latexally run --config` or `latexally build --config` |
 | `r` | Revert — undo a run: restore your `.tex` with git and delete what the tool wrote. Shows the list first; `y` confirms |

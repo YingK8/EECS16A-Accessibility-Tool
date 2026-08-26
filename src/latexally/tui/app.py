@@ -212,19 +212,13 @@ class StepScreen(Screen):
     BINDINGS = [
         Binding("escape", "back", "Back"),
         Binding("b", "back", "Back", show=False),
-        # Enter is the key people press to go on. It is priority so it beats
-        # the focused widget -- an OptionList binds Enter to "tick this row" --
-        # and it is a separate action from `n` so a screen where Enter already
-        # means something can decline it without losing Next altogether.
-        # Ticking is `space`, which SelectionList binds itself.
+        # Enter is the key people press to go on, on every step. Priority,
+        # because the focused widget would otherwise swallow it -- an
+        # OptionList binds Enter to "tick this row". Ticking is `space`, which
+        # SelectionList binds for it anyway, and editing a colour is `e`.
         Binding("enter", "advance", "Next", priority=True),
         Binding("n", "next", "Next", show=False),
     ]
-
-    #: False where Enter already has a better local meaning. Only the colour
-    #: table sets it: there Enter opens the hex field for the row you are on,
-    #: which is the whole interaction that screen exists for.
-    ENTER_NEXT = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -276,7 +270,7 @@ class StepScreen(Screen):
             # In a text field Enter is the field's own -- submitting a typed
             # path, committing a hex -- and a priority binding that stole it
             # would make those fields impossible to use.
-            if isinstance(self.app.focused, Input) or not self.ENTER_NEXT:
+            if isinstance(self.app.focused, Input):
                 return False
             return True if self._can_next else None
         return True
@@ -904,12 +898,15 @@ class ColorsScreen(StepScreen):
     """
 
     heading = "Course colours"
-    #: Enter opens the hex field for the row you are on.
-    ENTER_NEXT = False
 
     BINDINGS = [
         Binding("u", "use", "Use proposed"),
         Binding("k", "keep", "Keep original"),
+        # `e`, not Enter. Enter is Next on every other step, and a screen where
+        # it silently means "edit this row" instead is a screen you get stuck
+        # on: you press the key that has moved you forward six times and the
+        # cursor drops into a text field.
+        Binding("e", "edit", "Edit hex"),
     ]
 
     @property
@@ -918,7 +915,7 @@ class ColorsScreen(StepScreen):
         return (
             f"Floor is {colors.min_contrast_normal}:1 on {colors.background} "
             "(WCAG 1.4.3 AA). * marks a colour you set by hand. "
-            "↑ ↓ to a row, then u, k, or enter to type your own hex."
+            "↑ ↓ to a row, then u, k, or e to type your own hex."
         )
 
     def body(self) -> Iterator[Widget]:
@@ -935,6 +932,10 @@ class ColorsScreen(StepScreen):
             name = self.current
             usable = name is not None and proposal_for(self.profile, name) is not None
             return True if usable else None
+        if action == "edit":
+            # Any colour can be typed over, conforming or not -- unlike u and
+            # k, which only mean something where there is a proposal.
+            return True if self.current is not None else None
         return super().check_action(action, parameters)
 
     def action_back(self) -> None:
@@ -977,9 +978,12 @@ class ColorsScreen(StepScreen):
     def _row_highlighted(self) -> None:
         self._describe()
 
-    @on(DataTable.RowSelected, "#colors")
-    def _row_selected(self) -> None:
-        """Click a colour (or press Enter on it) to type a new hex for it."""
+    def action_edit(self) -> None:
+        """Type a new hex for the colour under the cursor.
+
+        Reached with `e`. It used to be Enter, which collided with Enter
+        meaning Next everywhere else.
+        """
         name = self.current
         if name is None:
             return
