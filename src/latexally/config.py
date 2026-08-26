@@ -80,6 +80,13 @@ _ALWAYS_EXCLUDE = (
     "**/.git/**",
     "**/build/**",
     "**/_minted*/**",
+    # This tool's own output. It lives inside the corpus now -- the
+    # descriptions belong with the material -- and its mirrored `tex/` holds a
+    # converted copy of every .tex a run touched. Without this the next run
+    # scans them as if they were course material: figures counted twice,
+    # already-converted sources converted again, and the corpus growing a
+    # mirror of its mirror.
+    "**/ally-out/**",
 )
 
 

@@ -160,20 +160,21 @@ where you are standing.
 | key | does |
 |---|---|
 | `←` `→` | move between named scopes (in the path field, the text caret) |
-| `↑` `↓` `PgUp` `PgDn` `Home` `End` | move between rows — and on a choice like mirror / in-place / edit, they *are* the choice |
-| `Enter` | tick a row — `[x]` is ticked, `[ ]` is not |
+| `↑` `↓` `PgUp` `PgDn` `Home` `End` | move between rows — and on a choice like local / choose, or mirror / in-place / edit, they *are* the choice |
+| `space` | tick a row — `[x]` is ticked, `[ ]` is not |
 | `a` / `c` | tick all / clear |
-| `n` | Next. On Review it says `Build`, and that is what writes |
+| `Enter` | Next. On Review it says `Build`, and that is what writes. In a text field it is the field's own — submitting the path you typed — and on the colour table it opens the hex field for the row you are on |
 | `Esc` or `b` | Back, keeping everything you already changed. Step 1 has no back |
 | `s` | write the settings to `<output>/run.yaml` without building — replay with `latexally run --config` or `latexally build --config` |
 | `r` | Revert — undo a run: restore your `.tex` with git and delete what the tool wrote. Shows the list first; `y` confirms |
 | `q` | quit; nothing is built |
 
-**It opens on the folder you started it from.** The first question is
-`everything in sp26/hw/10` or `choose`, and the first answer is already
-selected with the folder's assignments ticked — the same thing `latexally scan`
-means by the same words. Pick `choose` and the scope row and path field appear
-for browsing the rest of the corpus; anything already ticked stays ticked.
+**It opens on the folder you started it from.** The first screen asks one
+question — `local — sp26/hw/10` or `choose` — and nothing else, so the arrows
+answer it rather than going to a list of sixty-two directories. `local` is
+already selected, and the step after it shows what that folder holds with
+everything ticked; untick any of it. Pick `choose` and that step opens the
+corpus to browse instead, keeping anything already ticked.
 
 Started from outside the corpus — this repository, or CI — there is no "here"
 to offer, so that option says so and the browsing controls open instead.
@@ -193,10 +194,11 @@ There is no second filter for *kind*: kind is what a directory turned out to be
 already does — the profile declares both a `homeworks` scope and a `homework`
 kind. What the current scope holds is stated above the list instead.
 
-Then seven steps, each already carrying a sensible default:
+Then eight steps, each already carrying a sensible default:
 
 | step | what it asks |
 |---|---|
+| Where | local — the folder you started in — or choose |
 | Scope | which directories |
 | Documents | solutions, the blank handout, answers-only |
 | Standards | which standards to apply |

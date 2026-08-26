@@ -102,8 +102,8 @@ uv run run.py
 ```
 
 Asks what to convert, defaults the rest, and dry-runs unless told otherwise. It
-opens on the folder you started it from — the first question is "everything
-here, or choose?" and "everything here" is already the answer.
+opens on the folder you started it from — the first question is `local` or
+`choose`, and `local` is already the answer. `Enter` moves on, `space` ticks.
 
 Step by step, with what each screen shows:
 [`docs/QUICKSTART.md`](docs/QUICKSTART.md).

@@ -68,7 +68,8 @@ def _corpus_files() -> list[Path]:
         path
         for path in BANK.rglob("*.tex")
         if not any(
-            part.endswith("_questionBank") or part in ("candidateQuestions", "candidate_questions")
+            part.endswith("_questionBank")
+            or part in ("candidateQuestions", "candidate_questions", "ally-out")
             for part in path.relative_to(BANK).parts
         )
     )
@@ -390,3 +391,25 @@ def test_worklogs_are_filed_by_semester_and_kind(sample: list[Path], tmp_path: P
         assert path.name.endswith("_fig_alt_texts.yaml"), path.name
         # exactly one semester folder between the root and the file
         assert path.parent.parent == directory, path
+
+
+def test_the_tools_own_output_is_not_course_material(tmp_path: Path):
+    r"""ally-out lives inside the corpus now, and must not be scanned.
+
+    Its `tex/` holds a converted copy of every .tex a run touched. Without an
+    exclusion the next run reads them as source: figures counted twice,
+    already-converted files converted again, and a mirror of the mirror. Caught
+    by a sampled test that started copying `ally-out/tex/**` out of the live
+    corpus after a real run had put it there.
+    """
+    root = tmp_path / "corpus"
+    (root / "hw" / "1").mkdir(parents=True)
+    (root / "hw" / "1" / "q.tex").write_text("real\n")
+    (root / "ally-out" / "tex" / "hw" / "1").mkdir(parents=True)
+    (root / "ally-out" / "tex" / "hw" / "1" / "q.tex").write_text("converted copy\n")
+
+    found = {path.name for path in _profile(root).iter_files(None)}
+    assert found == {"q.tex"}
+    assert not any(
+        "ally-out" in path.parts for path in _profile(root).iter_files(None)
+    )

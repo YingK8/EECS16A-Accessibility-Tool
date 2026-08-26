@@ -303,6 +303,29 @@ def _preamble_insertion_point(source: TexSource) -> int:
     )
 
 
+#: Makes the alt-text wrappers transparent, for the baseline build only.
+#:
+#: The baseline is the untouched driver, compiled to measure what conversion
+#: cost. It shares the mirror with the converted one, and `apply_descriptions`
+#: writes `\described` / `Described` into the SHARED question files -- which the
+#: baseline \inputs too. Those files are not the driver, so the baseline picks
+#: up the wrappers while loading none of the packages that define them, and
+#: dies with "Environment Described undefined" followed by every enumerate in
+#: the document ending in the wrong place.
+#:
+#: Defined away rather than avoided: the wrappers add no visual output of their
+#: own, so a transparent definition renders exactly the page the original
+#: source did, which is the page the pixel diff has to measure against.
+BASELINE_SHIM = (
+    r"\providecommand{\described}[2]{#2}",
+    r"\providecommand{\LongDescription}[1]{}",
+    r"\providecommand{\accessalt}[1]{}",
+    r"\newenvironment{Described}[1]{}{}",
+    r"\newenvironment{Decorative}{}{}",
+    r"\newenvironment{DescribedFigure}[1][]{}{}",
+)
+
+
 def inject(source: TexSource, lines: list[str]) -> str:
     """Return the driver text with the conversion lines added.
 
@@ -545,7 +568,7 @@ def materialise(
         # "one side missing". Built from here, both sides see the same repaired
         # includes and the diff measures only what the conversion changed.
         original = target_dir / f"{Path(driver_name).stem}-original.tex"
-        original.write_bytes(source.encode(source.text))
+        original.write_bytes(source.encode(inject(source, list(BASELINE_SHIM))))
         # Everything the driver reaches by an explicit relative path, at the
         # same offsets, so the mirror builds without the corpus beside it.
         mirror_dependencies(

@@ -30,10 +30,12 @@ from latexally.config import ColorPolicy, CorpusScope, Profile
 from latexally.run import RunConfig
 from latexally.tui.app import (
     AltScreen,
+    Choice,
     ColorsScreen,
     DocumentsScreen,
     LatexAllyApp,
     OutputScreen,
+    ModeScreen,
     ReviewScreen,
     RevertScreen,
     ScopeScreen,
@@ -158,7 +160,26 @@ async def walk_to(pilot, screen) -> None:
         await advance(pilot)
 
 
+
+async def open_scope(pilot) -> None:
+    """Settle, then step past the local-or-choose question onto the picker.
+
+    That question is step 1 now, so a test that settles and then reads the
+    scope list is reading the wrong screen.
+    """
+    await settle(pilot)
+    if isinstance(pilot.app.screen, ModeScreen):
+        await advance(pilot)
+    await settle(pilot)
+
+
 async def set_scope(pilot, path: str) -> None:
+    # The scope picker is step 2 now: step 1 asks local-or-choose. Advance only
+    # from that first screen -- `walk_to` can only go forwards, so calling it
+    # from anywhere later spins pressing Next against a screen it will never
+    # leave.
+    if isinstance(pilot.app.screen, ModeScreen):
+        await advance(pilot)
     field = pilot.app.screen.query_one("#scope-path", Input)
     field.value = path
     await field.action_submit()
@@ -204,15 +225,24 @@ async def scope_all_homework(pilot) -> None:
 # ---------------------------------------------------------------------- #
 
 
-async def test_scope_is_asked_at_startup_with_no_navigation(profile: Profile):
-    """The first thing on screen is the only question the tool cannot answer."""
+async def test_the_first_question_is_asked_at_startup_with_no_navigation(
+    profile: Profile,
+):
+    """The first thing on screen is the one question the tool cannot answer.
+
+    It used to be the scope picker itself. That put a list of sixty-two
+    directories above the question of whether you wanted a list at all, and
+    took the focus with it -- so the arrows meant for the question went to the
+    list instead.
+    """
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
-        assert isinstance(app.screen, ScopeScreen)
-        assert "What do you want to convert?" in visible(app)
-        await scope_all_homework(pilot)
-        assert set(app.config.assignments) == {"sem/hw/1", "sem/hw/2", "sem/hw/3"}
-
+        await settle(pilot)
+        assert isinstance(app.screen, ModeScreen)
+        assert "Which material?" in visible(app)
+        # The arrows answer the question, because it holds the focus.
+        assert isinstance(app.focused, Choice)
+        assert app.scope_mode == "choose"
 
 async def test_selecting_a_kind_selects_its_assignments(profile: Profile):
     app = LatexAllyApp(profile)
@@ -341,18 +371,21 @@ async def test_the_count_of_selected_directories_is_shown(profile: Profile):
         assert "2 of 5 selected" in visible(app)
 
 
-async def test_arrows_walk_scopes_and_rows_and_enter_ticks(profile: Profile):
-    """← → for scopes, ↑ ↓ for rows, Enter to tick, n for next.
+async def test_arrows_walk_scopes_and_rows_and_space_ticks(profile: Profile):
+    """← → for scopes, ↑ ↓ for rows, space to tick, Enter for next.
 
-    Enter used to do nothing after a rescan: rebuilding the options leaves
-    nothing highlighted, and Enter toggles the highlighted row.
+    Ticking used to do nothing after a rescan: rebuilding the options leaves
+    nothing highlighted, and the tick key toggles the highlighted row.
+
+    Enter is Next now, so space is the tick -- which is the key SelectionList
+    binds for it anyway.
     """
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await set_scope(pilot, "sem")
-        await press(pilot, "enter")
-        await press(pilot, "down", "enter")
-        await press(pilot, "down", "enter")
+        await press(pilot, "space")
+        await press(pilot, "down", "space")
+        await press(pilot, "down", "space")
         assert app.config.assignments == (
             "sem/dis/01A",
             "sem/dis/01B",
@@ -365,6 +398,8 @@ async def test_arrows_walk_scopes_and_rows_and_enter_ticks(profile: Profile):
 async def test_the_current_scope_stays_marked(profile: Profile):
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await advance(pilot)  # past the local-or-choose question
         await settle(pilot)  # the opening scan lands on the first named scope
         assert "sem" in highlighted(app), "the scope you are on has to be marked"
 
@@ -846,7 +881,7 @@ async def test_the_review_names_build_as_the_key_that_writes(profile: Profile):
         await scope_all_homework(pilot)
         await walk_to(pilot, ReviewScreen)
         shown = visible(app)
-        assert "n Build" in shown, "the footer has to name what n does here"
+        assert "Build" in shown, "the footer has to name the key that writes"
         assert "esc Back" in shown
 
 
@@ -869,7 +904,7 @@ async def test_running_with_nothing_selected_is_refused(profile: Profile):
     """A disabled Next with the reason beside it, not a silent exit."""
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
-        await pilot.pause()
+        await open_scope(pilot)
         assert not app.screen._can_next
         assert "Tick at least one directory" in visible(app)
         await advance(pilot)
@@ -964,10 +999,10 @@ async def test_the_footer_survives_a_scope_taller_than_the_terminal(
         choices = app.screen.query_one("#assignments", SelectionList)
         choices.focus()
         await pilot.press("end")
-        await pilot.pause()
+        await open_scope(pilot)
         shown = visible(app)
         assert "a All" in shown, "the footer has to keep naming the keys"
-        assert "n Next" in shown
+        assert "Next" in shown, "the key that moves on has to stay named"
 
 
 async def test_select_all_is_a_visible_control_and_a_binding(big_profile: Profile):
@@ -1064,7 +1099,7 @@ async def test_escape_on_the_first_step_does_not_quit(profile: Profile):
         await pilot.press("escape")
         await pilot.pause()
         assert app.is_running
-        assert isinstance(app.screen, ScopeScreen)
+        assert isinstance(app.screen, ModeScreen)
         assert app.screen.first
 
 
@@ -1074,7 +1109,7 @@ async def test_the_arrows_belong_to_the_caret_while_typing_a_path(
     """In the path field ← → are the text caret, which outranks the scope row."""
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
-        await settle(pilot)
+        await open_scope(pilot)
         assert app.screen.check_action("scope", (-1,)) is True
         app.screen.query_one("#scope-path", Input).focus()
         await pilot.pause()
@@ -1090,7 +1125,7 @@ async def test_the_arrows_reach_the_screen_past_the_lists_own_bindings(
     """
     app = LatexAllyApp(two_scopes)
     async with app.run_test(size=SIZE) as pilot:
-        await settle(pilot)
+        await open_scope(pilot)
         assert app.focused is app.screen.query_one("#assignments")
         await press(pilot, "right")
         assert "homeworks" in highlighted(app)
@@ -1121,10 +1156,10 @@ async def test_rescanning_leaves_the_screen_usable(profile: Profile):
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await set_scope(pilot, "sem")
-        await press(pilot, "enter")
+        await press(pilot, "space")
         assert app.config.assignments == ("sem/dis/01A",)
         await set_scope(pilot, "sem/hw")
-        await press(pilot, "down", "enter")
+        await press(pilot, "down", "space")
         assert app.is_running
         assert app.config.assignments == ("sem/dis/01A", "sem/hw/2")
 
@@ -1165,13 +1200,13 @@ async def test_it_opens_on_a_scope_with_the_list_already_populated(
     """No keystroke should be needed before the arrows do something."""
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
-        await settle(pilot)
+        await open_scope(pilot)
         choices = app.screen.query_one("#assignments", SelectionList)
         assert choices.option_count == 5, "the opening scan has to have landed"
         assert choices.highlighted == 0
         assert app.focused is choices, "arrows must work without focusing first"
         assert "sem" in highlighted(app)
-        await press(pilot, "down", "enter")
+        await press(pilot, "down", "space")
         assert app.config.assignments == ("sem/dis/01B",)
 
 
@@ -1192,7 +1227,7 @@ async def test_the_opening_scope_follows_the_profile_not_the_alphabet(
     )
     app = LatexAllyApp(ordered)
     async with app.run_test(size=SIZE) as pilot:
-        await settle(pilot)
+        await open_scope(pilot)
         assert "sem" in highlighted(app)
         assert "No buildable assignments" not in visible(app)
         # …and the alphabetically-first scope is still one keystroke away.
@@ -1206,7 +1241,7 @@ async def test_a_replayed_config_is_not_wiped_by_the_opening_scan(
     """Scanning clears the selection, so a saved one has to skip the scan."""
     app = LatexAllyApp(profile, RunConfig().with_assignments(["sem/hw/1"]))
     async with app.run_test(size=SIZE) as pilot:
-        await settle(pilot)
+        await open_scope(pilot)
         assert app.config.assignments == ("sem/hw/1",)
         assert app.screen._can_next
         # And the keys still act, rather than typing into the path field.
@@ -1218,8 +1253,8 @@ async def test_a_replayed_config_is_not_wiped_by_the_opening_scan(
 async def test_left_and_right_walk_the_named_scopes(two_scopes: Profile):
     app = LatexAllyApp(two_scopes)
     async with app.run_test(size=SIZE) as pilot:
-        await settle(pilot)
-        await press(pilot, "enter")
+        await open_scope(pilot)
+        await press(pilot, "space")
         assert app.config.assignments == ("sem/dis/01A",)
         await press(pilot, "right")
         assert app.screen.query_one("#scope-path", Input).value == "homeworks"
@@ -1235,6 +1270,10 @@ async def test_nothing_in_the_app_is_a_button(profile: Profile):
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await settle(pilot)
+        # `a` is a scope-picker key. Pressed on the first screen it does
+        # nothing, and the walk below then spins forever against a Next that
+        # stays disabled because nothing is ticked.
+        await walk_to(pilot, ScopeScreen)
         await press(pilot, "a")
         for screen in (
             ScopeScreen,
@@ -1295,7 +1334,7 @@ async def test_scanning_clears_the_list_and_says_so(profile: Profile, monkeypatc
 
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
-        await settle(pilot)
+        await open_scope(pilot)
         await tick(pilot, "sem/dis/01A")
 
         # Hold the worker open; this corpus scans faster than one frame.
@@ -1389,45 +1428,50 @@ async def test_the_runner_opens_on_the_folder_it_was_started_from(
 
     `latexally scan` already means "this folder"; the runner meaning "the whole
     corpus, nothing ticked, off you go" made the two disagree about the same
-    words. Everything in the folder is ticked, not merely implied -- the list
-    still shows exactly what will be built, and any row can still be unticked.
+    words.
     """
     monkeypatch.chdir(corpus / "sem" / "hw" / "1")
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await settle(pilot)
         assert app.here_scope == "sem/hw/1"
+        assert app.scope_mode == "local"
+        assert "local — sem/hw/1" in visible(app)
+        # Nothing is listed yet: the question comes before the list, and the
+        # arrows answer it because it holds the focus.
+        assert isinstance(app.focused, Choice)
+
+        await advance(pilot)
+        await settle(pilot)
+        # Everything the folder holds, ticked -- shown rather than implied, so
+        # any of it can still be unticked.
         assert app.config.assignments == ("sem/hw/1",)
-        shown = visible(app)
-        assert "everything in sem/hw/1" in shown
-        # Next is reachable immediately: the question has an answer already.
-        assert app.screen.check_action("next", ()) is True
+        assert "[x] sem/hw/1" in visible(app)
 
 
 async def test_choosing_instead_reveals_the_browsing_controls(
     profile: Profile, corpus: Path, monkeypatch
 ):
     """The scope row and the path field are for browsing, so they appear only
-    when the user has said they want to browse. Shown always, they were two
-    rows of chrome above an answer that was already correct."""
+    when the previous step said browsing is what was wanted."""
     monkeypatch.chdir(corpus / "sem" / "hw" / "1")
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await settle(pilot)
-        assert not app.screen.query_one("#scope-path-line").display
+        await press(pilot, "down")  # the arrows answer it
+        assert app.scope_mode == "choose"
 
-        radio = app.screen.query_one("#here-mode", RadioSet)
-        next(b for b in radio.query("RadioButton") if b.name == "choose").value = True
+        await advance(pilot)
         await settle(pilot)
         assert app.screen.query_one("#scope-path-line").display
         assert app.screen.query_one("#scope-line").display
 
 
-async def test_outside_the_corpus_the_runner_asks_as_it_always_did(
+async def test_local_is_not_offered_outside_the_corpus(
     profile: Profile, monkeypatch
 ):
     """Started from somewhere else -- this repository, or CI -- there is no
-    "here" to offer, so the option says so and the browsing controls open.
+    "local" to offer, so the option says which and disables itself.
 
     The tests directory, not a tmp_path child: the corpus fixture's root IS
     tmp_path, so anything under it is inside the corpus by definition.
@@ -1437,6 +1481,30 @@ async def test_outside_the_corpus_the_runner_asks_as_it_always_did(
     async with app.run_test(size=SIZE) as pilot:
         await settle(pilot)
         assert app.here_scope is None
-        assert app.config.assignments == ()
+        assert app.scope_mode == "choose"
         assert "not inside the corpus" in visible(app)
-        assert app.screen.query_one("#scope-path-line").display
+
+
+async def test_enter_moves_on_and_space_ticks(profile: Profile, corpus: Path, monkeypatch):
+    """Enter is the key people press to go on.
+
+    It is a priority binding, because the focused OptionList binds Enter to
+    "tick this row" and would otherwise swallow it. Ticking is `space`, which
+    SelectionList binds for that anyway.
+    """
+    monkeypatch.chdir(corpus / "sem" / "hw" / "1")
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await press(pilot, "enter")
+        await settle(pilot)
+        assert isinstance(app.screen, ScopeScreen)
+
+        await press(pilot, "space")
+        assert app.config.assignments == (), "space must untick the ticked row"
+        await press(pilot, "space")
+        assert app.config.assignments == ("sem/hw/1",)
+
+        await press(pilot, "enter")
+        await settle(pilot)
+        assert isinstance(app.screen, DocumentsScreen)

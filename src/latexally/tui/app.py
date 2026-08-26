@@ -102,7 +102,14 @@ from .summary import (
     under,
 )
 
-__all__ = ["Checklist", "Choice", "LatexAllyApp", "Radio", "RevertScreen"]
+__all__ = [
+    "Checklist",
+    "Choice",
+    "LatexAllyApp",
+    "ModeScreen",
+    "Radio",
+    "RevertScreen",
+]
 
 def _plural(count: int) -> str:
     return "y" if count == 1 else "ies"
@@ -205,8 +212,19 @@ class StepScreen(Screen):
     BINDINGS = [
         Binding("escape", "back", "Back"),
         Binding("b", "back", "Back", show=False),
-        Binding("n", "next", "Next"),
+        # Enter is the key people press to go on. It is priority so it beats
+        # the focused widget -- an OptionList binds Enter to "tick this row" --
+        # and it is a separate action from `n` so a screen where Enter already
+        # means something can decline it without losing Next altogether.
+        # Ticking is `space`, which SelectionList binds itself.
+        Binding("enter", "advance", "Next", priority=True),
+        Binding("n", "next", "Next", show=False),
     ]
+
+    #: False where Enter already has a better local meaning. Only the colour
+    #: table sets it: there Enter opens the hex field for the row you are on,
+    #: which is the whole interaction that screen exists for.
+    ENTER_NEXT = True
 
     def __init__(self) -> None:
         super().__init__()
@@ -227,9 +245,10 @@ class StepScreen(Screen):
         return iter(())
 
     def compose(self) -> ComposeResult:
-        position = STEPS.index(type(self)) + 1
+        steps = self.app.active_steps
+        position = steps.index(type(self)) + 1
         yield Static(
-            f"latexally run   {position}/{len(STEPS)}   {self.heading}",
+            f"latexally run   {position}/{len(steps)}   {self.heading}",
             classes="heading",
         )
         if self.hint:
@@ -243,7 +262,7 @@ class StepScreen(Screen):
 
     @property
     def first(self) -> bool:
-        return STEPS.index(type(self)) == 0
+        return self.app.active_steps.index(type(self)) == 0
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action == "back":
@@ -252,6 +271,13 @@ class StepScreen(Screen):
         if action == "next":
             # None greys it in the footer; False would drop it, and "why can I
             # not go on" is exactly the question the footer should answer.
+            return True if self._can_next else None
+        if action == "advance":
+            # In a text field Enter is the field's own -- submitting a typed
+            # path, committing a hex -- and a priority binding that stole it
+            # would make those fields impossible to use.
+            if isinstance(self.app.focused, Input) or not self.ENTER_NEXT:
+                return False
             return True if self._can_next else None
         return True
 
@@ -264,6 +290,10 @@ class StepScreen(Screen):
         if not self._can_next:
             return
         self.app.step(1)
+
+    def action_advance(self) -> None:
+        """Enter. Same step, separate action so screens can decline the key."""
+        self.action_next()
 
     def say(self, selector: str, text: str = "") -> None:
         """Update a note, and give its row back when there is nothing to say.
@@ -308,7 +338,75 @@ class ListStepScreen(StepScreen):
 
 
 # ---------------------------------------------------------------------- #
-# 1. scope
+# 1. local or choose
+# ---------------------------------------------------------------------- #
+
+
+class ModeScreen(StepScreen):
+    """Local, or pick from the corpus. Asked before anything is listed.
+
+    This is one question with two words in it, on a screen of its own, and both
+    facts are deliberate. It used to sit at the top of the scope screen above a
+    list of sixty-two directories -- so the list was the first thing read, the
+    question the second, and the arrows that were supposed to answer it went to
+    the list instead, which had taken the focus.
+
+    "Local" rather than "everything": the choice is about *where*, and
+    "everything" reads as a quantity, as though the other option converted less
+    of the same thing. Both options convert everything they cover.
+    """
+
+    heading = "Which material?"
+    hint = "The folder you started in is the usual answer."
+    AUTO_FOCUS = "#scope-mode"
+
+    def body(self) -> Iterator[Widget]:
+        here = self.app.here_scope
+        with Horizontal(classes="row"):
+            yield Static("Where  ↑ ↓", classes="gutter")
+            yield Choice(
+                Radio("", value=here is not None, name="local", id="local-radio"),
+                Radio(
+                    "choose — pick directories from anywhere in the corpus",
+                    value=here is None,
+                    name="choose",
+                ),
+                id="scope-mode",
+            )
+        yield Static("", id="mode-note", classes="note")
+
+    def on_mount(self) -> None:
+        here = self.app.here_scope
+        radio = self.query_one("#local-radio", Radio)
+        if here is None:
+            # Nothing to offer, and saying which directory is not the corpus is
+            # more use than a greyed row with no reason beside it.
+            radio.label = "local — unavailable: you are not inside the corpus"
+            radio.disabled = True
+        else:
+            radio.label = f"local — {here or 'the whole corpus'}"
+        self._sync()
+
+    @on(RadioSet.Changed, "#scope-mode")
+    def _changed(self) -> None:
+        self._sync()
+
+    def _sync(self) -> None:
+        pressed = self.query_one("#scope-mode", RadioSet).pressed_button
+        mode = pressed.name if pressed else "choose"
+        if self.app.here_scope is None:
+            mode = "choose"
+        self.app.scope_mode = mode
+        self.say(
+            "#mode-note",
+            "The next step lists what that folder holds; you can untick any of it."
+            if mode == "local"
+            else "The next step opens the corpus to browse.",
+        )
+
+
+# ---------------------------------------------------------------------- #
+# 2. scope
 # ---------------------------------------------------------------------- #
 
 
@@ -388,22 +486,6 @@ class ScopeScreen(ListStepScreen):
         self._rebuilding = False
 
     def body(self) -> Iterator[Widget]:
-        # The opening question, and for most runs the only one: the directory
-        # you started in is the assignment you mean. Asked rather than assumed,
-        # because "convert everything I am standing in" and "let me pick" are
-        # different intentions and the tool cannot tell them apart.
-        here = self.app.here_scope
-        with Horizontal(classes="row", id="here-line"):
-            yield Static("Run    ↑ ↓", classes="gutter")
-            yield Choice(
-                Radio("", value=bool(here), name="here", id="here-radio"),
-                Radio(
-                    "choose — pick from anywhere in the corpus",
-                    value=not here,
-                    name="choose",
-                ),
-                id="here-mode",
-            )
         with Horizontal(classes="row", id="scope-line"):
             yield Static("Scope  ← →", classes="gutter")
             yield Static("", id="scope-row", classes="rowtext")
@@ -425,27 +507,21 @@ class ScopeScreen(ListStepScreen):
 
     @property
     def _here(self) -> bool:
-        """Is the "everything here" answer the one currently chosen?"""
-        pressed = self.query_one("#here-mode", RadioSet).pressed_button
-        return bool(pressed and pressed.name == "here")
+        """Is this run scoped to the folder the runner was started from?
 
-    def _label_here(self) -> None:
-        """Name the folder in the radio, so the choice is concrete."""
-        here = self.app.here_scope
-        radio = self.query_one("#here-radio", Radio)
-        if here is None:
-            radio.label = "everything here — (not inside the corpus)"
-            radio.disabled = True
-            return
-        where = here or "the whole corpus"
-        radio.label = f"everything in {where}"
-
-    @on(RadioSet.Changed, "#here-mode")
-    def _here_changed(self) -> None:
-        self._apply_mode()
+        Answered on the previous step, not here: the question "which folder"
+        must be settled before a list of sixty-two directories is drawn, or the
+        list is the first thing read and the question the second.
+        """
+        return self.app.scope_mode == "local"
 
     def _apply_mode(self) -> None:
-        """Show the browsing controls only when the user asked to browse."""
+        """Show the browsing controls only when the previous step asked to browse.
+
+        In `local` mode the scope row and the path field are two rows of chrome
+        above an answer that is already correct, and on a short terminal they
+        are two rows the list does not get.
+        """
         here = self._here
         self.query_one("#scope-line").display = bool(self._scopes) and not here
         self.query_one("#scope-path-line").display = not here
@@ -472,7 +548,6 @@ class ScopeScreen(ListStepScreen):
             ]
         )
         self._rebuilding = False
-        self._label_here()
         self._render_rows()
         self._sync()
         if self._chosen:
@@ -829,6 +904,8 @@ class ColorsScreen(StepScreen):
     """
 
     heading = "Course colours"
+    #: Enter opens the hex field for the row you are on.
+    ENTER_NEXT = False
 
     BINDINGS = [
         Binding("u", "use", "Use proposed"),
@@ -1208,8 +1285,11 @@ class ReviewScreen(StepScreen):
     """
 
     heading = "Review"
-    #: `n` writes from here, so the footer must not keep calling it "Next".
-    BINDINGS = [Binding("n", "next", "Build")]
+    #: Enter writes from here, so the footer must not keep calling it "Next".
+    BINDINGS = [
+        Binding("enter", "advance", "Build", priority=True),
+        Binding("n", "next", "Build", show=False),
+    ]
 
     def container(self) -> Widget:
         return VerticalScroll(id="body")
@@ -1692,6 +1772,7 @@ class RevertScreen(Screen):
 # ---------------------------------------------------------------------- #
 
 STEPS: tuple[type[StepScreen], ...] = (
+    ModeScreen,
     ScopeScreen,
     DocumentsScreen,
     StandardsScreen,
@@ -1765,6 +1846,10 @@ class LatexAllyApp(App):
         #: from the same function, so the runner and the commands cannot
         #: disagree about what "here" means.
         self.here_scope = scope_from_cwd(profile)
+        #: "local" -- convert what `here_scope` names -- or "choose". Answered
+        #: on the first step, and it decides whether the scope picker is part
+        #: of this run at all.
+        self.scope_mode = "local" if self.here_scope is not None else "choose"
         self.should_run = False
         self.reports: list = []
         self.descriptions: dict = {}
@@ -1773,19 +1858,25 @@ class LatexAllyApp(App):
     def on_mount(self) -> None:
         self.push_screen(STEPS[0]())
 
+    #: Every run walks all of them. `local` mode does not skip the scope step:
+    #: it pre-answers it, and the screen still has to show what that answer
+    #: covers so any of it can be unticked.
+    active_steps = STEPS
+
     def step(self, delta: int) -> None:
         """Move one step. Back pops, so the screen behind keeps its state."""
+        steps = self.active_steps
         index = self._index + delta
         if index < 0:
             return
-        if index >= len(STEPS):
+        if index >= len(steps):
             self.start_build()
             return
         self._index = index
         if delta < 0:
             self.pop_screen()
         else:
-            self.push_screen(STEPS[index]())
+            self.push_screen(steps[index]())
 
     def start_build(self) -> None:
         self.config = replace(self.config, write=True)

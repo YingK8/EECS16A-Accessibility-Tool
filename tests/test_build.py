@@ -667,3 +667,46 @@ def test_enumitem_shortlabels_and_series_are_reported(tmp_path):
 
     assert [f.line for f in findings] == [1, 4, 7], "[nosep] is a bare keyword"
     assert all(f.severity == Severity.ERROR for f in findings)
+
+
+def test_the_baseline_survives_wrappers_in_the_shared_question_files(
+    profile, tmp_path
+):
+    r"""Found in a real run: every baseline of sp26/hw/10 died.
+
+    The baseline is the untouched driver, compiled to measure what conversion
+    cost. It shares the mirror with the converted one, and `apply_descriptions`
+    writes `\described` / `Described` into the SHARED question files -- which
+    the baseline \inputs too. Those files are not the driver, so the baseline
+    picked up the wrappers while loading none of the packages that define them:
+    "Environment Described undefined", then every enumerate in the document
+    ending in the wrong place, then no baseline PDF and no pixel diff at all.
+
+    The wrappers must therefore be *defined away* in the baseline, not avoided.
+    They add no visual output of their own, so a transparent definition renders
+    exactly the page the original source did -- which is the page the diff has
+    to measure against.
+    """
+    from latexally.build import BASELINE_SHIM, inject
+    from latexally.texlex import TexSource
+
+    driver = tmp_path / "d.tex"
+    driver.write_text(
+        "\\documentclass{article}\n"
+        "\\usepackage{graphicx}\n"
+        "\\begin{document}\n"
+        "\\input{q}\n"
+        "\\end{document}\n"
+    )
+    baseline = inject(TexSource.from_path(driver), list(BASELINE_SHIM))
+
+    # Every wrapper the apply step can write has a definition here, or the
+    # baseline dies on the first one that does not.
+    for name in ("described", "LongDescription", "Described", "Decorative"):
+        assert name in baseline, f"{name} is not defined away in the baseline"
+    # In the preamble, after \documentclass -- a \newcommand before it is an
+    # error in its own right.
+    assert baseline.index("\\documentclass") < baseline.index("\\providecommand")
+    assert baseline.index("\\providecommand") < baseline.index("\\begin{document}")
+    # And the document body is untouched.
+    assert "\\input{q}" in baseline
