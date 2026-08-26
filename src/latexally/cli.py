@@ -764,8 +764,10 @@ def _report_table(reports: list) -> Table:
             str(report.bookmarks if report.bookmarks is not None else "—"),
             str(report.figures if report.figures is not None else "—"),
             f"[red]{len(report.errors)}[/red]" if report.errors else "0",
-            f"[yellow]{len(report.tagpdf_warnings)}[/yellow]"
-            if report.tagpdf_warnings
+            # Draft alt findings count here too, or a run whose every figure
+            # says nothing reports zero of everything and reads as clean.
+            f"[yellow]{len(report.tagpdf_warnings) + len(report.alt_warnings)}[/yellow]"
+            if report.tagpdf_warnings or report.alt_warnings
             else "0",
             diff,
         )
@@ -813,7 +815,16 @@ def _report_table(reports: list) -> Table:
 @click.option(
     "--placeholders",
     is_flag=True,
-    help="Mark undescribed figures in the source. Strict mode makes them build-failing.",
+    help="Mark undescribed figures in the source. Build-failing unless --draft.",
+)
+@click.option(
+    "--draft",
+    is_flag=True,
+    help=(
+        "Warn about undescribed figures instead of failing the build. The PDF "
+        "is NOT conformant: it ships figures whose /Alt is a placeholder or a "
+        "file name. For looking at a page, never for handing out."
+    ),
 )
 @pass_context
 def build(
@@ -828,6 +839,7 @@ def build(
     question_tags: bool,
     house_colors: bool,
     placeholders: bool,
+    draft: bool,
 ) -> None:
     """Convert and build assignments. This is what `latexally run` runs.
 
@@ -856,6 +868,12 @@ def build(
         config.colors = ColorChoice(mode="house")
     if placeholders:
         config.alt = AltChoice(mode="placeholders", strict=config.alt.strict)
+    if draft:
+        config.alt = replace(config.alt, strict=False)
+        ctx.console.print(
+            "[yellow]draft:[/yellow] undescribed figures will be reported and "
+            "the build allowed to stand. The PDF will not be conformant."
+        )
 
     if not config.assignments:
         click.echo(
@@ -910,6 +928,7 @@ def build(
                 for path in descriptions.get("worklogs", [])[:5]:
                     console.print(f"  [dim]{escape(path)}[/dim]")
             _print_failures(console, failures)
+            _print_draft_warnings(console, reports)
             _report_substitutions(console, reports)
             _name_the_log(console, config)
     sys.exit(EXIT_FINDINGS if failures else EXIT_OK)
@@ -957,6 +976,29 @@ def _name_the_log(console: Console, config) -> None:
     saved = config.output.root / "build-log.txt"
     if saved.is_file():
         console.print(f"\n[dim]written to {escape(show_path(saved))}[/dim]")
+
+
+def _print_draft_warnings(console: Console, reports: list) -> None:
+    """Name the figures a draft build let through.
+
+    A draft is `ok`, so it never reaches `_print_failures`. Without this the
+    terminal shows two ticks and a count of five outstanding descriptions, and
+    nothing says the PDF it just wrote ships figures announcing a placeholder.
+    """
+    drafted = [report for report in reports if report.alt_warnings]
+    if not drafted:
+        return
+    total = sum(len(report.alt_warnings) for report in drafted)
+    console.print(
+        f"\n[yellow]draft:[/yellow] [bold]{total}[/bold] figure(s) in the built "
+        "PDF(s) say nothing — their /Alt is a placeholder or a file name. "
+        "Not conformant; `latexally check` fails on it."
+    )
+    for report in drafted:
+        for line in report.alt_warnings[:5]:
+            console.print(f"  [dim]{report.variant}:[/dim] {escape(line)}")
+        if len(report.alt_warnings) > 5:
+            console.print(f"  [dim]…{len(report.alt_warnings) - 5} more[/dim]")
 
 
 def _print_failures(console: Console, failures: list) -> None:
@@ -1235,6 +1277,7 @@ def run_command(ctx: Context, config_path: Path | None, output: Path | None) -> 
 
     failures = [report for report in reports if not report.ok]
     _print_failures(console, failures)
+    _print_draft_warnings(console, reports)
     _report_substitutions(console, reports)
     _name_the_log(console, config)
     sys.exit(EXIT_FINDINGS if failures else EXIT_OK)

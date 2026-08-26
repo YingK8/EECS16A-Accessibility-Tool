@@ -763,3 +763,50 @@ def test_a_changed_question_reaches_the_next_build(profile, tmp_path):
     mirrored.write_text("\\described{<<TODO:x>>}{second version}\n")
     mirror_dependencies(driver, assignment, target, mirror_root)
     assert mirrored.read_text() == "second version\n"
+
+
+def test_draft_warns_about_silent_figures_instead_of_dropping_them(profile, tmp_path):
+    """A downgrade to a warning is not a downgrade to silence.
+
+    `_alt_text_failures` used to return nothing at all when strict was off, so
+    "warn instead of fail" meant the findings vanished -- and a PDF whose every
+    figure announces a placeholder reported zero errors, zero warnings, and a
+    tick. The findings are the same either way; only where they are filed
+    changes.
+    """
+    from latexally.build import BuildReport, write_report
+    from latexally.run import Output, RunConfig
+
+    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config.output.root.mkdir(parents=True)
+    # `built` is derived from having a PDF, so point at a real one.
+    pdf = tmp_path / "out" / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n")
+    report = BuildReport(assignment="sem/hw/1", variant="problem", pdf=pdf)
+    report.ok = True  # a draft build stands, by design
+    report.alt_warnings = [
+        "ALLY-PDF-003: Figure /Alt is an unfilled placeholder: '<<TODO:img-1>>'"
+    ]
+
+    path = write_report(config, [report])
+    text = path.read_text()
+    assert "DRAFT" in text, "an ok report with warnings must still be listed"
+    assert "<<TODO:img-1>>" in text
+    assert "1 figure(s) say nothing" in text
+
+
+def test_a_clean_build_is_still_reported_without_a_draft_section(profile, tmp_path):
+    """And the report does not grow a section for runs that have nothing."""
+    from latexally.build import BuildReport, write_report
+    from latexally.run import Output, RunConfig
+
+    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config.output.root.mkdir(parents=True)
+    pdf = tmp_path / "out" / "doc.pdf"
+    pdf.write_bytes(b"%PDF-1.7\n")
+    report = BuildReport(assignment="sem/hw/1", variant="problem", pdf=pdf)
+    report.ok = True
+
+    text = write_report(config, [report]).read_text()
+    assert "DRAFT" not in text
+    assert "sem/hw/1" in text

@@ -382,7 +382,7 @@ _ALT_RULES = ("ALLY-PDF-002", "ALLY-PDF-003", "ALLY-PDF-004", "ALLY-PDF-040", "A
 
 
 def _alt_text_failures(pdf: Path, config: RunConfig) -> list[str]:
-    """Alt-text errors in the built PDF, as build errors, under strict mode.
+    """Alt-text problems in the built PDF: errors under strict, else warnings.
 
     ``check_pdf_structure`` used to be reachable only from ``latexally check``,
     so a build could emit a PDF whose every figure was described by its own file
@@ -390,8 +390,13 @@ def _alt_text_failures(pdf: Path, config: RunConfig) -> list[str]:
     reached LaTeX, where it guards a placeholder blocklist that nothing in this
     corpus triggers. Checking the artefact here is what makes the setting mean
     what its name says.
+
+    Non-strict returns the same list; the caller files it under warnings. It
+    used to return nothing at all, which is not a downgrade to a warning but a
+    downgrade to silence -- and silence about a figure whose /Alt is its own
+    file name is the exact failure this package exists to prevent.
     """
-    if not config.alt.strict or pdf is None or not pdf.is_file():
+    if pdf is None or not pdf.is_file():
         return []
     from ..check.rules import Severity, check_pdf_structure
 
@@ -1041,6 +1046,9 @@ class BuildReport:
     log: Path | None = None
     errors: list[str] = field(default_factory=list)
     tagpdf_warnings: list[str] = field(default_factory=list)
+    #: Alt-text findings in a draft build. Errors when `alt.strict`, these when
+    #: not -- never dropped, because a downgrade to silence is not a warning.
+    alt_warnings: list[str] = field(default_factory=list)
     pages: int | None = None
     bookmarks: int | None = None
     figures: int | None = None
@@ -1127,6 +1135,7 @@ class BuildReport:
             "log": str(self.log) if self.log else None,
             "errors": self.errors,
             "tagpdf_warnings": self.tagpdf_warnings,
+            "alt_warnings": self.alt_warnings,
             "pages": self.pages,
             "bookmarks": self.bookmarks,
             "figures": self.figures,
@@ -1515,7 +1524,15 @@ def _compile_assignment(
     if original_pdf is not None:
         report.pixel_diff, report.diff_note = compare_pdfs(original_pdf, pdf)
 
-    report.errors += _alt_text_failures(pdf, config)
+    alt_problems = _alt_text_failures(pdf, config)
+    if config.alt.strict:
+        report.errors += alt_problems
+    else:
+        # Draft: the build stands, and every figure that says nothing is still
+        # named. `report.ok` therefore stays true, which is the whole point of
+        # the mode -- and the count is on the summary table so it cannot pass
+        # for a clean run.
+        report.alt_warnings += alt_problems
 
     report.ok = report.pdf is not None and not report.errors
     if report.pdf is None and not report.errors:
@@ -1825,21 +1842,25 @@ def write_report(config: RunConfig, reports: list[BuildReport]) -> Path | None:
         ]
 
     for report in reports:
-        if report.ok:
+        # `report.ok` is not the condition. A draft build is ok by design and
+        # still has figures that say nothing; skipping it here is what made the
+        # downgrade to a warning a downgrade to silence.
+        if report.ok and not report.alt_warnings:
             continue
-        lines += [
-            "",
-            f"{report.assignment} ({report.variant}) "
-            + (
-                f"built, with {len(report.errors)} error(s) in the log"
-                if report.built
-                else "failed - no PDF"
-            ),
-        ]
+        if report.ok:
+            headline = (
+                f"built, DRAFT: {len(report.alt_warnings)} figure(s) say nothing"
+            )
+        elif report.built:
+            headline = f"built, with {len(report.errors)} error(s) in the log"
+        else:
+            headline = "failed - no PDF"
+        lines += ["", f"{report.assignment} ({report.variant}) {headline}"]
         if report.note:
             lines.append(f"  {report.note}")
         lines += [f"  {line}" for line in report.errors]
         lines += [f"  tagpdf: {line}" for line in report.tagpdf_warnings[:10]]
+        lines += [f"  alt (draft): {line}" for line in report.alt_warnings[:10]]
         if report.pdf:
             lines.append(f"  pdf: {report.pdf}")
         if report.log:

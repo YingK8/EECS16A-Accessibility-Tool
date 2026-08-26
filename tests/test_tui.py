@@ -1336,11 +1336,14 @@ async def test_arrows_choose_between_options_rather_than_shopping(
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, AltScreen)
         assert app.focused is app.screen.query_one("#alt-mode")
-        assert app.config.alt.mode == "placeholders"
+        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", True)
+        # Three options now: on, draft, off. Each arrow moves the value by one.
+        await press(pilot, "down")
+        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", False)
         await press(pilot, "down")
         assert app.config.alt.mode == "off"
         await press(pilot, "up")
-        assert app.config.alt.mode == "placeholders"
+        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", False)
 
 
 async def test_the_write_mode_is_where_the_output_cursor_starts(
@@ -1664,3 +1667,41 @@ async def test_review_says_nothing_about_markup_when_none_is_written(
 
         assert app.screen.query_one("#alt-markup").render().plain == ""
         assert "your .tex files are not edited" in visible(app)
+
+
+async def test_draft_is_offered_and_says_what_it_costs(profile: Profile):
+    """It was withheld, on the grounds that turning strict off lets a
+    placeholder reach a reader as if it were a description.
+
+    That is true, and the answer to it is to state the cost rather than remove
+    the choice — the setting already existed and there was simply no way to
+    reach it.
+    """
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await scope_all_homework(pilot)
+        await walk_to(pilot, AltScreen)
+        assert app.config.alt.strict is True
+
+        radio = app.screen.query_one("#alt-mode", RadioSet)
+        next(b for b in radio.query("RadioButton") if b.name == "draft").value = True
+        await pilot.pause()
+
+        assert app.config.alt.mode == "placeholders", "draft still marks figures"
+        assert app.config.alt.strict is False
+        shown = visible(app)
+        assert "NOT conformant" in shown
+        assert "veraPDF" in shown, "the cost has to be on the control"
+
+
+async def test_off_still_means_no_figures_at_all(profile: Profile):
+    """Three options now, and the third must not have drifted."""
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await scope_all_homework(pilot)
+        await walk_to(pilot, AltScreen)
+        radio = app.screen.query_one("#alt-mode", RadioSet)
+        next(b for b in radio.query("RadioButton") if b.name == "off").value = True
+        await pilot.pause()
+        assert app.config.alt.mode == "off"
+        assert app.config.alt.scans is False

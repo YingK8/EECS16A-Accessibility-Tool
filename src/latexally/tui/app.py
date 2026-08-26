@@ -1167,18 +1167,30 @@ class AltScreen(StepScreen):
         # `scans`, not `injects`: the shipped default is the old "worklog" tier,
         # which no longer has a screen of its own but does mean "look at
         # figures", so it opens here as on rather than silently as off.
-        on = self.config.alt.scans
+        alt = self.config.alt
         with Horizontal(classes="row"):
             yield Static("Alt    ↑ ↓", classes="gutter")
             yield Choice(
                 Radio(
-                    "on — mark every undescribed figure in the .tex and list it",
-                    value=on,
+                    "on — mark every undescribed figure, and refuse to build "
+                    "until each one is filled in",
+                    value=alt.scans and alt.strict,
                     name="on",
                 ),
-                Radio("off — skip figures entirely", value=not on, name="off"),
+                Radio(
+                    "draft — mark them, report them, build anyway. The PDF is "
+                    "NOT conformant",
+                    value=alt.scans and not alt.strict,
+                    name="draft",
+                ),
+                Radio(
+                    "off — skip figures entirely",
+                    value=not alt.scans,
+                    name="off",
+                ),
                 id="alt-mode",
             )
+        yield Static("", id="alt-draft", classes="note")
         yield Static(ALT_TEMPLATE_WARNING, id="alt-warning", classes="detail")
 
     def on_mount(self) -> None:
@@ -1190,13 +1202,30 @@ class AltScreen(StepScreen):
 
     def _sync(self) -> None:
         pressed = self.query_one("#alt-mode", RadioSet).pressed_button
-        on = pressed.name == "on" if pressed else self.config.alt.scans
-        self.query_one("#alt-warning").display = on
-        # `strict` is not offered. Turning it off is what lets a placeholder
-        # reach a reader as if it were a description, and no screen should make
-        # that one keystroke away.
+        mode = pressed.name if pressed else ("on" if self.config.alt.scans else "off")
+        scans = mode in ("on", "draft")
+        self.query_one("#alt-warning").display = scans
+        # `draft` is offered, and says what it costs on the control itself.
+        # It was withheld on the grounds that turning strict off is what lets a
+        # placeholder reach a reader as if it were a description -- true, and
+        # the answer to it is that the cost is stated rather than the choice
+        # removed. What draft must never be is quiet: every figure that says
+        # nothing is still named in the report, the build is still marked, and
+        # `latexally check` still fails on the artefact.
+        self.say(
+            "#alt-draft",
+            ""
+            if mode != "draft"
+            else (
+                "Draft builds a PDF with figures that say nothing — their /Alt "
+                "is a placeholder or a file name. It passes a naive 'every "
+                "Figure has /Alt' check and veraPDF, so it can be mistaken for "
+                "a conforming document. For looking at a page, never for "
+                "handing out."
+            ),
+        )
         self.config.alt = AltChoice(
-            mode="placeholders" if on else "off", strict=True
+            mode="placeholders" if scans else "off", strict=mode != "draft"
         )
 
 
