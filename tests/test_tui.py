@@ -1533,3 +1533,52 @@ async def test_enter_moves_on_and_space_ticks(profile: Profile, corpus: Path, mo
         await press(pilot, "enter")
         await settle(pilot)
         assert isinstance(app.screen, DocumentsScreen)
+
+
+async def test_a_local_folder_with_nothing_buildable_is_not_a_dead_end(
+    profile: Profile, corpus: Path, monkeypatch
+):
+    r"""Reported as "TUI stuck and not responding on 2/8".
+
+    Starting in a folder of `\input` fragments -- the shared question bank,
+    where most figures live -- the scan finds no document. The list is then
+    empty, Next is disabled, `a` and `c` have nothing to act on, and in local
+    mode the scope row and the path field are hidden. Nothing on screen could
+    widen the scope and nothing said `esc` was the way out, so it read exactly
+    like a hung program.
+
+    An empty local scan now hands the browsing controls back and says so.
+    """
+    fragments = corpus / "sem" / "bank"
+    fragments.mkdir(parents=True)
+    (fragments / "q_only.tex").write_text("\\begin{tikzpicture}\\end{tikzpicture}\n")
+    monkeypatch.chdir(fragments)
+
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert app.scope_mode == "local"
+        await advance(pilot)
+        await settle(pilot)
+
+        assert app.screen.query_one("#assignments", SelectionList).option_count == 0
+        assert not app.screen._can_next
+        # Both ways out are on screen, and named.
+        assert app.screen.query_one("#scope-path-line").display
+        assert "esc to go back" in visible(app)
+        # And the key that walks the scopes comes back with the row.
+        assert app.screen.check_action("scope", ()) is True
+
+
+async def test_the_reason_next_is_disabled_says_which_situation_it_is(
+    profile: Profile,
+):
+    """"Tick at least one" is useless advice when there is nothing to tick."""
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await open_scope(pilot)
+        await set_scope(pilot, "sem/hw")
+        assert "Tick at least one directory" in visible(app)
+
+        await set_scope(pilot, "nowhere-at-all")
+        assert "Nothing here to convert" in visible(app)

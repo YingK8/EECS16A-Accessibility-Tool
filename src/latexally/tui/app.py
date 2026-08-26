@@ -457,10 +457,13 @@ class ScopeScreen(ListStepScreen):
             typing = isinstance(self.app.focused, Input)
             if typing or not self._scopes:
                 return False
+            # Keyed on whether the row is actually on screen, not on the mode:
+            # a local scan that finds nothing buildable puts the row back, and
+            # the key that walks it has to come back with it.
             try:
-                return False if self._here else True
+                return True if self.query_one("#scope-line").display else False
             except NoMatches:
-                # Called once before the radio is mounted.
+                # Called once before the row is mounted.
                 return True
         return super().check_action(action, parameters)
 
@@ -509,17 +512,25 @@ class ScopeScreen(ListStepScreen):
         """
         return self.app.scope_mode == "local"
 
-    def _apply_mode(self) -> None:
-        """Show the browsing controls only when the previous step asked to browse.
+    def _apply_mode(self, browsing: bool | None = None) -> None:
+        """Show the browsing controls only when they are of use.
 
         In `local` mode the scope row and the path field are two rows of chrome
         above an answer that is already correct, and on a short terminal they
         are two rows the list does not get.
+
+        ``browsing`` forces them back on. It is passed when a local scan comes
+        back with nothing buildable, because that screen was otherwise a dead
+        end: an empty list, a disabled Next, `a` and `c` with nothing to act
+        on, and no control on screen able to widen the scope. It looked exactly
+        like a hung program.
         """
-        here = self._here
+        here = self._here if browsing is None else not browsing
         self.query_one("#scope-line").display = bool(self._scopes) and not here
         self.query_one("#scope-path-line").display = not here
         self.refresh_bindings()
+        if browsing is not None:
+            return
         if here:
             self.scan(self.app.here_scope or "")
         elif not self._scopes:
@@ -669,6 +680,11 @@ class ScopeScreen(ListStepScreen):
                 f"{len(buildable)} director{_plural(len(buildable))} — "
                 + ", ".join(f"{len(items)} {kind}" for kind, items in grouped.items())
             )
+        if not buildable and self._here:
+            # A dead end otherwise: nothing to tick and nothing on screen that
+            # could widen the scope. Give the controls back rather than leave
+            # the only way out unmentioned.
+            self._apply_mode(browsing=True)
         self.refresh_bindings()
         self.say("#scope-note", "\n".join(notes))
         self.refresh_list()
@@ -749,10 +765,18 @@ class ScopeScreen(ListStepScreen):
         )
         self.say("#elsewhere", f"also ticked: {shown}" if elsewhere else "")
         self._render_rows()
-        self.set_next(
-            bool(self._chosen),
-            "Tick at least one directory — nothing is selected yet.",
-        )
+        # Two different situations, and one message for both was misleading:
+        # "tick at least one" is useless advice when there is nothing to tick.
+        if self._chosen:
+            reason = ""
+        elif self._showing:
+            reason = "Tick at least one directory — nothing is selected yet."
+        else:
+            reason = (
+                "Nothing here to convert. Type another path above, or press "
+                "esc to go back and choose."
+            )
+        self.set_next(bool(self._chosen), reason)
 
 
 # ---------------------------------------------------------------------- #
