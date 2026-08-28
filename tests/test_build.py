@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -117,7 +118,9 @@ def test_mirror_leaves_the_corpus_byte_identical(
 ):
     """The promise the default mode makes, checked by hashing every file."""
     before = _tree_digest(corpus)
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     materialise(assignment, config, profile, lines=LINES)
     assert _tree_digest(corpus) == before
 
@@ -137,7 +140,9 @@ def test_rewrites_land_in_the_mirror_and_never_in_the_corpus(
     body.write_text("\\begin{document}\n\\[\nx\n\\] \\\\\nHello.\n\\end{document}\n")
     before = _tree_digest(corpus)
 
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     prepared = materialise(assignment, config, profile, lines=LINES)
     counts = rewrite_incompatibilities(prepared)
 
@@ -155,7 +160,9 @@ def test_the_unconverted_baseline_is_not_rewritten(
 
     body = corpus / "sem" / "hw" / "3" / "body.tex"
     body.write_text("\\begin{document}\n\\[\nx\n\\] \\\\\nHello.\n\\end{document}\n")
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     prepared = materialise(assignment, config, profile, lines=LINES)
     rewrite_incompatibilities(prepared)
 
@@ -197,7 +204,9 @@ def test_a_parallel_run_reports_in_the_order_it_was_asked_for(
 def test_mirror_writes_a_converted_driver(
     corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path
 ):
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     prepared = materialise(assignment, config, profile, lines=LINES)
     assert prepared.driver.is_file()
     assert prepared.driver.read_text().startswith("\\DocumentMetadata{")
@@ -214,7 +223,9 @@ def test_mirror_carries_relative_dependencies_to_the_same_offsets(
     directory, so a mirror carrying only the assignment's own files dies on line
     two no matter what the search path says.
     """
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     prepared = materialise(assignment, config, profile, lines=LINES)
     assert (prepared.work_dir / ".." / ".." / ".." / "shared.sty").resolve().is_file()
 
@@ -228,7 +239,9 @@ def test_mirror_search_path_puts_the_mirror_first(
     ``\\input{body}`` found the ORIGINAL body.tex and the mirrored one was never
     read -- a conversion that appeared to work and changed nothing.
     """
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     prepared = materialise(assignment, config, profile, lines=LINES)
     assert prepared.search_path[0] == prepared.work_dir
     source_dir = (corpus / assignment.path).resolve()
@@ -488,7 +501,9 @@ def test_a_second_variant_does_not_clobber_the_first(
         driver="sol3.tex",
         drivers={"solution": "sol3.tex", "problem": "prob3.tex"},
     )
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     both = frozenset(assignment.drivers.values())
     for driver in ("sol3.tex", "prob3.tex"):
         materialise(
@@ -777,7 +792,9 @@ def test_draft_warns_about_silent_figures_instead_of_dropping_them(profile, tmp_
     from latexally.build import BuildReport, write_report
     from latexally.run import Output, RunConfig
 
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     config.output.root.mkdir(parents=True)
     # `built` is derived from having a PDF, so point at a real one.
     pdf = tmp_path / "out" / "doc.pdf"
@@ -800,7 +817,9 @@ def test_a_clean_build_is_still_reported_without_a_draft_section(profile, tmp_pa
     from latexally.build import BuildReport, write_report
     from latexally.run import Output, RunConfig
 
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     config.output.root.mkdir(parents=True)
     pdf = tmp_path / "out" / "doc.pdf"
     pdf.write_bytes(b"%PDF-1.7\n")
@@ -830,7 +849,9 @@ def test_no_baseline_means_no_original_in_the_mirror(profile, tmp_path):
     profile = replace(profile, corpus=replace(profile.corpus, root=corpus))
     assignment = Assignment(path="sem/hw/1", kind="homework", driver="prob1.tex")
 
-    config = RunConfig(output=Output(root=tmp_path / "out"), write=True)
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
     prepared = materialise(assignment, config, profile, lines=[])
     assert prepared.original is None
     assert not list((tmp_path / "out" / "tex").rglob("*-original.tex"))
@@ -838,3 +859,233 @@ def test_no_baseline_means_no_original_in_the_mirror(profile, tmp_path):
     config.baseline = True
     prepared = materialise(assignment, config, profile, lines=[])
     assert prepared.original is not None and prepared.original.is_file()
+
+
+def test_in_place_puts_the_pdf_beside_the_document(
+    corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path, monkeypatch
+):
+    """The reported failure: in-place selected, PDF still landed in ally-out.
+
+    `in-place` names a destination and nothing else, so the one thing it has to
+    do is send the finished document to the assignment's own directory. Asserted
+    by recording what `compile_document` is handed, which is the only place the
+    destination is decided.
+    """
+    import latexally.build as build_module
+    from latexally.build import BuildReport
+
+    seen: dict[str, Path] = {}
+
+    def fake_compile(driver, *, work_dir, output_dir, profile, jobname, **kwargs):
+        seen["output_dir"] = Path(output_dir)
+        pdf = Path(output_dir) / f"{jobname}.pdf"
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        pdf.write_bytes(b"%PDF-1.7\n")
+        return pdf
+
+    monkeypatch.setattr(build_module, "compile_document", fake_compile)
+    monkeypatch.setattr(build_module, "inspect_pdf", lambda p: {
+        "pages": 1, "bookmarks": 0, "figures": 0
+    })
+    monkeypatch.setattr(build_module, "_alt_text_failures", lambda p, c: [])
+
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="in-place"), write=True
+    )
+    # What `build_assignment` does before compiling: the whole output moves to
+    # the assignment's own folder, not just the PDF.
+    config = replace(
+        config, output=config.output.for_assignment(profile.corpus.root, assignment.path)
+    )
+    prepared = materialise(assignment, config, profile, lines=LINES)
+    build_module._compile_assignment(
+        prepared, BuildReport(assignment=assignment.path), assignment,
+        config, profile, "solution", False,
+    )
+
+    expected = (corpus / "sem" / "hw" / "3").absolute()
+    assert seen["output_dir"] == expected, (
+        "in-place must write the PDF into the assignment folder itself -- not "
+        "into a pdf/ of its own, and not inside accessible/"
+    )
+    assert (tmp_path / "out") not in seen["output_dir"].parents
+
+
+def test_in_place_moves_every_artifact_not_only_the_pdf(
+    corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path
+):
+    """The reported failure: in-place selected, the .tex still went to ally-out.
+
+    `in-place` had moved the PDF and nothing else, so an assignment's converted
+    sources and logs stayed in the output tree while its PDF sat beside the
+    original -- the one arrangement nobody asked for.
+    """
+    out = Output(root=tmp_path / "out", write_mode="in-place")
+    moved = out.for_assignment(corpus, "sem/hw/3")
+    here = (corpus / "sem" / "hw" / "3" / "accessible").absolute()
+
+    assert moved.root == here
+    # The PDF is the deliverable and sits in the assignment folder itself.
+    assert moved.pdf_dir() == (corpus / "sem" / "hw" / "3").absolute()
+    # `accessible/` IS the converted-source tree: no `tex/` level under it.
+    assert moved.tex_dir() == here
+    for directory in (moved.log_dir(), moved.math_dir(), moved.baseline_dir()):
+        assert directory.is_relative_to(here), directory
+
+    # Descriptions are the exception, and deliberately: one description serves
+    # every assignment that uses the figure, so a copy per assignment folder
+    # would make the shared ones ambiguous.
+    assert moved.worklog_dir() == out.worklog_dir()
+    assert not moved.worklog_dir().is_relative_to(here)
+
+
+def test_mirror_leaves_every_artifact_in_the_output_tree(
+    corpus: Path, tmp_path: Path
+):
+    """The other mode is unchanged; `for_assignment` is a no-op for it."""
+    out = Output(root=tmp_path / "out", write_mode="mirror")
+    assert out.for_assignment(corpus, "sem/hw/3") is out
+
+
+def test_mirror_puts_the_pdf_in_the_output_tree(
+    corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path, monkeypatch
+):
+    """The other half of the same switch, so neither can drift alone."""
+    import latexally.build as build_module
+    from latexally.build import BuildReport
+
+    seen: dict[str, Path] = {}
+    monkeypatch.setattr(build_module, "compile_document", lambda driver, *, work_dir,
+        output_dir, profile, jobname, **kw: (
+            seen.__setitem__("output_dir", Path(output_dir)),
+            Path(output_dir).mkdir(parents=True, exist_ok=True),
+            (Path(output_dir) / f"{jobname}.pdf").write_bytes(b"%PDF-1.7\n"),
+            Path(output_dir) / f"{jobname}.pdf",
+        )[-1])
+    monkeypatch.setattr(build_module, "inspect_pdf", lambda p: {
+        "pages": 1, "bookmarks": 0, "figures": 0
+    })
+    monkeypatch.setattr(build_module, "_alt_text_failures", lambda p, c: [])
+
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
+    prepared = materialise(assignment, config, profile, lines=LINES)
+    build_module._compile_assignment(
+        prepared, BuildReport(assignment=assignment.path), assignment,
+        config, profile, "solution", False,
+    )
+    assert seen["output_dir"] == config.output.pdf_dir()
+
+
+# ---------------------------------------------------------------------- #
+# a written description has to reach the PDF, whatever else the run is doing
+# ---------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("mode", ["worklog", "caption", "placeholders"])
+def test_a_written_description_is_applied_in_every_mode(tmp_path: Path, mode: str):
+    r"""The bug this pins, because it was silent and it read as success.
+
+    ``apply_descriptions`` was gated on ``config.alt.touches_sources``, and
+    before that on ``config.alt.scans``. Both are real properties and neither is
+    the right question, so between them ``\begin{Described}`` was emitted in
+    exactly one of the four modes:
+
+    ==============  =======  ===============  =======================
+    mode            scans    touches_sources  what happened
+    ==============  =======  ===============  =======================
+    ``worklog``     True     False            returned at the gate
+    ``caption``     False    True             reached the wrapper with
+                                              an empty ``entries``
+    ``placeholders``True     True             the only one that worked
+    ``off``         False    False            correct, by accident
+    ==============  =======  ===============  =======================
+
+    Neither failure produced an error. ``describe_run`` reports the worklog's
+    own state, so a build announced "3 done, 0 outstanding" while shipping a
+    PDF whose figures carried no description at all -- measured on
+    fa26/dis/00B: three descriptions written, zero ``Figure`` elements in the
+    artefact, and ``check --pdf`` clean, because a checker cannot see a figure
+    that produced no element.
+
+    Applying a description someone already wrote is not a mode. ``off`` is the
+    only answer to "do nothing here".
+    """
+    from latexally.build import Prepared, apply_descriptions
+    from latexally.run import AltChoice, Output, RunConfig
+
+    root = tmp_path / "out"
+    work = root / "tex"
+    work.mkdir(parents=True)
+    figure = (
+        "\\begin{figure}\n"
+        "\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}\n"
+        "\\caption{A line.}\n"
+        "\\end{figure}\n"
+    )
+    driver = work / "sol1.tex"
+    driver.write_text(f"\\documentclass{{article}}\n\\begin{{document}}\n{figure}\\end{{document}}\n")
+
+    profile = Profile(name="test", corpus=CorpusScope(root=work, include=("**/*.tex",)))
+    config = RunConfig(
+        alt=AltChoice(mode=mode),
+        output=Output(root=root, write_mode="mirror"),
+        write=True,
+    )
+    prepared = Prepared(
+        assignment=Assignment(path="sem/hw/1", kind="homework", driver="sol1.tex", tex_files=1),
+        driver=driver,
+        work_dir=work,
+    )
+
+    # The worklog, written by hand the way course staff fill one in. Written
+    # directly rather than by scanning first and re-running: `placeholders`
+    # wraps an undescribed figure on its first pass, and the second pass then
+    # correctly skips it as already described. That idempotency is right and it
+    # is not what is under test here.
+    from latexally.scan import scan_file
+
+    identity = scan_file(driver, profile)[0].id
+    worklog = config.output.worklog_dir() / "test_fig_alt_texts.yaml"
+    worklog.parent.mkdir(parents=True, exist_ok=True)
+    worklog.write_text(
+        f"{identity}:\n"
+        f"  at: {driver.name}:2\n"
+        f"  alt_text: A rising diagonal line.\n"
+    )
+
+    assert apply_descriptions(prepared, config, profile) >= 1, (
+        f"{mode}: a description that is written must reach the document"
+    )
+    assert "\\begin{Described}" in driver.read_text()
+
+
+def test_off_is_still_the_way_to_do_nothing(tmp_path: Path):
+    """The one mode that must not touch the mirror, so the gate stays meaningful."""
+    from latexally.build import Prepared, apply_descriptions
+    from latexally.run import AltChoice, Output, RunConfig
+
+    work = tmp_path / "out" / "tex"
+    work.mkdir(parents=True)
+    driver = work / "sol1.tex"
+    before = (
+        "\\documentclass{article}\n\\begin{document}\n"
+        "\\begin{figure}\\begin{tikzpicture}\\draw (0,0) -- (1,1);\\end{tikzpicture}"
+        "\\caption{A line.}\\end{figure}\n\\end{document}\n"
+    )
+    driver.write_text(before)
+
+    profile = Profile(name="test", corpus=CorpusScope(root=work, include=("**/*.tex",)))
+    config = RunConfig(
+        alt=AltChoice(mode="off"),
+        output=Output(root=tmp_path / "out", write_mode="mirror"),
+        write=True,
+    )
+    prepared = Prepared(
+        assignment=Assignment(path="sem/hw/1", kind="homework", driver="sol1.tex", tex_files=1),
+        driver=driver,
+        work_dir=work,
+    )
+    assert apply_descriptions(prepared, config, profile) == 0
+    assert driver.read_text() == before

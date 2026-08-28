@@ -160,9 +160,16 @@
       \accessrecordtitle
       \accessbookmarkonly{1}{\title}%
       \tagpdfparaOff
-      \begin{Decorative}\hrule height6pt\end{Decorative} \vskip .7em
+      \begin{DecorativeBlock}\hrule height6pt\end{DecorativeBlock} \vskip .7em
       \tagstructbegin{tag=P}\tagmcbegin{tag=P}%
-      \makebox[1.3in][l]{\dunhb \coursenumber}{\dunhb \class \hfill \ }%
+      %% The course name is CENTRED on the text width, not set flush against
+      %% the course-number box. ee16.sty sets it left at 1.3in with a \hfill
+      %% after it, which reads as "left-aligned and then some space" rather
+      %% than as a masthead. The number keeps its box; the box is then made
+      %% zero-width so \centerline measures the full \textwidth and the name
+      %% lands on the page's centre rather than on the centre of what is left.
+      \makebox[0pt][l]{\makebox[1.3in][l]{\dunhb \coursenumber}}%
+      \centerline{\dunhb \class}%
       \tagmcend\tagstructend
       \vskip-0.1in
       \tagstructbegin{tag=H1}\tagmcbegin{tag=H1}%
@@ -170,7 +177,7 @@
       \tagmcend\tagstructend
       \par
       \vskip 0.6em
-      \begin{Decorative}\hrule height6pt\end{Decorative}
+      \begin{DecorativeBlock}\hrule height6pt\end{DecorativeBlock}
       \par
       \tagpdfparaOn
       \vskip .5em}%
@@ -298,12 +305,27 @@
 %% so they are patched at \begin{document}. The colour and the "Solution: "
 %% label are the driver's own; only the bookmark is added. The argument stays
 %% short, exactly as \newcommand{\sol}[1] declared it.
+%% A driver builds the blank handout by defining the printing macro to throw
+%% its argument away: `\newcommand{\ans}[1]{}'. Bookmarking it regardless put
+%% an "Answer" in the outline of every problem PDF, pointing at a page with no
+%% answer on it -- worse than no bookmark, because an outline that names
+%% something absent is one a reader cannot trust.
+%%
+%% \newcommand makes a \long macro, so a macro that discards its one argument
+%% is \ifx-identical to this. Comparing against it is exact: it cannot be
+%% fooled by a macro that merely LOOKS empty, and it costs one comparison at
+%% \begin{document} rather than a guess at every call site.
+\long\def\accessdiscardsarg#1{}
 \newcommand{\accesspatchsolution}[2]{%
   \expandafter\let\csname accessorig#1\expandafter\endcsname\csname #1\endcsname
-  \expandafter\renewcommand\csname #1\endcsname[1]{%
-    \accessbookmarkonly{4}{#2}%
-    \csname accessorig#1\endcsname{##1}%
-  }%
+  \expandafter\let\expandafter\accesspatchtmp\csname accessorig#1\endcsname
+  \ifx\accesspatchtmp\accessdiscardsarg
+  \else
+    \expandafter\renewcommand\csname #1\endcsname[1]{%
+      \accessbookmarkonly{4}{#2}%
+      \csname accessorig#1\endcsname{##1}%
+    }%
+  \fi
 }
 
 \AtBeginDocument{%

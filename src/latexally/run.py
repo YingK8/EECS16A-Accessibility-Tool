@@ -45,8 +45,14 @@ __all__ = [
 ]
 
 WRITE_MODES = ("mirror", "in-place", "edit")
-COLOR_MODES = ("conforming", "house")
-ALT_MODES = ("worklog", "placeholders", "off")
+#: `palette` is the default and `conforming` is the narrower, older behaviour.
+#: The difference is reach, not arithmetic: `conforming` derives a value per
+#: colour NAME and moves only the five names the course defines, which are used
+#: in prose and in no drawing anywhere in this corpus. `palette` binds one set
+#: of five tokens to both those names AND the xcolor base names the figures
+#: spell their colours as, so a page stops using two unrelated blues.
+COLOR_MODES = ("palette", "conforming", "house")
+ALT_MODES = ("worklog", "placeholders", "caption", "off")
 
 #: The artifacts a run produces, each separately relocatable. Named once here so
 #: the model, the TUI and the docs cannot disagree about what a run writes.
@@ -159,15 +165,19 @@ STANDARD_TOGGLES: tuple[Toggle, ...] = (
     Toggle(
         "math_speech",
         "Spoken math (Formula /Alt)",
-        False,
+        True,
         "none",
         "Converts every tagged formula to a spoken string, so a reader hears "
         "\"the fraction with numerator x squared minus 1\" rather than "
         "latex-lab's default, which is the LaTeX source read out as "
-        "backslashes. Needs Node and the [math] extra.\n\n"
-        "Off by default: it is the slowest stage of a run and it needs a "
-        "toolchain the rest does not. Turn it on for a document going to a "
-        "reader -- without it every formula is announced as its source.",
+        "backslashes. Needs the MathCAT driver and the [math] extra.\n\n"
+        "On by default. It was off, on the argument that it is the slowest "
+        "stage and needs a toolchain the rest does not -- but latexally-math "
+        "deliberately leaves /Alt EMPTY rather than falling back to the LaTeX "
+        "source, so the default produced a document whose every formula was "
+        "silent, with no error to say so. Measured on fa26/dis/00B: 38 "
+        "formulas, 38 empty /Alt. Turn it off for a fast structural check, "
+        "never for a document going to a reader.",
     ),
     Toggle(
         "unicode_map",
@@ -190,7 +200,7 @@ class Standards:
     retrofit: bool = True
     bookmarks: bool = True
     question_tags: bool = True
-    math_speech: bool = False
+    math_speech: bool = True
     unicode_map: bool = True
 
     @classmethod
@@ -239,7 +249,7 @@ class ColorChoice:
     passes, so ``describe`` says so plainly.
     """
 
-    mode: str = "conforming"
+    mode: str = "palette"
     #: Extra name -> hex overrides layered on top of the profile's own map.
     overrides: dict[str, str] = field(default_factory=dict)
 
@@ -261,6 +271,12 @@ class ColorChoice:
         """
         if self.mode == "house":
             return {}
+        if self.mode == "palette":
+            # The palette is a fixed set of tokens defined in latexally-core.sty
+            # and applied by \accesspalette, so there is nothing per-name to
+            # derive. Only what a person overrode by hand is emitted, and it is
+            # emitted after the palette so it still wins.
+            return dict(self.overrides)
         derived = {
             name: proposed
             for name, original in profile.colors.originals.items()
@@ -286,6 +302,9 @@ class ColorChoice:
     def describe(self, profile: Profile) -> str:
         if self.mode == "house":
             return "course originals kept (may fail WCAG 1.4.3)"
+        if self.mode == "palette":
+            custom = f", {len(self.overrides)} confirmed by hand" if self.overrides else ""
+            return f"one palette across text and figures{custom}"
         count = len(self.replacements(profile))
         custom = f", {len(self.overrides)} confirmed by hand" if self.overrides else ""
         return f"{count} colours darkened to the floor{custom}"
@@ -309,23 +328,27 @@ class AltChoice:
     ``worklog``      scan figures and write the Markdown worklog; sources untouched.
     ``placeholders`` also inject ``<<TODO:id>>`` markers at each figure, so a TA
                      editing the .tex sees what still needs writing.
+    ``caption``      also add a visible ``\\caption{}`` to figures that have
+                     none, so the marker an author has to fill in is one they
+                     read on the page rather than one only a reader hears.
     ``off``          skip figure scanning entirely.
 
-    Placeholders are safe only because they are *build-failing*: latexally-core
-    raises a hard LaTeX error on any placeholder string under strict mode. That
-    is the whole reason the option can exist. The previous generation of this
-    tooling injected the same markers with no such guard, and an unfilled one
-    shipped into a PDF as real /Alt -- passing both a naive "every Figure has
-    /Alt" check and veraPDF, producing a silent false claim of conformance.
+    A marker that reaches a PDF is visible in it. ``caption`` puts it on the
+    page, and ``placeholders`` leaves it where the build log and
+    ``latexally check`` both name it. Neither stops a build: ``strict``
+    survives for anyone who wants that gate back, defaulting off.
     """
 
-    #: ``off`` by default. Scanning figures is the step that asks a person for
-    #: something -- a sentence per figure -- and a run should not start making
-    #: that list unasked. Turn it on when describing figures is the work being
-    #: done; the conversion is useful without it.
-    mode: str = "off"
-    #: False downgrades the placeholder error to a warning. Draft builds only.
-    strict: bool = True
+    #: ``caption`` by default: the figures are the part of this corpus that is
+    #: actually inaccessible, and a default of ``off`` meant the common run
+    #: silently skipped them. Captions rather than bare markers because an
+    #: unfilled one is then printed on the page, where it cannot be missed.
+    mode: str = "caption"
+    #: True makes an unfilled placeholder a hard LaTeX error rather than a
+    #: warning. Off by default: a build that refuses is a build nobody can look
+    #: at, and the marker is reported by `check` and visible in the PDF either
+    #: way. Set it in run.yaml to get the gate back.
+    strict: bool = False
 
     def __post_init__(self) -> None:
         if self.mode not in ALT_MODES:
@@ -336,20 +359,39 @@ class AltChoice:
 
     @property
     def scans(self) -> bool:
+        """Whether this run does alt-text work: worklogs, markers, warnings.
+
+        ``caption`` is NOT alt-text work. It adds a caption and stops there, so
+        a run that chose it gets no worklog, no ``<<TODO>>`` in ``/Alt`` and no
+        undescribed-figure warnings. Alt text is then reached deliberately, with
+        ``latexally scan`` and ``latexally check``, rather than arriving as a
+        side effect of asking for captions.
+        """
         return self.mode in ("worklog", "placeholders")
 
     @property
     def injects(self) -> bool:
+        """Whether ``<<TODO>>`` markers are written into ``/Alt``."""
         return self.mode == "placeholders"
+
+    @property
+    def captions(self) -> bool:
+        """Whether a figure with no ``\\caption{}`` should be given one."""
+        return self.mode == "caption"
+
+    @property
+    def touches_sources(self) -> bool:
+        """Whether the conversion edits .tex at all, for either reason."""
+        return self.injects or self.captions
 
     def describe(self) -> str:
         if self.mode == "off":
             return "figures not scanned — no alt text will be written"
         if self.mode == "worklog":
             return "list figures needing alt text (your .tex files are not edited)"
-        return "list figures AND mark each one in the .tex" + (
-            "" if self.strict else "  [NOT strict — draft builds only]"
-        )
+        if self.mode == "caption":
+            return "list figures, mark each one, AND add a caption where there is none"
+        return "list figures AND mark each one in the .tex"
 
     def as_dict(self) -> dict:
         return {"mode": self.mode, "strict": self.strict}
@@ -357,7 +399,7 @@ class AltChoice:
     @classmethod
     def from_dict(cls, data: dict | None) -> "AltChoice":
         data = data or {}
-        return cls(mode=str(data.get("mode", "worklog")), strict=bool(data.get("strict", True)))
+        return cls(mode=str(data.get("mode", "worklog")), strict=bool(data.get("strict", False)))
 
 
 @dataclass(slots=True)
@@ -385,7 +427,10 @@ class Output:
     #: names one. A bare relative default meant "wherever you happened to be
     #: standing", which put a run's output inside the tool's own checkout.
     root: Path = Path("ally-out")
-    write_mode: str = "mirror"
+    #: ``in-place``: the PDF lands beside the document it was built from, which
+    #: is where someone looking for it expects it. Still not a licence to edit
+    #: the source -- only ``edit`` does that.
+    write_mode: str = "in-place"
     keep_pdf: bool = True
     keep_logs: bool = True
     keep_tex: bool = True
@@ -475,6 +520,49 @@ class Output:
     def baseline_dir(self) -> Path:
         return self.path_for("baseline")
 
+    #: The folder `in-place` writes an assignment's output into, inside the
+    #: assignment's own directory.
+    ACCESSIBLE_DIR = "accessible"
+
+    def for_assignment(self, corpus_root: Path, assignment_path: str) -> "Output":
+        """This output, re-rooted at one assignment's own `accessible/` folder.
+
+        `mirror` keeps everything in one output tree away from the corpus.
+        `in-place` puts an assignment's converted sources, PDF and logs in the
+        folder the assignment lives in, under `accessible/`, so what was built
+        sits with what it was built from.
+
+        Descriptions do NOT move. A description is content-addressed and serves
+        every assignment that uses the figure -- three quarters of this corpus's
+        graphics come from the shared bank -- so one per assignment folder would
+        make the shared ones ambiguous and ask for the same sentence twice. They
+        stay in the run's own worklog directory unless the caller has already
+        said otherwise.
+        """
+        if self.write_mode != "in-place":
+            return self
+        here = (Path(corpus_root) / assignment_path).absolute()
+        moved = replace(
+            self,
+            root=(here / self.ACCESSIBLE_DIR),
+            paths=dict(self.paths),
+        )
+        if "pdf" not in moved.paths:
+            # The one thing anybody opens goes in the assignment folder itself,
+            # not one level further in and not in a `pdf/` of its own.
+            moved.paths["pdf"] = here
+        if "tex" not in moved.paths:
+            # `accessible/` IS the converted-source tree; no `tex/` level under
+            # it. It cannot be flatter than this. The tree beneath mirrors the
+            # corpus because that is what makes `\usepackage{../../../ee66}`
+            # and `\input{../preambleFa24}` resolve -- TeX resolves a `../`
+            # path against the current directory and does not consult TEXINPUTS
+            # for it, so a flat directory of converted files does not compile.
+            moved.paths["tex"] = moved.root
+        if "descriptions" not in moved.paths:
+            moved.paths["descriptions"] = self.worklog_dir()
+        return moved
+
     def as_dict(self) -> dict:
         return {
             "root": str(self.root),
@@ -510,7 +598,10 @@ class Output:
 class RunConfig:
     """Everything one conversion run needs to know."""
 
-    profile: str = "eecs16a"
+    #: Set by whoever builds the config -- the CLI from the resolved profile,
+    #: the runner from the picker. Empty only in a config that names no course,
+    #: which `latexally build --config` then resolves from -p as usual.
+    profile: str = ""
     #: Corpus-relative assignment directories, e.g. ``sp26/hw/9``.
     assignments: tuple[str, ...] = ()
     standards: Standards = field(default_factory=Standards.defaults)
@@ -559,7 +650,7 @@ class RunConfig:
         if not isinstance(data, dict):
             raise ConfigError("a run config must be a YAML mapping")
         return cls(
-            profile=str(data.get("profile", "eecs16a")),
+            profile=str(data.get("profile", "")),
             assignments=tuple(str(item) for item in (data.get("assignments") or ())),
             standards=Standards.from_dict(data.get("standards")),
             colors=ColorChoice.from_dict(data.get("colors")),

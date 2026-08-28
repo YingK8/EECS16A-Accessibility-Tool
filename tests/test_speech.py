@@ -294,7 +294,7 @@ def test_the_audit_passes_ordinary_prose(monkeypatch):
 
 def test_the_audit_reports_text_a_reader_never_reaches(monkeypatch):
     """Words in the tag tree that no reader announces are lost, not present."""
-    audit = _audit_with(monkeypatch, [_Said("fine", "P")], [("Figure", "swallowed prose")])
+    audit = _audit_with(monkeypatch, [_Said("fine", "P")], [("Figure", "a circuit", "swallowed prose")])
     assert audit.of_kind("unreachable")
 
 
@@ -344,7 +344,7 @@ def test_prose_the_alt_does_say_is_not_reported_as_lost(monkeypatch):
     audit = _audit_with(
         monkeypatch,
         [said],
-        [("equation 3; Subtract: the referenced equation; y", "(1) (2) Subtract: ( )")],
+        [("Formula", "equation 3; Subtract: the referenced equation; y", "(1) (2) Subtract: ( )")],
     )
     assert audit.ok, "the /Alt says 'Subtract', so nothing was lost"
 
@@ -355,6 +355,6 @@ def test_prose_the_alt_never_says_is_still_reported(monkeypatch):
     audit = _audit_with(
         monkeypatch,
         [said],
-        [("2 x plus 3 y is equal to 5", "Subtract the first equation from the second")],
+        [("Formula", "2 x plus 3 y is equal to 5", "Subtract the first equation from the second")],
     )
     assert audit.of_kind("unreachable")

@@ -136,8 +136,19 @@ def spoken_utterances(
     return said
 
 
-def unreachable_text(pdf_path: Path | str) -> list[tuple[str, str]]:
+def unreachable_text(pdf_path: Path | str) -> list[tuple[str, str, str]]:
     """Text that is tagged, present, and never announced.
+
+    Returns ``(tag, alt, buried)``: the element's structure type, the ``/Alt``
+    that replaces it, and the words that replacement hides.
+
+    The tag is what tells an actionable finding from an unactionable one. A
+    ``Formula`` swallowing its own equation number is latex-lab's structure and
+    not the author's, and "move the readable content out of it" is advice nobody
+    can follow against it; a ``Figure`` wrapped around a paragraph is the
+    author's and is fixable in a line. Both used to arrive here indistinguishable,
+    because only the alt string came back -- and the caller named that variable
+    ``tag``, so the two really were the same thing as far as any rule could tell.
 
     The failure this exists to catch: an element carrying ``/Alt`` has readable
     descendants, so the words are in the file and in the tag tree, and a reader
@@ -154,7 +165,7 @@ def unreachable_text(pdf_path: Path | str) -> list[tuple[str, str]]:
         children.setdefault(node.parent, []).append(index)
     text_of = _mcid_text(pdf_path, structure.page_count)
 
-    lost: list[tuple[str, str]] = []
+    lost: list[tuple[str, str, str]] = []
 
     def buried(index: int) -> str:
         node = structure.nodes[index]
@@ -169,5 +180,5 @@ def unreachable_text(pdf_path: Path | str) -> list[tuple[str, str]]:
             continue
         inside = " ".join(buried(child) for child in children[index]).strip()
         if inside:
-            lost.append((node.alt, normalise(inside)))
+            lost.append((node.tag, node.alt, normalise(inside)))
     return lost

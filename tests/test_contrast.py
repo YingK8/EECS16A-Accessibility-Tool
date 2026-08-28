@@ -84,10 +84,34 @@ def _profile() -> Profile:
 
 
 def test_replacements_are_derived_and_skip_what_already_conforms():
-    replacements = ColorChoice().replacements(_profile())
+    """`conforming` mode, which is now the narrower of the two remaps.
+
+    Explicit about the mode: the default moved to `palette`, and this test is
+    about the DERIVATION -- darken each name just enough, leave a name that
+    already passes alone -- which only `conforming` performs.
+    """
+    replacements = ColorChoice(mode="conforming").replacements(_profile())
 
     assert replacements == {"solutionColor": "#187AC4", "redish": "#EE0000"}
     assert "blueish" not in replacements
+
+
+def test_palette_mode_derives_nothing_and_emits_only_hand_overrides():
+    """The palette is a fixed token set in the .sty, not a per-name derivation.
+
+    `conforming` computed a different value for every colour NAME, which is how
+    one page ended up drawing its answer text in #187AC4 and its answer vectors
+    in #0000FF -- two blues nothing could reconcile, because nothing was
+    reconciling them. `palette` binds both to one token, in LaTeX, so there is
+    nothing for the runner to compute. What a person overrode by hand still
+    comes through, and still wins: it is emitted after \\accesspalette.
+    """
+    assert ColorChoice().mode == "palette"
+    assert ColorChoice().replacements(_profile()) == {}
+
+    chosen = ColorChoice()
+    chosen.set("solutionColor", "#123456")
+    assert chosen.replacements(_profile()) == {"solutionColor": "#123456"}
 
 
 def test_house_mode_still_changes_nothing():

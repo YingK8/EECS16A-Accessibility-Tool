@@ -24,7 +24,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from .config import Profile, load_profile
+from .config import Profile, default_builtin_profile, load_profile
 from .discover import scope_from_cwd
 from .errors import LatexAllyError
 from .toolchain import Status, TaggingMode, probe
@@ -51,8 +51,15 @@ class Context:
         as_json: bool,
         quiet: bool,
         here_scope: str | None = None,
+        corpus_root: Path | None = None,
+        profile_named: bool = True,
     ) -> None:
         self.profile = profile
+        #: What -c said, so a picker that swaps the profile can re-apply it.
+        self.corpus_root = corpus_root
+        #: False when no -p was given and more than one profile is installed,
+        #: which is the one case `run` turns into a question instead of an error.
+        self.profile_named = profile_named
         self.as_json = as_json
         # emoji=False, because this tool prints file:line references all day
         # and Rich reads `:100:` as an emoji shortcode. A real error line came
@@ -115,12 +122,27 @@ def main(
     assignment; standing at the top of the corpus works on all of it. Nothing
     to pass, and no flag to remember.
     """
+    # `run` opens a picker, so an unnamed profile is a question it can ask
+    # rather than a reason to refuse. Every other command is non-interactive,
+    # where refusing is right: silently converting one of two courses is worse
+    # than saying which flag to pass.
+    interactive = profile is None and ctx.invoked_subcommand == "run"
     try:
         loaded = load_profile(profile, corpus_root=corpus)
     except LatexAllyError as exc:
-        click.echo(f"error: {exc}", err=True)
-        ctx.exit(EXIT_ERROR)
-    ctx.obj = Context(loaded, as_json=as_json, quiet=quiet, here_scope=scope_from_cwd(loaded))
+        fallback = default_builtin_profile() if interactive else None
+        if fallback is None:
+            click.echo(f"error: {exc}", err=True)
+            ctx.exit(EXIT_ERROR)
+        loaded = load_profile(fallback, corpus_root=corpus)
+    ctx.obj = Context(
+        loaded,
+        as_json=as_json,
+        quiet=quiet,
+        here_scope=scope_from_cwd(loaded),
+        corpus_root=corpus,
+        profile_named=profile is not None,
+    )
 
 
 # ---------------------------------------------------------------------- #
@@ -697,6 +719,95 @@ def check(
 
 
 # ---------------------------------------------------------------------- #
+# formats — what the alternative formats will actually contain
+# ---------------------------------------------------------------------- #
+
+
+@main.command()
+@click.argument("pdf", type=click.Path(path_type=Path, exists=True, dir_okay=False))
+@click.option(
+    "--evidence",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Write transcripts, an MP3 and a BRF here. Default: `formats/<name>` beside the PDF.",
+)
+@click.option("--no-audio", is_flag=True, help="Skip the MP3 (say + ffmpeg).")
+@click.option("--no-braille", is_flag=True, help="Skip the BRF (lou_translate).")
+@click.option(
+    "--severity",
+    type=click.Choice(["error", "warning", "info"]),
+    default="warning",
+    help="Minimum severity to report.",
+)
+@pass_context
+def formats(
+    ctx: Context,
+    pdf: Path,
+    evidence: Path | None,
+    no_audio: bool,
+    no_braille: bool,
+    severity: str,
+) -> None:
+    """Read a built PDF the way Canvas Ally does, and say what it will contain.
+
+    Runs five independent text extractors, because they disagree about the same
+    file: PDFBox (Ally's own engine) and the structure tree honour /ActualText,
+    poppler and Ghostscript ignore it, PyMuPDF fragments it. Writes a transcript
+    per extractor plus an MP3 you can play and a BRF you can emboss.
+    """
+    from .check.formats import ALLY_EXTRACTOR, Finding, Severity, write_evidence
+
+    directory = evidence or (pdf.parent / "formats" / pdf.stem)
+    result = write_evidence(pdf, directory, audio=not no_audio, braille=not no_braille)
+
+    order = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}
+    # Read back from the report `write_evidence` just wrote, rather than running
+    # the five extractors a second time. Each one is a subprocess and PDFBox is
+    # a JVM start.
+    findings = [Finding(**item) for item in json.loads(
+        (result.directory / "report.json").read_text(encoding="utf-8")
+    )["findings"]]
+    findings = [item for item in findings if order[item.severity] <= order[severity]]
+    findings.sort(key=lambda item: (order[item.severity], item.rule))
+    errors = [item for item in findings if item.severity == Severity.ERROR]
+
+    if ctx.as_json:
+        ctx.emit(
+            {
+                "pdf": str(pdf),
+                "evidence": str(result.directory),
+                "total": len(findings),
+                "errors": len(errors),
+                "findings": [item.as_dict() for item in findings],
+                "notes": result.notes,
+            }
+        )
+        sys.exit(EXIT_FINDINGS if errors else EXIT_OK)
+
+    console = ctx.console
+    console.print(f"[bold]{escape(pdf.name)}[/bold] — Ally reads this with {ALLY_EXTRACTOR}\n")
+    for item in findings[:60]:
+        colour = {"error": "red", "warning": "yellow", "info": "dim"}[item.severity]
+        console.print(
+            f"[{colour}]{item.severity:<7}[/{colour}] {item.rule}\n"
+            f"          {escape(item.message)}"
+        )
+    if len(findings) > 60:
+        console.print(f"[dim]…{len(findings) - 60} more[/dim]")
+    for note in result.notes:
+        console.print(f"[dim]skipped  {escape(note)}[/dim]")
+    console.print(f"\nevidence: {escape(str(result.directory))}")
+    if result.audio:
+        console.print(f"  play    {escape(result.audio.name)}")
+    if result.braille:
+        console.print(f"  emboss  {escape(result.braille.name)}")
+    console.print(
+        f"\n[bold]{len(findings)}[/bold] findings ([red]{len(errors)} errors[/red])"
+    )
+    sys.exit(EXIT_FINDINGS if errors else EXIT_OK)
+
+
+# ---------------------------------------------------------------------- #
 # build / run — the conversion pipeline
 # ---------------------------------------------------------------------- #
 
@@ -813,9 +924,14 @@ def _report_table(reports: list) -> Table:
 @click.option("--question-tags", is_flag=True, help="Emit real H2 tags for question titles.")
 @click.option("--house-colors", is_flag=True, help="Keep the course palette, contrast and all.")
 @click.option(
+    "--no-math-speech",
+    is_flag=True,
+    help="Skip the maths conversion pass. Every formula then ships a silent /Alt.",
+)
+@click.option(
     "--placeholders",
     is_flag=True,
-    help="Mark undescribed figures in the source. Build-failing unless --draft.",
+    help="Mark undescribed figures in the source, and list them in the worklog.",
 )
 @click.option(
     "--baseline",
@@ -827,12 +943,20 @@ def _report_table(reports: list) -> Table:
     ),
 )
 @click.option(
+    "--captions",
+    is_flag=True,
+    help=(
+        "Add a visible \\caption{} to every figure and table that has none, "
+        "for an author to fill in. Floats only."
+    ),
+)
+@click.option(
     "--draft",
     is_flag=True,
     help=(
-        "Warn about undescribed figures instead of failing the build. The PDF "
-        "is NOT conformant: it ships figures whose /Alt is a placeholder or a "
-        "file name. For looking at a page, never for handing out."
+        "Deprecated, and now the default: undescribed figures are reported "
+        "rather than failing the build. Set `strict: true` in run.yaml for the "
+        "old gate."
     ),
 )
 @pass_context
@@ -847,8 +971,10 @@ def build(
     jobs: int | None,
     question_tags: bool,
     house_colors: bool,
+    no_math_speech: bool,
     placeholders: bool,
     baseline: bool,
+    captions: bool,
     draft: bool,
 ) -> None:
     """Convert and build assignments. This is what `latexally run` runs.
@@ -860,11 +986,21 @@ def build(
     from .build import build_run, describe_run
     from .run import AltChoice, ColorChoice
 
-    # `--here` answers "which assignment" from the shell's own position, so a
-    # bare `latexally --here build --write --edit` is the whole command.
-    if not assignments and ctx.here_scope is not None:
-        assignments = (ctx.here_scope,)
     config = _load_run_config(ctx, config_path, assignments, output, write)
+    # The working directory answers "which assignment" only when nothing else
+    # did -- so a bare `latexally build --write` inside an assignment is the
+    # whole command, and a config that names its assignments keeps them.
+    #
+    # This used to run BEFORE the config was loaded and clobbered it, and the
+    # emptiness test was `is not None` rather than truthiness. Both matter, and
+    # together they compounded: `scope_from_cwd` returns the EMPTY STRING at the
+    # corpus root -- "all of it", which is how every other command reads it --
+    # so `build --config run.yaml` from the corpus root discarded
+    # `assignments: [fa26/dis/00B]`, resolved "" to the root, found
+    # `circuitikz_version.tex` sitting there, compiled that instead, wrote seven
+    # figure worklog entries against it, and reported `ok`.
+    if not config.assignments and ctx.here_scope:
+        config = config.with_assignments([ctx.here_scope])
     if edit or in_place:
         # `edit` wins: it is a superset, and asking for both is not a conflict.
         config.output = replace(
@@ -876,16 +1012,18 @@ def build(
         config.standards.question_tags = True
     if house_colors:
         config.colors = ColorChoice(mode="house")
+    if no_math_speech:
+        config.standards.math_speech = False
     if placeholders:
         config.alt = AltChoice(mode="placeholders", strict=config.alt.strict)
+    if captions:
+        config.alt = AltChoice(mode="caption", strict=config.alt.strict)
     if baseline:
         config.baseline = True
     if draft:
+        # Already the default. Kept so a saved command line and any CI job
+        # carrying the flag keep working rather than dying on an unknown option.
         config.alt = replace(config.alt, strict=False)
-        ctx.console.print(
-            "[yellow]draft:[/yellow] undescribed figures will be reported and "
-            "the build allowed to stand. The PDF will not be conformant."
-        )
 
     if not config.assignments:
         click.echo(
@@ -1262,7 +1400,14 @@ def run_command(ctx: Context, config_path: Path | None, output: Path | None) -> 
         sys.exit(EXIT_ERROR)
 
     config = _load_run_config(ctx, config_path, (), output, False)
-    app = LatexAllyApp(ctx.profile, config)
+    app = LatexAllyApp(
+        ctx.profile,
+        config,
+        # No -p, and more than one course installed: the runner asks rather
+        # than inheriting the refusal the non-interactive commands make.
+        ask_profile=not ctx.profile_named,
+        corpus_root=ctx.corpus_root,
+    )
     # Keyboard only. Textual's mouse tracking also swallows the terminal's own
     # click-drag text selection and scrollback, and every control in the runner
     # has a key, so there is nothing for a mouse to reach that a key cannot.

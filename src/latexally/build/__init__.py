@@ -27,7 +27,7 @@ import shutil
 import subprocess
 from fnmatch import fnmatch
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
 from ..config import Profile
@@ -189,9 +189,13 @@ def preamble_for(
     wants_core = (
         config.standards.bookmarks
         or config.standards.question_tags
-        or config.colors.mode == "conforming"
+        or config.colors.mode in ("palette", "conforming")
         or bool(recolours)
-        or not config.alt.strict
+        # Only when there are markers for it to govern. `strict` is off by
+        # default now, and a run that injects nothing has no placeholder to
+        # gate -- loading the package to say so would put \accesssetup in
+        # every preamble in the corpus.
+        or (config.alt.injects and not config.alt.strict)
     )
     if config.standards.retrofit:
         lines.append("\\usepackage{latexally-ee16}")
@@ -220,7 +224,9 @@ def preamble_for(
     if loaded:
         if config.standards.question_tags:
             lines.append("\\accessquestiontags")
-        if config.colors.mode == "conforming":
+        if config.colors.mode == "palette":
+            lines.append("\\accesssetup{palette}")
+        elif config.colors.mode == "conforming":
             lines.append("\\accesssetup{conforming-colors}")
         # Order is load-bearing. Both this and conforming-colors act from a
         # begindocument hook, and hooks run in the order they are declared, so
@@ -230,7 +236,7 @@ def preamble_for(
         # fixed palette and ignores the run entirely.
         for name, value in recolours.items():
             lines.append(f"\\accessrecolor{{{name}}}{{{value.lstrip('#')}}}")
-        if not config.alt.strict:
+        if config.alt.injects and not config.alt.strict:
             lines.append("\\accesssetup{strict=false}")
 
     if config.standards.math_speech:
@@ -459,7 +465,25 @@ def apply_descriptions(
     compiled *unconverted* for the visual diff, and wrapping its figures would
     make the comparison measure this tool against itself.
     """
-    if not config.alt.scans:
+    # Neither `scans` nor `touches_sources` on its own. Both were tried and both
+    # were wrong, in opposite directions, and the two mistakes cancelled into a
+    # tool that emitted `Described` in exactly one of its four modes:
+    #
+    #   `worklog`      scans=True,  touches_sources=False -> returned here, so a
+    #                  fully written worklog produced no /Alt at all
+    #   `caption`      scans=False, touches_sources=True  -> reached `apply_scope`
+    #                  with an empty `entries`, so again no /Alt
+    #   `placeholders` both True                          -> the only mode that
+    #                  ever wrapped a figure
+    #
+    # The symptom was silent and it read as success: `describe_run` reports the
+    # worklog's own state, so a build announced "3 done, 0 outstanding" while
+    # shipping a PDF whose figures had no description in it. Measured on
+    # fa26/dis/00B: 3 descriptions written, 0 Figure elements in the artefact.
+    #
+    # Applying a description someone already wrote is not a mode. `off` is the
+    # only answer to "do nothing here".
+    if config.alt.mode == "off":
         return 0
 
     from ..apply import apply_scope
@@ -485,18 +509,33 @@ def apply_descriptions(
     # makes the worklog list every figure instead of the handful reachable
     # before the repair. Ids are content hashes, so the two agree on any figure
     # both can see.
-    build_catalog(
-        profile,
-        files=files,
-        write=config.write,
-        output_root=config.output.root if config.write else None,
-        # The mirror repeats the corpus's directory layout, so sharding against
-        # its root yields exactly the worklog names a corpus scan would.
-        shard_root=config.output.tex_dir(),
+    # Only when alt text is what was asked for. `caption` mode adds a caption
+    # and nothing else, so building a worklog for it would produce an artifact
+    # the run has no use for and a "17 figures still need alt text" report
+    # nobody asked to see. `latexally scan` and `latexally check` are where alt
+    # text is reached deliberately.
+    if config.alt.scans:
+        build_catalog(
+            profile,
+            files=files,
+            write=config.write,
+            output_root=config.output.root if config.write else None,
+            # The mirror repeats the corpus's directory layout, so sharding
+            # against its root yields exactly the worklog names a corpus scan
+            # would.
+            shard_root=config.output.tex_dir(),
+            worklogs=config.output.worklog_dir(),
+        )
+    # Read outside the `scans` guard. `scans` governs whether this run *authors*
+    # alt-text work -- a worklog, a <<TODO>> marker, an undescribed-figure
+    # warning -- which `caption` mode deliberately does not do. It does not
+    # govern whether a description a human already wrote is allowed to reach the
+    # PDF. Discarding one is not a smaller side effect; it is the failure the
+    # whole worklog exists to prevent.
+    entries = load_entries(
+        profile, config.output.root, worklogs=config.output.worklog_dir()
     )
-
-    entries = load_entries(profile, config.output.root)
-    if not entries:
+    if not entries and not config.alt.captions:
         return 0
 
     plans = apply_scope(
@@ -505,6 +544,7 @@ def apply_descriptions(
         entries,
         dry_run=False,
         placeholders=config.alt.injects,
+        captions=config.alt.captions,
         files=files,
     )
     return sum(plan.wrapped for plan in plans)
@@ -551,7 +591,13 @@ def materialise(
 
     mirror_root = config.output.tex_dir().resolve()
     target_dir = (mirror_root / assignment.path).resolve()
-    driver = target_dir / driver_name
+    # `in-place` puts the converted driver at the top of `accessible/`, where
+    # somebody looking for it will look, instead of at the bottom of a
+    # reproduced corpus tree. The tree still exists beneath -- it is what makes
+    # the dependencies' own relative paths resolve -- but the file people open
+    # is `accessible/sol00B.tex`.
+    flatten_driver = config.output.write_mode == "in-place"
+    driver = (mirror_root if flatten_driver else target_dir) / driver_name
     original: Path | None = None
     if write:
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -565,7 +611,17 @@ def materialise(
                 # from it produced an untagged document.
                 if path.name != driver_name and path.name not in siblings_to_skip:
                     shutil.copy2(path, target_dir / path.name)
-        driver.write_bytes(source.encode(converted))
+        if flatten_driver:
+            # Moved up out of the tree, so the paths it reaches out with have to
+            # be rewritten to match. Only the driver moves; everything it
+            # includes stays at its corpus-relative offset, where its own
+            # relative paths already work.
+            driver.parent.mkdir(parents=True, exist_ok=True)
+            driver.write_bytes(
+                source.encode(flatten_relative_paths(converted, source_dir, root))
+            )
+        else:
+            driver.write_bytes(source.encode(converted))
         # The untouched driver, beside the converted one and inside the same
         # mirror. The baseline used to compile from the corpus, where a
         # historical assignment's includes are still missing -- so every
@@ -587,22 +643,115 @@ def materialise(
         substitutions = repair_missing(
             source_dir / driver_name, root, mirror_root, assignment.path
         )
+        if flatten_driver:
+            # Every file, not just the driver. TeX resolves `./x` and `../x`
+            # against the WORKING directory, not against the file doing the
+            # including -- and flattening the driver moved the working directory
+            # up to `accessible/`. So a `\input{./questions/q}` three files deep,
+            # which used to resolve because the working directory was the
+            # assignment's own mirror, now points somewhere that does not exist.
+            # Rewriting each one against its own original directory sends it to
+            # the corpus-relative path the mirror actually uses.
+            _flatten_tree(mirror_root, root, source_dir)
     return Prepared(
         assignment,
         driver,
-        target_dir,
+        # The directory LaTeX runs in, which must be the one the driver's own
+        # paths were written for: `accessible/` when the driver was flattened
+        # up to it, the mirrored assignment folder otherwise.
+        mirror_root if flatten_driver else target_dir,
         # Order is load-bearing. The mirror must come FIRST: kpathsea searches
         # TEXINPUTS entries before the default (which is where "." lives), so
         # listing the corpus ahead of the mirror makes `\input{body}` find the
         # ORIGINAL body.tex and silently discard every edit made in the mirror.
         # The corpus stays on the path last, as a fallback for assets the
         # dependency walk did not recognise.
-        [target_dir, *_package_tex_dirs(), source_dir],
+        # `target_dir` still leads: a flattened driver's `\input{body00B}` has
+        # no `../` in it, so it goes through TEXINPUTS and must find the
+        # MIRRORED body, not the corpus original.
+        [target_dir, mirror_root, *_package_tex_dirs(), source_dir],
         converted,
         lines,
         substitutions,
         original,
     )
+
+
+
+def _flatten_tree(mirror_root: Path, corpus_root: Path, source_dir: Path) -> None:
+    r"""Rewrite working-directory-relative paths across a whole mirror.
+
+    Every file is rewritten against ``source_dir`` -- the ASSIGNMENT directory
+    -- and not against its own location, because that is what the paths were
+    authored against. TeX resolves `./x` and `../x` relative to the working
+    directory, which is the assignment folder for the whole build, so
+    `fa26/dis/preambleFa24.tex` writing `\usepackage{../../fa26}` means two
+    levels up from `fa26/dis/00B`, not from its own `fa26/dis`. Resolving it
+    against the file's own directory finds a different file, or none.
+
+    Idempotent: a path already corpus-relative has no `./` or `../` in it and is
+    left exactly as it was, so a second pass over the same tree is a no-op.
+    """
+    for path in sorted(mirror_root.rglob("*.tex")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        rewritten = flatten_relative_paths(text, source_dir, corpus_root)
+        if rewritten != text:
+            path.write_text(rewritten, encoding="utf-8")
+
+
+def flatten_relative_paths(text: str, source_dir: Path, corpus_root: Path) -> str:
+    r"""Rewrite `../`-prefixed file paths so they resolve from the mirror root.
+
+    `in-place` puts the converted driver at `<assignment>/accessible/sol00B.tex`
+    rather than at `accessible/<corpus tree>/sol00B.tex`, because that is where
+    somebody looking for the converted source expects it. Moving it breaks every
+    path it reaches out with: `\input{../preambleFa24}` was resolved against the
+    assignment folder, and from `accessible/` it now points one level short.
+
+    TEXINPUTS cannot fix this. kpathsea resolves a `../`-prefixed path against
+    the current directory and never consults the search path for it, so the only
+    repair is to rewrite the path itself. Paths WITHOUT `../` are left alone:
+    those do go through TEXINPUTS, which already lists the mirrored assignment
+    directory.
+
+    The rewrite target is the path the dependency mirror already uses -- corpus
+    relative -- so `../preambleFa24` becomes `fa26/dis/preambleFa24`, which from
+    `accessible/` is exactly where `mirror_dependencies` put the converted copy,
+    and `../../../ee66` becomes `ee66`.
+
+    A path pointing outside the corpus is left as it was: there is nothing in
+    the mirror for it to name, and a rewrite would only turn a working absolute
+    reference into a broken relative one.
+    """
+    source_dir = source_dir.resolve()
+    corpus_root = corpus_root.resolve()
+
+    def repair(match: "re.Match[str]", extensions: tuple[str, ...]) -> str:
+        target = match.group(1).strip()
+        if not target:
+            return match.group(0)
+        resolved = (source_dir / target).resolve()
+        # Only a file that is really there, and really in this corpus. Without
+        # this, `\usepackage{amsmath}` resolves to `<assignment>/amsmath`,
+        # which IS under the corpus root, and would be "rewritten" into a path
+        # naming nothing -- turning every system package into a missing file.
+        if not any(
+            resolved.with_name(resolved.name + suffix).is_file()
+            for suffix in extensions
+        ):
+            return match.group(0)
+        try:
+            relative = resolved.relative_to(corpus_root)
+        except ValueError:
+            return match.group(0)
+        return match.group(0).replace(target, relative.as_posix())
+
+    for pattern, extensions in _FILE_REFERENCES:
+        text = re.sub(pattern, lambda m, e=extensions: repair(m, e), text)
+    return text
 
 
 #: Commands whose argument names a file, and the extensions to try for each.
@@ -974,7 +1123,13 @@ def compile_document(
     # \input of a generated file next to the .aux fails with "File not found"
     # -- verified, and silent in nonstop mode. The generated math speech table
     # lives there, and it must not be written into the corpus instead.
-    inputs = [output_dir] + ([math_dir] if math_dir else []) + list(search_path or [])
+    # ...but it must not LEAD the path. Under `in-place` the output directory is
+    # the assignment's own folder in the corpus, and leading with it made
+    # `\input{body00B}` find the ORIGINAL body beside the PDF rather than the
+    # converted one in the mirror -- a document that built cleanly and was not
+    # converted at all. The mirror wins; the output directory follows it, which
+    # is enough for the generated files this exists for.
+    inputs = list(search_path or []) + [output_dir] + ([math_dir] if math_dir else [])
     environment["TEXINPUTS"] = tex_search_path(*inputs)
 
     command = [
@@ -1410,6 +1565,16 @@ def build_assignment(
         report.note = "no driver file; nothing to build"
         return report
 
+    # `in-place` means this assignment's output lands in this assignment's own
+    # folder. Re-rooting here rather than at each call site is what makes it
+    # true of the converted .tex, the PDF, the logs and the math tables at once
+    # -- it used to be true only of the PDF, which is what "in-place" had
+    # promised and not delivered.
+    config = replace(
+        config,
+        output=config.output.for_assignment(profile.corpus.root, assignment.path),
+    )
+
     lines = preamble_for(config, profile) if lines is None else lines
     report.injected = list(lines)
 
@@ -1433,7 +1598,7 @@ def build_assignment(
     # tree this run had already dirtied. `build_run` checks once up front too,
     # so a multi-document run cannot get half way; this one is for the callers
     # that reach here directly -- the agent API and the tests both do.
-    if config.output.in_place:
+    if config.output.edits_sources:
         require_clean_worktree(
             profile.corpus.root.resolve(), ignore=config.output.root
         )
@@ -1472,19 +1637,15 @@ def _compile_assignment(
     ``jobname``, which is unique per assignment *and* variant.
     """
     slug = base_slug(assignment.path, variant)
-    # `in-place` is a destination for the PDF, not a licence to edit the source.
-    # It used to rewrite the corpus driver, guarded by a clean git worktree; the
-    # conversion is now always mirrored and the only thing that reaches the
-    # corpus is the finished document, beside the original it was built from.
-    if config.output.in_place:
-        # The guard for a direct caller used to live here. It cannot: by this
-        # point `apply_descriptions` has written the worklog beside the sources
-        # -- in `edit` mode that is inside the corpus -- so the guard tripped
-        # over this run's own file and refused every build. It now runs in
-        # `build_assignment`, before anything is written anywhere.
-        pdf_dir = (profile.corpus.root / assignment.path).resolve()
-    else:
-        pdf_dir = config.output.pdf_dir()
+    # No special case for `in-place` any more. `build_assignment` has already
+    # re-rooted the whole output at the assignment's own `accessible/` folder,
+    # so this resolves there for every mode -- and the PDF cannot end up
+    # somewhere its own logs and sources did not.
+    #
+    # `in-place` is still a destination, not a licence to edit the source: the
+    # corpus `.tex` is rewritten only by `edit`, which is the mode the
+    # clean-worktree guard in `build_assignment` is keyed on.
+    pdf_dir = config.output.pdf_dir()
 
     # The untouched original first and immediately before the converted build:
     # \timestamp in the running header means a pair built minutes apart differs
@@ -1534,7 +1695,9 @@ def _compile_assignment(
     if original_pdf is not None:
         report.pixel_diff, report.diff_note = compare_pdfs(original_pdf, pdf)
 
-    alt_problems = _alt_text_failures(pdf, config)
+    # `caption` asked for captions, not descriptions; reporting every figure as
+    # undescribed would be answering a question the run did not ask.
+    alt_problems = _alt_text_failures(pdf, config) if config.alt.scans else []
     if config.alt.strict:
         report.errors += alt_problems
     else:
@@ -1949,7 +2112,12 @@ def build_run(
     # The clean-worktree guard used to fire per document, which let documents
     # 1..N-1 build before N discovered the corpus was dirty. It is a property of
     # the run, so it is checked once, before anything is written.
-    if config.write and config.output.in_place:
+    # `edits_sources`, NOT `in_place`: git is what makes a REWRITTEN source
+    # revertible, and `in-place` rewrites nothing -- it only chooses where the
+    # finished PDF lands. Guarding on `in_place` demanded a clean worktree of
+    # every run that wanted its PDF beside the document, which is now the
+    # default and would have made the default unusable in a dirty checkout.
+    if config.write and config.output.edits_sources:
         require_clean_worktree(
             profile.corpus.root.resolve(), ignore=config.output.root
         )

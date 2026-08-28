@@ -102,7 +102,7 @@ def test_defaults_emit_metadata_retrofit_and_palette(profile):
     assert lines[0].startswith("\\DocumentMetadata{")
     assert "testphase=" in lines[0]
     assert "\\usepackage{latexally-ee16}" in lines
-    assert "\\accesssetup{conforming-colors}" in lines
+    assert "\\accesssetup{palette}" in lines
     assert "\\accessquestiontags" in lines
 
 
@@ -148,6 +148,20 @@ def test_house_colors_emits_no_palette_line(profile):
     config = RunConfig(colors=ColorChoice(mode="house"))
     lines = preamble_for(config, profile, TaggingMode.LEGACY_TESTPHASE)
     assert not any("conforming-colors" in line for line in lines)
+    assert not any("accesssetup{palette}" in line for line in lines)
+
+
+def test_conforming_mode_still_emits_the_narrower_remap(profile):
+    """`conforming` survives as the text-only option, and must stay reachable.
+
+    It moves the five names the course defines and nothing else, so every
+    drawing keeps the colour it was drawn in. That is the right choice for a
+    document whose figures encode meaning in hue, and the wrong default.
+    """
+    config = RunConfig(colors=ColorChoice(mode="conforming"))
+    lines = preamble_for(config, profile, TaggingMode.LEGACY_TESTPHASE)
+    assert "\\accesssetup{conforming-colors}" in lines
+    assert "\\accesssetup{palette}" not in lines
 
 
 def test_question_tags_emit_the_opt_in_macro(profile):
@@ -182,6 +196,10 @@ def test_no_accesssetup_without_a_package_to_define_it(profile):
             unicode_map=False,
         ),
         colors=ColorChoice(mode="house"),
+        # Explicit: figure work now defaults to `caption`, which injects
+        # markers and so does want the package. This test is about the path
+        # where nothing asks for it.
+        alt=AltChoice(mode="off"),
     )
     lines = preamble_for(config, profile, TaggingMode.LEGACY_TESTPHASE)
     assert not any("accesssetup" in line for line in lines)
@@ -259,10 +277,15 @@ def test_output_directories_are_distinct_and_under_the_root():
         assert directory.is_relative_to(output.root)
 
 
-def test_mirror_is_the_default_write_mode():
-    """The safe default: the corpus is read-only unless asked otherwise."""
-    assert Output().write_mode == "mirror"
-    assert Output().in_place is False
+def test_in_place_is_the_default_write_mode():
+    """The PDF lands beside the document; the corpus .tex is still read-only.
+
+    `in-place` names where the finished PDF goes, not a licence to edit -- so
+    the default puts the output where someone looking for it expects it while
+    `edits_sources` stays false. Only `edit` rewrites course material.
+    """
+    assert Output().write_mode == "in-place"
+    assert Output().in_place is True
     assert Output().edits_sources is False
     assert RunConfig().write is False
 
@@ -270,8 +293,9 @@ def test_mirror_is_the_default_write_mode():
 def test_edit_is_a_superset_of_in_place():
     """`edit` puts the PDF beside the original too, so it must answer to both.
 
-    The clean-worktree guard and the PDF destination are both keyed on
-    `in_place`; a mode that edited sources but reported `in_place is False`
+    The PDF destination is keyed on `in_place` (the clean-worktree guard is
+    keyed on `edits_sources`, which is the thing git has to be able to undo);
+    a mode that edited sources but reported `in_place is False`
     would write into the corpus with no guard at all.
     """
     assert Output(write_mode="edit").in_place is True
@@ -369,17 +393,17 @@ def test_two_profiles_and_no_choice_is_refused_not_guessed(tmp_path, monkeypatch
 
     profiles = tmp_path / "profiles"
     profiles.mkdir()
-    for name in ("eecs16a", "eecs66"):
+    for name in ("eecs16a", "ee66"):
         (profiles / f"{name}.yaml").write_text(f"name: {name}\n")
     monkeypatch.setattr(config_module, "builtin_profile_dir", lambda: profiles)
 
     with pytest.raises(ConfigError, match="more than one profile"):
         load_profile(None)
     # Naming one still works, and so does a path.
-    assert load_profile("eecs66").name == "eecs66"
+    assert load_profile("ee66").name == "ee66"
     assert load_profile(profiles / "eecs16a.yaml").name == "eecs16a"
 
     # With exactly one installed, it is still inferred -- that is the case the
     # inference exists for.
-    (profiles / "eecs66.yaml").unlink()
+    (profiles / "ee66.yaml").unlink()
     assert load_profile(None).name == "eecs16a"

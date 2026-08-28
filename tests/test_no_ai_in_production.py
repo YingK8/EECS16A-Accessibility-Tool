@@ -12,10 +12,22 @@ Nothing enforces that by convention alone, so it is enforced here.
 from __future__ import annotations
 
 import ast
-import tomllib
 from pathlib import Path
 
 import pytest
+
+# `tomllib` is 3.11+; pyproject.toml declares `requires-python = ">=3.10"`, so
+# on the lower bound this module failed to IMPORT -- and a collection error is
+# not a failure, it is the whole file silently not running. The guard this test
+# exists to be was absent on exactly the interpreters the project claims to
+# support. `tomli` is the same parser under its pre-stdlib name.
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - 3.10 only
+    tomli = pytest.importorskip(
+        "tomli", reason="Python 3.10 needs `pip install tomli` to read pyproject.toml"
+    )
+    tomllib = tomli
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src" / "latexally"

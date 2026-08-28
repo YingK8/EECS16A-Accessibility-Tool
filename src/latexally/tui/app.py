@@ -66,7 +66,13 @@ from textual.widgets.option_list import OptionDoesNotExist
 from textual.css.query import NoMatches
 from textual.widgets.selection_list import Selection
 
-from ..config import Profile
+from ..config import (
+    Profile,
+    builtin_profile_names,
+    default_builtin_profile,
+    load_profile,
+    profile_summary,
+)
 from ..errors import LatexAllyError
 from ..run import (
     ALT_MODES,
@@ -212,7 +218,10 @@ class StepScreen(Screen):
     hint = ""
 
     BINDINGS = [
-        Binding("escape", "back", "Back"),
+        # `\`, not Escape. Deliberately NOT priority: an Input has to be able
+        # to take the key when a path is being typed into it, and an unhandled
+        # key bubbles up to here anyway.
+        Binding("backslash", "back", "Back", key_display="\\"),
         Binding("b", "back", "Back", show=False),
         # Enter is the key people press to go on, on every step. Priority,
         # because the focused widget would otherwise swallow it -- an
@@ -252,6 +261,12 @@ class StepScreen(Screen):
         with self.container():
             yield from self.body()
         yield Static("", id="reason", classes="reason")
+        # Docked, so it sits on the same rows on every step no matter how tall
+        # that step's body is. A note that moves between screens is one the eye
+        # has to find again each time.
+        detail = Static("", id="detail-box", classes="detail-box")
+        detail.display = False
+        yield detail
         yield Footer()
 
     # -- flow ----------------------------------------------------------- #
@@ -301,6 +316,20 @@ class StepScreen(Screen):
         widget.update(Content(text))
         widget.display = bool(text)
 
+    def describe(self, title: str, text: str = "") -> None:
+        """Explain the selected option, in the box every step keeps at the bottom.
+
+        Title in the border rather than a first bold line, so the explanation
+        starts on the box's first row and a short one does not cost two.
+        """
+        try:
+            box = self.query_one("#detail-box", Static)
+        except NoMatches:  # pragma: no cover - called before compose
+            return
+        box.border_title = title
+        box.update(Content(text))
+        box.display = bool(text)
+
     def set_next(self, ok: bool, reason: str = "") -> None:
         self._can_next = ok
         self.say("#reason", "" if ok else reason)
@@ -331,6 +360,77 @@ class ListStepScreen(StepScreen):
 
     def action_select_none(self) -> None:
         self.choices.deselect_all()
+
+
+# ---------------------------------------------------------------------- #
+# 0. which course
+# ---------------------------------------------------------------------- #
+
+
+class ProfileScreen(StepScreen):
+    """Which course, when more than one profile is installed.
+
+    This used to be an error. `latexally run` inherited the refusal every other
+    command makes when two courses are installed and neither was named -- which
+    is right for `build --write`, where guessing converts the wrong corpus in
+    silence, and wrong here, because a runner whose entire premise is asking
+    can ask this too.
+
+    The rows are read from the profiles directory, never from a list in this
+    file: onboarding a course is dropping a YAML in beside the others, and a
+    picker that needed editing to see it would defeat that.
+    """
+
+    heading = "Which course?"
+    hint = "Every later step reads this one's corpus."
+    AUTO_FOCUS = "#profile-choice"
+
+    def body(self) -> Iterator[Widget]:
+        names = self.app.profile_names
+        current = self.app.profile.name
+        with Horizontal(classes="row"):
+            yield Static("Course  ↑ ↓", classes="gutter")
+            yield Choice(
+                *(
+                    Radio(
+                        profile_summary(name),
+                        value=name == current,
+                        name=name,
+                    )
+                    for name in names
+                ),
+                id="profile-choice",
+            )
+        yield Static("", id="profile-note", classes="note")
+
+    def on_mount(self) -> None:
+        self._sync()
+
+    @on(RadioSet.Changed, "#profile-choice")
+    def _changed(self) -> None:
+        pressed = self.query_one("#profile-choice", RadioSet).pressed_button
+        if pressed is None or pressed.name is None:
+            return
+        try:
+            self.app.use_profile(pressed.name)
+        except LatexAllyError as exc:
+            # A profile that will not load is the one thing this screen cannot
+            # route around, and the footer is where "why can I not go on" is
+            # answered everywhere else in this app.
+            self.set_next(False, str(exc))
+            return
+        self.set_next(True)
+        self._sync()
+
+    def _sync(self) -> None:
+        here = self.app.here_scope
+        root = self.app.profile.corpus.root
+        self.say(
+            "#profile-note",
+            f"corpus {root}"
+            + (f"   ·   you are in {here or 'the corpus root'}" if here is not None
+               else "   ·   you are outside this corpus"),
+        )
 
 
 # ---------------------------------------------------------------------- #
@@ -958,7 +1058,7 @@ class ColorsScreen(StepScreen):
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action in ("use", "keep"):
             name = self.current
-            usable = name is not None and proposal_for(self.profile, name) is not None
+            usable = name is not None and self._proposal(name) is not None
             return True if usable else None
         if action == "edit":
             # Any colour can be typed over, conforming or not -- unlike u and
@@ -1016,8 +1116,16 @@ class ColorsScreen(StepScreen):
         if name is None:
             return
         field = self.query_one("#hex", Input)
-        field.value = self.config.colors.replacements(self.profile).get(
-            name, self.profile.colors.originals.get(name, "")
+        # What this run will use, in decreasing order of how deliberate it is:
+        # a hex already chosen by hand, then this mode's proposal, then the
+        # course's own value. The proposal step is not optional -- under
+        # `palette` the binding lives in the .sty and `replacements` is empty
+        # until something is confirmed, so without it `e` prefilled the failing
+        # original and the obvious keystroke was "retype what you already have".
+        field.value = (
+            self.config.colors.replacements(self.profile).get(name)
+            or self._proposal(name)
+            or self.profile.colors.originals.get(name, "")
         )
         field.focus()
 
@@ -1064,7 +1172,7 @@ class ColorsScreen(StepScreen):
         original = self.profile.colors.originals.get(name, "")
         ratio, _ = contrast(self.profile, original)
         floor = floor_for(self.profile, name)
-        proposed = proposal_for(self.profile, name)
+        proposed = self._proposal(name)
         measured = f"{ratio:.2f}:1" if ratio is not None else "?"
         if proposed is None:
             note.update(
@@ -1085,13 +1193,26 @@ class ColorsScreen(StepScreen):
             )
         )
 
+    def _proposal(self, name: str) -> str | None:
+        """What this run's colour mode would change ``name`` to."""
+        return proposal_for(self.profile, name, self.config.colors.mode)
+
     def action_use(self) -> None:
         name = self.current
         if name is None:
             return
         original = self.profile.colors.originals.get(name, "")
-        self.config.colors.reset(name)
-        self._message(f"{name}: {original} → {proposal_for(self.profile, name)}")
+        proposed = self._proposal(name)
+        if self.config.colors.mode == "palette":
+            # Recorded, not reset. Under `conforming` the proposal is DERIVED,
+            # so clearing the override is what lets the derivation supply it
+            # again. Under `palette` there is no derivation to fall back on --
+            # the .sty holds the binding -- so clearing it would silently agree
+            # to nothing, and the run.yaml would not record what was agreed.
+            self.config.colors.set(name, proposed or original)
+        else:
+            self.config.colors.reset(name)
+        self._message(f"{name}: {original} → {proposed}")
 
     def action_keep(self) -> None:
         name = self.current
@@ -1149,22 +1270,35 @@ class ColorsScreen(StepScreen):
 # 5. alt text
 # ---------------------------------------------------------------------- #
 
-ALT_TEMPLATE_WARNING = (
-    "Every figure without a description gets <<TODO:figure-id>> written into "
-    "the .tex where an author will see it, and is listed in the alt-text "
-    "worklog.\n\n"
-    "latexally-core refuses <<TODO:…>> as alt text, so the document FAILS TO "
-    "BUILD until each one is filled in. That refusal is the point: the previous "
-    "generation of this tooling shipped unfilled markers into PDFs as real "
-    "/Alt, passing both a naive \"every Figure has /Alt\" check and veraPDF — "
-    "a silent false claim of conformance."
-)
+#: What each mode does, shown in the box at the bottom as it is selected. Keyed
+#: by the radio's own name, so a mode cannot be offered without an explanation
+#: or explained without being offered.
+ALT_DETAIL = {
+    "caption": (
+        "Adds \\caption{<<TODO:figure-id>>} to every figure and table that has "
+        "none, and lists each one in the alt-text worklog.\n\n"
+        "The marker is printed on the page, so an unfilled one is impossible "
+        "to miss in the PDF. Floats only: a graphic outside a figure or table "
+        "is reported and left alone, because \\caption there does not compile."
+    ),
+    "on": (
+        "Writes <<TODO:figure-id>> into the .tex where an author will see it, "
+        "and lists each figure in the alt-text worklog.\n\n"
+        "Fill them in and run again; a described figure is left alone, so a "
+        "second pass changes only what is still outstanding."
+    ),
+    "off": (
+        "Figures are not scanned and no worklog is written. The conversion "
+        "still tags structure, headings and math — everything except the "
+        "descriptions."
+    ),
+}
 
 
 class AltScreen(StepScreen):
-    """Figure descriptions: write the template, or leave figures alone."""
+    """Figure descriptions: caption them, mark them, or leave them alone."""
 
-    heading = "Write an alt-text template for undescribed figures?"
+    heading = "What should happen to undescribed figures?"
 
     def body(self) -> Iterator[Widget]:
         # `scans`, not `injects`: the shipped default is the old "worklog" tier,
@@ -1175,16 +1309,14 @@ class AltScreen(StepScreen):
             yield Static("Alt    ↑ ↓", classes="gutter")
             yield Choice(
                 Radio(
-                    "on — mark every undescribed figure, and refuse to build "
-                    "until each one is filled in",
-                    value=alt.scans and alt.strict,
-                    name="on",
+                    "caption — add a visible \\caption{} to figures that have none",
+                    value=alt.captions,
+                    name="caption",
                 ),
                 Radio(
-                    "draft — mark them, report them, build anyway. The PDF is "
-                    "NOT conformant",
-                    value=alt.scans and not alt.strict,
-                    name="draft",
+                    "on — mark every undescribed figure",
+                    value=alt.scans and not alt.captions,
+                    name="on",
                 ),
                 Radio(
                     "off — skip figures entirely",
@@ -1193,8 +1325,6 @@ class AltScreen(StepScreen):
                 ),
                 id="alt-mode",
             )
-        yield Static("", id="alt-draft", classes="note")
-        yield Static(ALT_TEMPLATE_WARNING, id="alt-warning", classes="detail")
 
     def on_mount(self) -> None:
         self._sync()
@@ -1206,29 +1336,17 @@ class AltScreen(StepScreen):
     def _sync(self) -> None:
         pressed = self.query_one("#alt-mode", RadioSet).pressed_button
         mode = pressed.name if pressed else ("on" if self.config.alt.scans else "off")
-        scans = mode in ("on", "draft")
-        self.query_one("#alt-warning").display = scans
-        # `draft` is offered, and says what it costs on the control itself.
-        # It was withheld on the grounds that turning strict off is what lets a
-        # placeholder reach a reader as if it were a description -- true, and
-        # the answer to it is that the cost is stated rather than the choice
-        # removed. What draft must never be is quiet: every figure that says
-        # nothing is still named in the report, the build is still marked, and
-        # `latexally check` still fails on the artefact.
-        self.say(
-            "#alt-draft",
-            ""
-            if mode != "draft"
-            else (
-                "Draft builds a PDF with figures that say nothing — their /Alt "
-                "is a placeholder or a file name. It passes a naive 'every "
-                "Figure has /Alt' check and veraPDF, so it can be mistaken for "
-                "a conforming document. For looking at a page, never for "
-                "handing out."
-            ),
-        )
+        label = {"caption": "caption", "on": "on", "off": "off"}[mode]
+        self.describe(label, ALT_DETAIL[mode])
+        # No build gate. An unfilled marker used to be a hard LaTeX error, on
+        # the argument that a placeholder reaching a PDF is a silent false
+        # claim of conformance. The marker is still reported by `check` and
+        # still named in the build log -- and under `caption` it is printed on
+        # the page -- so it is not silent, and a build that refuses is a build
+        # nobody can look at. `strict: true` in run.yaml puts the gate back.
         self.config.alt = AltChoice(
-            mode="placeholders" if scans else "off", strict=mode != "draft"
+            mode={"caption": "caption", "on": "placeholders", "off": "off"}[mode],
+            strict=False,
         )
 
 
@@ -1283,8 +1401,8 @@ class OutputScreen(StepScreen):
         # in-place label, which had no room for it and no way to also cover
         # edit -- the mode where it matters far more.
         yield Static(
-            "in-place and edit both need a clean git worktree. That is what "
-            "makes them undoable.",
+            "edit needs a clean git worktree — it is the only mode that "
+            "rewrites course material, and git is what makes that undoable.",
             classes="hint",
         )
         with Horizontal(classes="row"):
@@ -1473,6 +1591,11 @@ class ReviewScreen(StepScreen):
             self.say("#alt-markup", "")
             return
         marker = PLACEHOLDER.format(id="fig-1a2b3c4d")
+        caption = (
+            f"  \\caption{{{marker}}}   (added to a figure or table with none)\n"
+            if self.config.alt.captions
+            else ""
+        )
         self.say(
             "#alt-markup",
             "Each undescribed figure is wrapped where it stands:\n"
@@ -1480,11 +1603,12 @@ class ReviewScreen(StepScreen):
             "    …the figure, byte for byte as you wrote it…\n"
             "  \\end{Described}\n"
             f"  \\described{{{marker}}}{{…}}   (for a graphic sharing its line)\n"
-            "\n"
+            + caption
+            + "\n"
             "A figure that already has a description keeps it and is not "
-            "touched. The marker is refused as alt text, so the document does "
-            "NOT build until every one is filled in — which is what stops an "
-            "unfilled marker reaching a reader as if it were a description.",
+            "touched, so filling markers in and running again changes only "
+            "what is still outstanding. Every marker is named in the build log "
+            "and reported by `latexally check`.",
         )
 
     def _documents(self):
@@ -1794,7 +1918,7 @@ class RevertScreen(Screen):
     """
 
     BINDINGS = [
-        Binding("escape", "close", "Back"),
+        Binding("backslash", "close", "Back", key_display="\\"),
         Binding("y", "confirm", "Revert"),
         Binding("q", "app.quit", "Quit"),
     ]
@@ -1928,6 +2052,33 @@ class LatexAllyApp(App):
     /* 1fr so a long scope row wraps instead of clipping a scope off the end. */
     .rowtext { width: 1fr; }
     .detail { color: $text-muted; padding: 0 1; height: auto; max-height: 12; }
+    /* One green, named once. Every accent in the runner is this colour, so
+       retuning it is one edit rather than a hunt through the stylesheet. */
+    $ally-green: #1b5e20;
+    /* The selected option's explanation. Docked bottom on every step so it
+       occupies the same rows throughout, and bordered so it reads as the
+       answer to the row above rather than as more of the list. */
+    .detail-box {
+        /* NOT `dock: bottom`: the Footer is docked there too, and the last row
+           of the box -- its bottom border -- ended up underneath it. `#body`
+           is already 1fr, so a plain last child before the Footer lands on the
+           same rows on every step without fighting it for them. */
+        height: auto;
+        max-height: 10;
+        margin: 1 1 0 1;
+        padding: 0 1;
+        border: round $ally-green;
+        border-title-color: $ally-green;
+        border-title-style: bold;
+        color: $text-muted;
+    }
+    RadioSet > Radio.-selected > .toggle--label { color: $ally-green; }
+    Radio > .toggle--button { color: $ally-green; }
+    SelectionList > .selection-list--button-selected,
+    SelectionList > .selection-list--button-selected-highlighted {
+        color: $ally-green;
+    }
+    .heading { text-style: bold; }
     .reason { color: $text-muted; height: 1; padding: 0 1; }
     #body { height: 1fr; padding: 0 1; }
     SelectionList { height: 1fr; background: transparent; border: none; }
@@ -1953,7 +2104,14 @@ class LatexAllyApp(App):
     Input { border: none; background: transparent; padding: 0 1; }
     """
 
-    def __init__(self, profile: Profile, config: RunConfig | None = None) -> None:
+    def __init__(
+        self,
+        profile: Profile,
+        config: RunConfig | None = None,
+        *,
+        ask_profile: bool = False,
+        corpus_root: Path | None = None,
+    ) -> None:
         super().__init__()
         # ANSI only, so the app inherits the terminal's own palette and
         # background instead of painting a dark window over it.
@@ -1972,18 +2130,47 @@ class LatexAllyApp(App):
         #: on the first step, and it decides whether the scope picker is part
         #: of this run at all.
         self.scope_mode = "local" if self.here_scope is not None else "choose"
+        #: What -c said, re-applied whenever the picker swaps the profile so a
+        #: named corpus root is not quietly dropped by changing course.
+        self._corpus_root = corpus_root
+        #: Installed profiles, read once. The picker's rows and `use_profile`'s
+        #: guard come from the same list, so it cannot offer what it refuses.
+        self.profile_names = builtin_profile_names()
+        #: A step with one possible answer is not a question (rule 3): the
+        #: course is asked only when the command line left it open AND there is
+        #: more than one to choose between.
+        self.ask_profile = ask_profile and len(self.profile_names) > 1
+        self.active_steps = (ProfileScreen, *STEPS) if self.ask_profile else STEPS
         self.should_run = False
         self.reports: list = []
         self.descriptions: dict = {}
         self._index = 0
 
     def on_mount(self) -> None:
-        self.push_screen(STEPS[0]())
+        self.push_screen(self.active_steps[0]())
 
     #: Every run walks all of them. `local` mode does not skip the scope step:
     #: it pre-answers it, and the screen still has to show what that answer
-    #: covers so any of it can be unticked.
-    active_steps = STEPS
+    #: covers so any of it can be unticked. Set per-instance in `__init__`,
+    #: because whether the course is asked depends on what is installed.
+    active_steps: tuple[type[StepScreen], ...] = STEPS
+
+    def use_profile(self, name: str) -> None:
+        """Switch course, and re-derive everything that was read off the old one.
+
+        `here_scope` and the anchored output root are both functions of the
+        corpus, so leaving them behind would point step two at the previous
+        course's directories -- the failure this method exists to prevent.
+        """
+        if name == self.profile.name:
+            return
+        if name not in self.profile_names:
+            raise LatexAllyError(f"no such profile: {name}")
+        self.profile = load_profile(name, corpus_root=self._corpus_root)
+        self.config.profile = name
+        self.config.output.anchor(self.profile)
+        self.here_scope = scope_from_cwd(self.profile)
+        self.scope_mode = "local" if self.here_scope is not None else "choose"
 
     def step(self, delta: int) -> None:
         """Move one step. Back pops, so the screen behind keeps its state."""

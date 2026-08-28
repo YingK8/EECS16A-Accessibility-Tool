@@ -34,5 +34,12 @@ venv/
 /mathspeech-driver/target/
 /vendor/MathCAT/target/
 
+# The PDFBox jar `latexally formats` extracts with. Fetched by
+# vendor/pdfbox/fetch.sh, never committed: it is 13.5 MB of binary that would
+# sit in every clone forever, and Apache ships it as a Maven release rather
+# than as anything a submodule checkout could give you. `doctor` T013 says when
+# it is missing, and LATEXALLY_PDFBOX_JAR overrides the path.
+/vendor/pdfbox/*.jar
+
 # macOS Finder metadata. Tracked once, and it blocked a branch checkout.
 .DS_Store

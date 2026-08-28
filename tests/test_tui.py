@@ -23,10 +23,18 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, DataTable, Input, RadioSet, SelectionList
+from textual.widgets import (
+    Button,
+    DataTable,
+    Input,
+    RadioSet,
+    SelectionList,
+    Static,
+)
 from textual.worker import WorkerCancelled
 
 from latexally.config import ColorPolicy, CorpusScope, Profile
+from latexally.errors import LatexAllyError
 from latexally.run import RunConfig
 from latexally.tui.app import (
     AltScreen,
@@ -36,6 +44,7 @@ from latexally.tui.app import (
     LatexAllyApp,
     OutputScreen,
     ModeScreen,
+    ProfileScreen,
     ReviewScreen,
     RevertScreen,
     ScopeScreen,
@@ -151,7 +160,7 @@ async def advance(pilot, times: int = 1) -> None:
 
 
 async def retreat(pilot, times: int = 1) -> None:
-    await press(pilot, *["escape"] * times)
+    await press(pilot, *["backslash"] * times)
 
 
 async def walk_to(pilot, screen) -> None:
@@ -499,34 +508,70 @@ async def set_hex(pilot, value: str) -> None:
 REDISH, BLUEISH = 1, 2
 
 
-async def test_the_proposal_is_the_smallest_change_not_a_palette_colour(
-    profile: Profile,
-):
-    """The point of the whole screen.
+async def test_the_proposal_is_the_palette_token(profile: Profile):
+    """The point of the whole screen, under the default mode.
 
-    #FF0000 fails at 4.00:1. The old fixed palette answered it with #C00000 --
-    6.48:1, far past what was asked for. The proposal now is #EE0000 at 4.53:1.
+    #FF0000 fails at 4.00:1 and the palette answers it with allyRed, #CC0000 at
+    5.89:1 -- the darkest red that is still recognisably red. Pure red cannot
+    stay: it is 4.00:1 and AA wants 4.5:1.
     """
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await colors(pilot, REDISH)
         await press(pilot, "u")
+        assert app.config.colors.replacements(profile)["redish"] == "#CC0000"
+        assert "#CC0000" in visible(app)
+
+
+async def test_conforming_mode_still_proposes_the_smallest_change(profile: Profile):
+    """The narrower mode survives, and it still derives rather than looks up.
+
+    A fixed palette is what once answered a course blue of #3399E6 with
+    #0645AD -- 8.53:1 where 4.5:1 was asked for, and reported as harder to read
+    than the colour it replaced. `conforming` is for a document whose figures
+    must keep the exact hues they were drawn in; it lands on the floor and
+    stops, so #FF0000 goes to #EE0000 at 4.53:1 rather than to the palette's
+    #CC0000.
+    """
+    from latexally.run import ColorChoice
+
+    app = LatexAllyApp(profile)
+    app.config.colors = ColorChoice(mode="conforming")
+    async with app.run_test(size=SIZE) as pilot:
+        await colors(pilot, REDISH)
+        await press(pilot, "u")
         assert app.config.colors.replacements(profile)["redish"] == "#EE0000"
-        shown = visible(app)
-        assert "#EE0000" in shown
-        assert "#C00000" not in shown
+        assert "#EE0000" in visible(app)
 
 
-async def test_a_colour_that_already_conforms_is_never_offered(profile: Profile):
-    """blueish is #B31AB3 at 5.65:1. Nothing to fix, so nothing to ask about."""
+async def test_a_colour_that_already_conforms_is_still_unified(profile: Profile):
+    """blueish is #B31AB3 at 5.65:1 -- it passes, and it still moves.
+
+    This is the difference between the two modes stated as one colour. Contrast
+    is not the only reason to change a colour: `blueish` passes AA, is named for
+    a colour it is not (it is magenta), and is one of three unrelated purples
+    and blues the corpus uses for the same purpose. `conforming` leaves it
+    exactly as it is, because it only ever asked "does this pass?". `palette`
+    binds it to allyPurple, because it asks "is this the same colour as the one
+    beside it?".
+    """
+    from latexally.run import ColorChoice
+
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await colors(pilot, BLUEISH)
-        assert "blueish" not in app.config.colors.replacements(profile)
-        assert "already meets the" in visible(app)
+        await press(pilot, "u")
+        assert app.config.colors.replacements(profile)["blueish"] == "#6A0DAD"
+
+    conforming = LatexAllyApp(profile)
+    conforming.config.colors = ColorChoice(mode="conforming")
+    async with conforming.run_test(size=SIZE) as pilot:
+        await colors(pilot, BLUEISH)
+        assert "blueish" not in conforming.config.colors.replacements(profile)
+        assert "already meets the" in visible(conforming)
         # Offered nowhere: the footer greys u and k out on a conforming colour.
-        assert app.screen.check_action("use", ()) is None
-        assert app.screen.check_action("keep", ()) is None
+        assert conforming.screen.check_action("use", ()) is None
+        assert conforming.screen.check_action("keep", ()) is None
 
 
 async def test_keeping_the_original_is_allowed_and_flagged(profile: Profile):
@@ -559,8 +604,29 @@ async def test_a_low_contrast_override_is_accepted_but_flagged(profile: Profile)
         assert "below the 4.5:1 floor" in visible(app)
 
 
-async def test_accepting_the_proposal_clears_an_earlier_override(profile: Profile):
+async def test_accepting_the_proposal_replaces_an_earlier_override(profile: Profile):
+    """`u` after a hand-typed hex means "never mind, use the palette's".
+
+    It records the token rather than clearing the override, and the difference
+    matters: under `conforming` the proposal is DERIVED, so clearing is what
+    lets the derivation supply it again. Under `palette` there is no derivation
+    to fall back on -- the binding lives in the .sty -- so clearing would agree
+    to nothing and the run.yaml would not record what was agreed.
+    """
     app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await colors(pilot, REDISH)
+        await set_hex(pilot, "#004400")
+        await press(pilot, "u")
+        assert app.config.colors.overrides == {"redish": "#CC0000"}
+        assert app.config.colors.replacements(profile)["redish"] == "#CC0000"
+
+
+async def test_conforming_mode_clears_the_override_instead(profile: Profile):
+    from latexally.run import ColorChoice
+
+    app = LatexAllyApp(profile)
+    app.config.colors = ColorChoice(mode="conforming")
     async with app.run_test(size=SIZE) as pilot:
         await colors(pilot, REDISH)
         await set_hex(pilot, "#004400")
@@ -581,7 +647,7 @@ async def test_e_opens_the_colour_under_the_cursor_for_editing(profile: Profile)
         await colors(pilot, REDISH)
         await press(pilot, "e")
         field = app.screen.query_one("#hex", Input)
-        assert field.value == "#EE0000"
+        assert field.value == "#CC0000"
         assert field.has_focus
 
 
@@ -653,8 +719,16 @@ async def choose_alt(pilot, name: str) -> None:
     await pilot.pause()
 
 
-async def test_the_alt_template_warns_that_it_will_fail_the_build(profile: Profile):
-    """Strict is not a question any more, so the consequence has to be stated."""
+async def test_the_alt_template_marks_figures_without_gating_the_build(
+    profile: Profile,
+):
+    """The refusal is gone, and with it the warning that announced it.
+
+    An unfilled marker used to be a hard LaTeX error, on the argument that a
+    placeholder reaching a PDF is a silent false claim of conformance. It is
+    still reported by `check` and still named in the build log, so it is not
+    silent -- and a build that refuses is a build nobody can look at.
+    """
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await scope_all_homework(pilot)
@@ -662,12 +736,34 @@ async def test_the_alt_template_warns_that_it_will_fail_the_build(profile: Profi
         await choose_alt(pilot, "on")
         assert app.config.alt.mode == "placeholders"
         assert app.config.alt.injects is True
-        # Never offered as a toggle: turning it off is what lets an unfilled
-        # marker reach a reader as if it were a description.
-        assert app.config.alt.strict is True
+        assert app.config.alt.strict is False
         shown = visible(app)
-        assert "FAILS TO BUILD" in shown
+        assert "FAILS TO BUILD" not in shown
+        assert "NOT conformant" not in shown
+        # The explanation is in the box, and it says what actually happens.
         assert "TODO:figure-id" in shown
+
+
+async def test_captions_are_the_option_above_the_marker(profile: Profile):
+    """A marker on the page beats a marker only a screen reader would hear."""
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await scope_all_homework(pilot)
+        await walk_to(pilot, AltScreen)
+        await choose_alt(pilot, "caption")
+        assert app.config.alt.mode == "caption"
+        assert app.config.alt.captions is True
+        # Caption-only. It used to be the marker tier PLUS a caption, which
+        # meant asking for captions also produced a worklog, <<TODO>> in /Alt
+        # and a report of every undescribed figure -- none of it asked for.
+        # Alt text is reached with `latexally scan` and `latexally check`.
+        assert app.config.alt.injects is False
+        assert app.config.alt.scans is False
+        assert app.config.alt.touches_sources is True
+        shown = visible(app)
+        assert "caption" in shown
+        # The one thing a caption cannot do, said where the choice is made.
+        assert "figure or table" in shown
 
 
 async def test_descriptions_can_be_switched_off(profile: Profile):
@@ -678,7 +774,32 @@ async def test_descriptions_can_be_switched_off(profile: Profile):
         await choose_alt(pilot, "off")
         assert app.config.alt.mode == "off"
         assert app.config.alt.scans is False
-        assert not app.screen.query_one("#alt-warning").display
+        assert app.config.alt.captions is False
+
+
+async def test_every_step_keeps_its_description_in_the_same_place(
+    profile: Profile,
+):
+    """Docked bottom, so it does not move as the body above it changes height.
+
+    A note that lands on a different row on each screen is one the eye has to
+    find again each time.
+    """
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await scope_all_homework(pilot)
+        await walk_to(pilot, AltScreen)
+        await choose_alt(pilot, "on")
+        box = app.screen.query_one("#detail-box", Static)
+        assert box.display
+        # Titled with the option it explains, and the title is the bold part.
+        assert box.border_title == "on"
+        assert box.styles.border_title_style.bold
+        # Bottom aligned, and whole: the box used to be docked, which put its
+        # last row -- the bottom border -- underneath the Footer.
+        rendered = [strip.text.rstrip() for strip in app.screen._compositor.render_strips()]
+        rendered = [line for line in rendered if line.strip()]
+        assert rendered[-2].lstrip().startswith("\u2570"), rendered[-3:]
 
 
 # ---------------------------------------------------------------------- #
@@ -777,7 +898,7 @@ async def test_backing_out_keeps_the_current_output_settings(profile: Profile):
         await output(pilot)
         await retreat(pilot)
         assert app.config.output.root == _out(profile)
-        assert app.config.output.write_mode == "mirror"
+        assert app.config.output.write_mode == "in-place"
 
 
 async def test_the_worklog_path_is_named_so_staff_can_find_it(profile: Profile):
@@ -921,7 +1042,11 @@ async def test_the_review_states_whether_anything_will_be_written(profile: Profi
     async with app.run_test(size=SIZE) as pilot:
         await scope_all_homework(pilot)
         await walk_to(pilot, ReviewScreen)
-        assert "your corpus is not modified" in visible(app)
+        # in-place is the default now: the PDF goes beside the document, and
+        # the review has to say so rather than promise an untouched corpus.
+        shown = visible(app)
+        assert "beside the document it came from" in shown
+        assert app.config.output.edits_sources is False
 
 
 async def test_the_review_names_build_as_the_key_that_writes(profile: Profile):
@@ -932,7 +1057,7 @@ async def test_the_review_names_build_as_the_key_that_writes(profile: Profile):
         await walk_to(pilot, ReviewScreen)
         shown = visible(app)
         assert "Build" in shown, "the footer has to name the key that writes"
-        assert "esc Back" in shown
+        assert "\\ Back" in shown
 
 
 async def test_in_place_review_names_the_corpus_not_a_directory(profile: Profile):
@@ -1142,11 +1267,11 @@ async def test_the_build_screen_reports_every_document_and_its_failures(
         assert "FAILED" in shown
 
 
-async def test_escape_on_the_first_step_does_not_quit(profile: Profile):
-    """Back used to fall through to app.exit(), so Escape here killed the app."""
+async def test_back_on_the_first_step_does_not_quit(profile: Profile):
+    """Back used to fall through to app.exit(), so Back here killed the app."""
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
-        await pilot.press("escape")
+        await pilot.press("backslash")
         await pilot.pause()
         assert app.is_running
         assert isinstance(app.screen, ModeScreen)
@@ -1350,15 +1475,15 @@ async def test_arrows_choose_between_options_rather_than_shopping(
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, AltScreen)
         assert app.focused is app.screen.query_one("#alt-mode")
-        # Figures are off by default now, so the screen opens on the last row.
-        assert app.config.alt.mode == "off"
-        # Three options: on, draft, off. Each arrow moves the value by one.
-        await press(pilot, "up")
-        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", False)
-        await press(pilot, "up")
-        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", True)
+        # Captions are the default, so the screen opens on the first row.
+        assert app.config.alt.mode == "caption"
+        # Three options: caption, on, off. Each arrow moves the value by one.
         await press(pilot, "down")
-        assert (app.config.alt.mode, app.config.alt.strict) == ("placeholders", False)
+        assert app.config.alt.mode == "placeholders"
+        await press(pilot, "down")
+        assert app.config.alt.mode == "off"
+        await press(pilot, "up")
+        assert app.config.alt.mode == "placeholders"
 
 
 async def test_the_write_mode_is_where_the_output_cursor_starts(
@@ -1369,11 +1494,11 @@ async def test_the_write_mode_is_where_the_output_cursor_starts(
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, OutputScreen)
         assert app.focused is app.screen.query_one("#write-mode")
-        assert app.config.output.write_mode == "mirror"
+        assert app.config.output.write_mode == "in-place"
         await press(pilot, "down")
         assert app.config.output.in_place is True
         await press(pilot, "up")
-        assert app.config.output.write_mode == "mirror"
+        assert app.config.output.write_mode == "in-place"
 
 
 async def test_scanning_clears_the_list_and_says_so(profile: Profile, monkeypatch):
@@ -1439,7 +1564,7 @@ async def test_r_opens_revert_from_any_step(profile: Profile):
         opened_from = type(app.screen)
         await press(pilot, "r")
         assert isinstance(app.screen, RevertScreen)
-        await press(pilot, "escape")
+        await press(pilot, "backslash")
         assert isinstance(app.screen, opened_from)
 
 
@@ -1665,7 +1790,10 @@ async def test_review_shows_the_placeholder_markup_that_will_be_written(
         assert PLACEHOLDER.format(id="fig-1a2b3c4d") in markup
         assert "\\begin{Described}" in markup
         assert "\\described" in markup, "the inline form is written too"
-        assert "does NOT build" in markup, "the guarantee has to be stated"
+        assert "reported by `latexally check`" in markup, (
+            "a marker no longer fails the build, so the review has to say what "
+            "does happen to it instead"
+        )
 
 
 async def test_review_says_nothing_about_markup_when_none_is_written(
@@ -1684,31 +1812,6 @@ async def test_review_says_nothing_about_markup_when_none_is_written(
         assert "your .tex files are not edited" in visible(app)
 
 
-async def test_draft_is_offered_and_says_what_it_costs(profile: Profile):
-    """It was withheld, on the grounds that turning strict off lets a
-    placeholder reach a reader as if it were a description.
-
-    That is true, and the answer to it is to state the cost rather than remove
-    the choice — the setting already existed and there was simply no way to
-    reach it.
-    """
-    app = LatexAllyApp(profile)
-    async with app.run_test(size=SIZE) as pilot:
-        await scope_all_homework(pilot)
-        await walk_to(pilot, AltScreen)
-        assert app.config.alt.strict is True
-
-        radio = app.screen.query_one("#alt-mode", RadioSet)
-        next(b for b in radio.query("RadioButton") if b.name == "draft").value = True
-        await pilot.pause()
-
-        assert app.config.alt.mode == "placeholders", "draft still marks figures"
-        assert app.config.alt.strict is False
-        shown = visible(app)
-        assert "NOT conformant" in shown
-        assert "veraPDF" in shown, "the cost has to be on the control"
-
-
 async def test_off_still_means_no_figures_at_all(profile: Profile):
     """Three options now, and the third must not have drifted."""
     app = LatexAllyApp(profile)
@@ -1720,3 +1823,150 @@ async def test_off_still_means_no_figures_at_all(profile: Profile):
         await pilot.pause()
         assert app.config.alt.mode == "off"
         assert app.config.alt.scans is False
+
+
+# ---------------------------------------------------------------------- #
+# which course
+# ---------------------------------------------------------------------- #
+#
+# `latexally run` used to inherit the refusal every other command makes when
+# two courses are installed and neither was named. Right for `build --write`,
+# where guessing converts the wrong corpus in silence; wrong for the runner,
+# whose whole premise is asking. These pin that it asks, that it asks only
+# when there is something to ask, and that switching re-derives what was read
+# off the profile it replaced.
+
+
+@pytest.fixture
+def installed(tmp_path: Path, corpus: Path, monkeypatch) -> Path:
+    """A profiles directory with two courses, one of them declaring itself."""
+    from latexally import config as config_module
+
+    directory = tmp_path / "installed"
+    directory.mkdir()
+    (directory / "current.yaml").write_text(
+        "name: current\n"
+        "default: true\n"
+        "course:\n"
+        '  number: "EE 66"\n'
+        '  name: "Signals, Dynamics, and Information"\n'
+        "corpus:\n"
+        f'  root: "{corpus}"\n'
+        '  include: ["**/*.tex"]\n'
+    )
+    (directory / "archive.yaml").write_text(
+        "name: archive\n"
+        "course:\n"
+        '  number: "EECS 16A"\n'
+        '  name: "Designing Information Devices and Systems I"\n'
+        "corpus:\n"
+        f'  root: "{corpus}"\n'
+        '  include: ["**/*.tex"]\n'
+    )
+    monkeypatch.setattr(config_module, "builtin_profile_dir", lambda: directory)
+    return directory
+
+
+def test_the_default_course_is_declared_in_the_profile_not_in_the_code(installed):
+    """Which course is current is course data, like every other field.
+
+    A name compiled into the tool would have to be edited to onboard a course,
+    or to hand this corpus to next term's staff -- who would then be editing
+    Python to say what term it is.
+    """
+    from latexally.config import builtin_profile_names, default_builtin_profile
+
+    assert builtin_profile_names() == ["archive", "current"]
+    assert default_builtin_profile() == "current"
+
+
+def test_two_courses_claiming_to_be_current_is_not_a_default(installed):
+    """A contradiction in the data, and taking the first would hide it."""
+    from latexally.config import default_builtin_profile
+
+    (installed / "archive.yaml").write_text(
+        (installed / "archive.yaml").read_text().replace(
+            "name: archive\n", "name: archive\ndefault: true\n"
+        )
+    )
+    assert default_builtin_profile() is None
+
+
+def test_one_course_installed_is_the_default_whether_or_not_it_says_so(installed):
+    from latexally.config import default_builtin_profile
+
+    (installed / "current.yaml").unlink()
+    assert default_builtin_profile() == "archive"
+
+
+async def test_the_course_is_asked_before_anything_is_read_off_it(
+    profile: Profile, installed
+):
+    """Step one, because `here_scope` and the output root are both its output."""
+    app = LatexAllyApp(profile, ask_profile=True)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert isinstance(app.screen, ProfileScreen)
+        shown = visible(app)
+        assert "Which course?" in shown
+        # The rows are read from the directory, so both courses are offered and
+        # each is named the way a person would recognise it.
+        assert "EE 66 - Signals, Dynamics, and Information" in shown
+        assert "EECS 16A - Designing Information Devices and Systems I" in shown
+        assert isinstance(app.focused, Choice)
+
+
+async def test_one_course_installed_is_not_a_question(
+    profile: Profile, installed
+):
+    """Rule 3: a step with one possible answer is not a step."""
+    (installed / "archive.yaml").unlink()
+    app = LatexAllyApp(profile, ask_profile=True)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert app.ask_profile is False
+        assert isinstance(app.screen, ModeScreen)
+
+
+async def test_the_runner_asks_only_when_the_command_line_left_it_open(
+    profile: Profile, installed
+):
+    """`-p` is an answer, so the screen it would answer is not shown."""
+    app = LatexAllyApp(profile, ask_profile=False)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert isinstance(app.screen, ModeScreen)
+
+
+async def test_switching_course_re_derives_what_was_read_off_the_old_one(
+    profile: Profile, installed, monkeypatch
+):
+    """The failure this guards: step two listing the previous course's corpus.
+
+    `here_scope` and the anchored output root are both functions of the corpus,
+    so a switch that left them behind would point the scope picker at the
+    profile it just replaced.
+    """
+    from latexally.config import load_profile
+
+    app = LatexAllyApp(load_profile("current"), ask_profile=True)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        assert app.profile.name == "current"
+        app.use_profile("archive")
+        await settle(pilot)
+        assert app.profile.name == "archive"
+        # The config carries the choice into run.yaml, so a saved run replays
+        # against the course it was actually made for.
+        assert app.config.profile == "archive"
+        assert app.profile.corpus.root.resolve() == app.profile.corpus.root.resolve()
+
+
+async def test_switching_to_a_course_that_is_not_installed_is_refused(
+    profile: Profile, installed
+):
+    app = LatexAllyApp(profile, ask_profile=True)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        with pytest.raises(LatexAllyError):
+            app.use_profile("no-such-course")

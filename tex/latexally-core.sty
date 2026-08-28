@@ -436,6 +436,17 @@
 \NewDocumentCommand \decorative { +m }
   { \mbox { \begin{Decorative} #1 \end{Decorative} } }
 
+%% The same, for content that belongs in VERTICAL mode -- a \hrule masthead
+%% rule, a \vspace'd separator. `Decorative' starts with \leavevmode so an
+%% inline artifact has a horizontal list to sit in; used around a \hrule that
+%% is exactly wrong, because it opens a paragraph the rule then has to end, and
+%% the \parskip and strut it brings show up as a gap nobody asked for.
+%% **[verified]** on the ee16 masthead: 39.1pt under the semester line with
+%% \leavevmode, 20.5pt without -- matching the untagged build to the point.
+\NewDocumentEnvironment { DecorativeBlock } { }
+  { \tagpdfparaOff \__access_artifact_begin: }
+  { \__access_artifact_end: \tagpdfparaOn }
+
 %% ---------------------------------------------------------------------------
 %% 5. DescribedFigure -- short /Alt plus a visible long description (tier T2)
 %% ---------------------------------------------------------------------------
@@ -707,15 +718,40 @@
 %% compute WCAG relative luminance from \definecolor. This package only provides
 %% conforming defaults; it deliberately does not silently recolour a document.
 
-%% These are the blind fallbacks, for a document whose palette the run does not
-%% know. They are the SMALLEST darkening of the course's own colours that clears
-%% 4.5:1, not the darkest thing that clears it: #0645AD passed at 8.53:1 and was
-%% reported as much harder to read than the blue it replaced, which is the whole
-%% argument for landing on the floor rather than well past it.
-\definecolor { allySolution } { HTML } { 187AC4 } % 4.55:1 on white; was #3399E6 at 3.07:1
-\definecolor { allyAnswer }   { HTML } { 187AC4 }
-\definecolor { allyWarning }  { HTML } { EE0000 } % 4.53:1; plain red is 4.00:1
-\definecolor { allyAccent }   { HTML } { 6A1B9A } % 9.39:1
+%% The unified palette. Five tokens, hue-anchored to the primaries and
+%% secondaries, each as dark as it can be while staying a recognisable member of
+%% its own hue family.
+%%
+%% This replaced a "smallest darkening that clears 4.5:1" scheme, and the reason
+%% is not contrast arithmetic -- both schemes pass. It is that the old scheme
+%% derived a DIFFERENT value per colour NAME, which is how the course ended up
+%% with three blues that are not the same blue: solution text at #187AC4,
+%% \sol in every homework at plain #0000FF, and a name literally spelled
+%% `blueish' holding rgb(0.7,0.1,0.7), which is magenta. Side by side on one
+%% page -- fa26/dis/00B draws its answer text in one and its answer vectors in
+%% another -- that reads as a rendering fault rather than as meaning.
+%%
+%% Pure primaries were asked for and only one of them survives contact with
+%% WCAG: #FF0000 is 4.00:1 and fails AA for body text, #00FF00 is 1.37:1 and
+%% fails it comprehensively. So the HUE is kept exactly and the lightness is
+%% what moves -- which is the same operation `minimum_conforming` performs, run
+%% to a higher target rather than to the floor.
+\definecolor { allyBlue }   { HTML } { 0000FF } % 8.59:1  hue 240, pure
+\definecolor { allyRed }    { HTML } { CC0000 } % 5.89:1  hue 0
+\definecolor { allyGreen }  { HTML } { 006600 } % 7.24:1  hue 120
+\definecolor { allyPurple } { HTML } { 6A0DAD } % 9.24:1  hue 275
+\definecolor { allyOrange } { HTML } { B35A00 } % 4.80:1  hue 30
+%% Ratios are measured, not estimated -- tests/test_style_fidelity.py asserts
+%% each one to two decimal places against the same WCAG arithmetic the linter
+%% uses, so a value edited here without re-measuring fails there.
+
+%% Semantic aliases, kept so the older names below and any document that used
+%% them still resolve. They are aliases now, not independent values -- that is
+%% the whole point.
+\colorlet { allySolution } { allyBlue }
+\colorlet { allyAnswer }   { allyBlue }
+\colorlet { allyWarning }  { allyRed }
+\colorlet { allyAccent }   { allyPurple }
 
 %% The guard is \string\color@<name>, NOT color@<name>. xcolor stores a colour
 %% under a control sequence whose name STARTS WITH A LITERAL BACKSLASH -- it
@@ -738,6 +774,47 @@
 %% colour the document never had would be inventing style, not fixing it.
 \cs_new_protected:Npn \__access_recolor:nn #1#2
   { \@ifundefined { \string \color@#1 } { } { \colorlet {#1} {#2} } }
+
+%% The whole palette, text and drawings alike.
+%%
+%% \accessconformingcolors above moves the five names the COURSE defines. It
+%% cannot reach a figure, because no figure in this corpus uses one of those
+%% names: every \addplot, \draw and \fill spells its colour as a bare xcolor
+%% word. Counted across fa26 -- 114 uses of solutionColor in text, and zero in
+%% any drawing; 63 uses of `blue', almost all of them in drawings. Remapping the
+%% semantic names alone therefore recolours the prose and leaves the picture
+%% beside it at its original value, which is exactly the mismatch this is for.
+%%
+%% So the xcolor BASE NAMES are rebound too. `blue' is not a value the document
+%% chose, it is the default spelling of "blue", and binding it to the palette's
+%% blue is what makes one page use one blue. It also costs no document edits at
+%% all, across ~2000 figure-bearing files.
+%%
+%% \colorlet and not \definecolor: \colorlet resolves the target NOW and stores
+%% the result, so a later \colorlet{red}{...} in a document is a redefinition
+%% rather than a cycle. \definecolor{blue}{...}{blue} would be one.
+%%
+%% What this deliberately does not solve: a figure that encodes meaning in hue
+%% alone -- fill=red against fill=green with no marker or label to tell them
+%% apart -- is still a WCAG 1.4.1 failure after both are darkened. Darker is not
+%% distinguishable. That needs the drawings edited and is not this macro's job.
+\NewDocumentCommand \accesspalette { }
+  {
+    %% Course names. Guarded: a document that never defined `redish' does not
+    %% acquire one.
+    \__access_recolor:nn { solutionColor } { allyBlue }
+    \__access_recolor:nn { solansColor }   { allyBlue }
+    \__access_recolor:nn { answerColor }   { allyBlue }
+    \__access_recolor:nn { blueish }       { allyPurple }
+    \__access_recolor:nn { redish }        { allyRed }
+    %% xcolor base names. Unguarded on purpose -- xcolor always defines these,
+    %% and it is their use in drawings that this exists to reach.
+    \colorlet { blue }   { allyBlue }
+    \colorlet { red }    { allyRed }
+    \colorlet { green }  { allyGreen }
+    \colorlet { purple } { allyPurple }
+    \colorlet { orange } { allyOrange }
+  }
 
 %% One colour, by name, to an exact value the run computed -- the smallest
 %% darkening of what the course itself defines that clears the contrast floor.
@@ -763,6 +840,10 @@
     strict            .bool_gset:N = \g__access_strict_bool ,
     strict            .initial:n   = true ,
     conforming-colors .code:n      = { \AtBeginDocument { \accessconformingcolors } } ,
+    %% The unified palette: the five course names AND the xcolor base names the
+    %% drawings use. `conforming-colors' stays for a run that wants only the
+    %% contrast fix on text, leaving every figure exactly as drawn.
+    palette           .code:n      = { \AtBeginDocument { \accesspalette } } ,
     %% Off suppresses the invisible description text. The figure then reads
     %% correctly only in a tag-following reader; Preview and pdf.js fall back to
     %% the drawing's own glyphs. See \__access_text_layer:n.

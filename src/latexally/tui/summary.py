@@ -154,14 +154,34 @@ def floor_for(profile: Profile, name: str) -> float:
     )
 
 
-def proposal_for(profile: Profile, name: str) -> str | None:
-    """The smallest change that clears the floor, or ``None`` if it already does.
+def proposal_for(profile: Profile, name: str, mode: str = "conforming") -> str | None:
+    """What this run would change ``name`` to, or ``None`` for "nothing".
 
-    Deliberately not a lookup in a "conforming" palette. A fixed palette is what
-    answered a course blue of #3399E6 with #0645AD -- 8.53:1 where 4.5:1 was
-    asked for, and reported as harder to read than the colour it replaced.
+    Two different questions behind one name, because the screen asks the same
+    one either way -- "what will this become, and do you agree?".
+
+    Under ``palette`` the answer is a lookup, and that is the point: one token
+    set, bound to the course's names AND to the xcolor names the drawings use,
+    so the page stops holding two blues that no per-name derivation could ever
+    bring together.
+
+    Under ``conforming`` it is the smallest change that clears the floor, and
+    deliberately not a lookup: a fixed palette is what once answered a course
+    blue of #3399E6 with #0645AD -- 8.53:1 where 4.5:1 was asked for, and
+    reported as harder to read than the colour it replaced. That mode survives
+    for a document whose figures must keep the exact hues they were drawn in.
     """
-    from ..check.contrast import minimum_conforming
+    from ..check.contrast import minimum_conforming, palette_value
+
+    if mode == "house":
+        return None
+    if mode == "palette":
+        proposed = palette_value(name)
+        original = profile.colors.originals.get(name)
+        # A name already sitting on its token is not a change to confirm.
+        if proposed and original and proposed.upper() == original.upper():
+            return None
+        return proposed
 
     original = profile.colors.originals.get(name)
     if not original:

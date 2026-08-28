@@ -1,16 +1,18 @@
-# EECS 16A — Designing Information Devices and Systems I
-#
-# Reference profile. Copy this file to onboard another course; nothing in the
-# Python package is 16A-specific.
+# EE 66 — Signals, Dynamics, and Information
 
-name: eecs66
+name: ee66
+
+# The course this corpus is currently taught as. `latexally run` lands here
+# when several profiles are installed; every other command still wants -p,
+# because silently converting the wrong corpus is not a default worth having.
+default: true
 
 course:
   number: "EE 66"
-  name: "Designing Information Devices and Systems I"
+  name: "Signals, Dynamics, and Information"
   university: "UC Berkeley"
   short_university: "UCB"
-  semester: "Spring 2026"
+  semester: "Fall 2026"
   language: en-US
 
 corpus:
@@ -49,13 +51,6 @@ corpus:
       - "sp26/**/*.tex"
       - "exams/**/*.tex"
 
-  # Path fragment -> what that material IS. The runner groups its scope picker by
-  # these, so "all homeworks" works without the Python knowing this course spells
-  # that directory `hw`. A course using `problem-sets/` changes one line here.
-  # An assignment is several documents built from ONE body, differing only in
-  # how \sol is defined. sol9.tex prints solutions; prob9.tex swallows them and
-  # is what students receive. Discussions add dis<N> (handout) and ans<N>.
-  # Filename prefix -> which document it is:
   variants:
     sol: solution
     prob: problem
@@ -65,12 +60,9 @@ corpus:
   kinds:
     hw: homework
     dis: discussion
-    # `sec` is what discussions were called before fa21; the material is the
-    # same and a reader looking for "discussions" expects to find it there.
-    sec: discussion
+    sec: discussion # `sec` is legacy name for pre fa21 discussions.
     exams: exam
-    # Glob, so the eight `notes_<semester>` snapshots classify as notes too.
-    notes*: note
+    notes*: note    # Glob, so the eight `notes_<semester>` snapshots classify as notes too.
     questionBank: bank
     extraCredit: extra-credit
     lab: lab
@@ -155,7 +147,12 @@ engine:
   # have, so it is conversion-induced and ours to absorb. `\endproof` goes with
   # it: \newenvironment defines both halves.
   unlet_before:
+    # Both names: the course was renumbered and the style file with it, but the
+    # archive still loads ee16.sty and the two define `proof' identically. A
+    # shim keyed on one filename silently stopped firing the day fa26 switched.
     ee16.sty: [proof]
+    ee16_copy.sty: [proof]
+    ee66.sty: [proof]
   legacy_testphase: [phase-III, math, table, graphic, firstaid]
   min_runs: 3
   timeout_seconds: 300

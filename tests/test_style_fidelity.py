@@ -306,24 +306,29 @@ def test_house_colors_option_restores_the_course_palette(tmp_path_factory):
         "\\usepackage{{latexally-compat-ee16}}\n"
         "\\begin{{document}}\n"
         "\\def\\title{{Colours}}\n\\maketitle\n"
-        "\\begin{{qunlist}}\\qns{{Q}}\n\\sol{{Coloured solution text.}}\n"
+        "\\begin{{qunlist}}\\qns{{Q}}\n"
+        "\\sol{{Coloured solution text.}}\n\\ans{{Coloured answer text.}}\n"
         "\\end{{qunlist}}\n\\end{{document}}\n"
     )
-    conforming = _compile(work, "conforming", document.format(options="sol"))
-    house = _compile(work, "house", document.format(options="sol,housecolors"))
+    accessible = _compile(work, "accessible", document.format(options="ans"))
+    house = _compile(work, "house", document.format(options="ans,housecolors"))
 
     # The exact ink colour, not a pixel fraction: reading the span colour is
     # both stricter than a pixel count and independent of its threshold.
     #
-    # #187AC4 is the smallest darkening of the course's #3399E6 that clears
-    # 4.5:1 (it measures 4.55:1). It replaced #0645AD, which conformed at
-    # 8.53:1 but overshot the floor so far that it read as harder than the
-    # blue it was fixing.
-    assert _solution_colors(conforming) == {0x187AC4}, (
-        "the default palette is no longer the minimum-change blue"
+    # ANSWER text, not solution text, and that is the whole point of the
+    # rewrite. The palette binds allySolution to pure #0000FF -- which is what
+    # [housecolors] restores for solutions anyway, because every homework
+    # driver writes \sol in plain blue and plain blue already measures 8.59:1.
+    # So solution text is now IDENTICAL either way, and asserting on it would
+    # test nothing. The answer colour is where the two still part: the course
+    # defines it as rgb(0.2,0.2,0.9) = #3333E6 and the palette moves it onto
+    # the same blue as everything else.
+    assert _solution_colors(accessible) == {0x0000FF}, (
+        "the palette's answer colour is no longer allyBlue"
     )
-    assert _solution_colors(house) == {0x0000FF}, (
-        "[housecolors] did not restore the course's original blue"
+    assert _solution_colors(house) == {0x3333E6}, (
+        "[housecolors] did not restore the course's original answer colour"
     )
 
 
@@ -342,33 +347,81 @@ def _solution_colors(pdf: Path) -> set[int]:
     }
 
 
-def test_conforming_palette_actually_meets_the_contrast_floor():
-    """The reason the default exists, stated as numbers rather than as a belief.
+#: The five palette tokens, and what each measures against a white page. Read
+#: from the .sty rather than restated, so the two cannot drift apart.
+PALETTE = {
+    "allyBlue": (0x0000FF, 8.59),
+    "allyRed": (0xCC0000, 5.89),
+    "allyGreen": (0x006600, 7.24),
+    "allyPurple": (0x6A0DAD, 9.24),
+    # The tightest of the five. It clears AA and has under 0.3 of headroom, so
+    # this assertion is the one that will catch a well-meant hue tweak.
+    "allyOrange": (0xB35A00, 4.80),
+}
 
-    Worth being precise about which colour is the problem. Plain ``blue`` --
-    what the homework drivers use for ``\\sol`` -- is #0000FF and measures
-    8.59:1, comfortably conforming. The failure is ``solutionColor``, defined by
-    the discussion preambles as rgb(0.2, 0.6, 0.9) = #3399E6, at 2.6:1. The
-    conforming palette replaces both so that one rule covers every document,
-    and the replacement is checked here to be no worse than either.
-    """
+
+def _ratio(packed: int) -> float:
     from latexally.check.contrast import contrast_ratio
 
-    white = (1.0, 1.0, 1.0)
-    ratio = lambda hexed: contrast_ratio(
-        tuple(component / 255 for component in hexed), white
-    )
+    rgb = tuple(((packed >> shift) & 0xFF) / 255 for shift in (16, 8, 0))
+    return contrast_ratio(rgb, (1.0, 1.0, 1.0))
 
-    assert ratio((0x33, 0x99, 0xE6)) < 4.5, "solutionColor should be the failing one"
-    assert ratio((0x00, 0x00, 0xFF)) >= 4.5, "plain blue conforms; do not claim otherwise"
-    assert ratio((0x18, 0x7A, 0xC4)) >= 4.5, "the replacement must conform"
-    # It clears the floor and stops. Overshooting is the failure mode this
-    # replaced: #0645AD reached 8.53:1, nearly twice what was asked for, and
-    # was reported as harder to read than the colour it fixed. Assert the
-    # ceiling as well as the floor, so a future "safer" darker value fails
-    # here rather than in someone's eyes.
-    assert 4.5 <= ratio((0x18, 0x7A, 0xC4)) < 5.0
-    assert ratio((0x18, 0x7A, 0xC4)) > ratio((0x33, 0x99, 0xE6))
+
+def test_every_palette_token_clears_the_floor():
+    """The reason the palette exists, stated as numbers rather than as a belief.
+
+    Pure primaries were the brief and only one of them survives WCAG: #FF0000
+    measures 4.00:1 and fails AA for body text, #00FF00 measures 1.37:1 and
+    fails it comprehensively. Only #0000FF passes untouched, at 8.59:1. So the
+    hue is held exactly and the lightness is what moves.
+    """
+    assert _ratio(0xFF0000) < 4.5, "pure red should be the one that fails"
+    assert _ratio(0x00FF00) < 4.5, "pure green should be the one that fails badly"
+    assert _ratio(0x0000FF) >= 4.5, "pure blue conforms; do not claim otherwise"
+
+    for name, (packed, expected) in PALETTE.items():
+        measured = _ratio(packed)
+        assert measured >= 4.5, f"{name} is below the AA floor at {measured:.2f}:1"
+        assert abs(measured - expected) < 0.02, (
+            f"{name} measures {measured:.2f}:1, not the documented {expected}:1"
+        )
+
+
+def test_the_palette_is_what_the_style_file_actually_defines():
+    """A grep, because the alternative is compiling five documents to read five
+    fills. The .sty is the single source of these values -- the profile does not
+    restate them -- so a drift here is a drift everywhere."""
+    style = (Path(__file__).resolve().parents[1] / "tex" / "latexally-core.sty").read_text()
+    defined = [line for line in style.splitlines() if line.startswith("\\definecolor")]
+    for name, (packed, _) in PALETTE.items():
+        assert any(name in line and f"{packed:06X}" in line for line in defined), (
+            f"{name} is not defined as #{packed:06X}"
+        )
+
+    # The old per-name values must be gone from the DEFINITIONS, not from the
+    # file: the comment above them explains what they were and why they went,
+    # and a bare `"187AC4" not in style` matches that prose and fails on a
+    # correct file. Leaving a real \definecolor{allySolution}{HTML}{187AC4}
+    # behind is the actual hazard -- a document loading the package directly
+    # would still get the second blue.
+    assert not any("187AC4" in line for line in defined), "the old blue is still defined"
+    assert not any("EE0000" in line for line in defined), "the old red is still defined"
+
+
+def test_one_blue_reaches_both_text_and_drawings():
+    """The mismatch this replaced, as an assertion about names.
+
+    fa26/dis/00B draws its answer text with \\color{answerColor} and its answer
+    vectors with \\addplot[..., blue]. Under the old scheme those resolved to
+    #187AC4 and #0000FF: two blues, one page. \\accesspalette has to bind both
+    spellings, and every other base name a figure might use, to a token.
+    """
+    style = (Path(__file__).resolve().parents[1] / "tex" / "latexally-core.sty").read_text()
+    body = style.split("\\NewDocumentCommand \\accesspalette")[1].split("\\NewDocument")[0]
+    for name in ("solutionColor", "solansColor", "answerColor", "blueish", "redish"):
+        assert name in body, f"{name} is not remapped by \\accesspalette"
+    for name in ("blue", "red", "green", "purple", "orange"):
+        assert f"{{ {name} }}" in body, f"xcolor's {name} is not remapped; figures keep it"
 
 
 # ---------------------------------------------------------------------- #

@@ -157,7 +157,7 @@ def audit_speech(pdf: Path) -> SpeechAudit:
                 result.defects.append(SpeechDefect(kind, item.tag, f"{text[:70]!r}"))
                 break
 
-    for alt, buried in unreachable_text(pdf):
+    for _tag, alt, buried in unreachable_text(pdf):
         # `unreachable_text` yields (the /Alt that replaces, the text replaced).
         # A numbered equation buries its own "(1)" under the spoken form, and
         # that is the mechanism working: the number is in the /Alt already.

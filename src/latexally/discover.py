@@ -303,6 +303,15 @@ def iter_selected(profile: Profile, config: RunConfig) -> Iterator[Assignment]:
     kinds = profile.corpus.kinds
     prefixes = profile.corpus.variants or DEFAULT_VARIANT_PREFIXES
     for relative in config.assignments:
+        # The corpus root is not an assignment. It is a directory, it contains
+        # .tex files, and `find_drivers` will happily nominate one of them --
+        # so without this the empty scope compiles whatever loose file sorts
+        # first at the top level and calls it a converted assignment.
+        if not relative or relative in (".", "/"):
+            raise ConfigError(
+                "the corpus root is not an assignment",
+                hint="name a directory such as fa26/dis/00B",
+            )
         directory = (root / relative).resolve()
         if not directory.is_dir():
             raise ConfigError(

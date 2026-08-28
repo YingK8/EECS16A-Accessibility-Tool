@@ -930,3 +930,236 @@ Nemeth transcript, the engine is already here and it is one call.
 
 The augmented-matrix divider *is* now announced; see above. That was the one
 concrete gap this section used to record.
+
+## 11. Closing the loop on the alternative formats
+
+Sections 9.10 and 3.4 both ended on the same lesson: counting artefacts and
+checking their shape is not the same as checking that they work. This section is
+that lesson applied to the last unmeasured hop — the one between a correct PDF
+and what a student actually receives from Canvas Ally.
+
+### 11.1 One file, five readers, three answers
+
+`fa26/dis/00B` built with `math_speech` on produces a PDF that is correct by
+every measure the tool had: 153 structure elements, 38 `Formula` elements, each
+carrying `/Alt` (MathCAT ClearSpeak) *and* `/AF` (MathML plus TeX source), with
+`/ActualText` on the marked content. The content stream is spec-conformant —
+one `BDC` spanning the whole formula, including the `q…Q` that draws the square
+root rule.
+
+Five extractors were then run against that one file, on `$a = 1 - i\sqrt{3}$`:
+
+| Extractor | Stands for | What it returns |
+|---|---|---|
+| structure tree | JAWS, NVDA, VoiceOver | `a is equal to, 1 minus, i times the square root of 3` |
+| **PDFBox** | **Canvas Ally** | `a is equal to, 1 minus, i times the square root of 3` |
+| PyMuPDF | Preview, pdf.js | `a is \ne\nqual to, 1 minus, … of \n3` — span fragmented |
+| poppler `pdftotext` | most Linux pipelines | `1−i 3` — `/ActualText` ignored |
+| Ghostscript `txtwrite` | the floor | `Let a = 1−i √3` — `/ActualText` ignored |
+
+The PDF is right in all five cases. Three of the five readers are wrong, and
+nothing noticed, because nothing in the tool had ever looked at extracted text.
+That is the whole of "text to speech is not working and it is hard to validate":
+not a defect in the artefact, an unmeasured dependency on the reader.
+
+Canvas Ally is a Java service built on PDFBox, so row two is the row a student
+hears. `latexally formats` runs all five, weights PDFBox as
+`ALLY_EXTRACTOR`, and reports a disagreement as `ALLY-FMT-002` — a warning, not
+an error, because poppler and Ghostscript are behaving as designed and no change
+to this PDF would alter it. It is reported so that a "works everywhere" claim is
+never made on unmeasured ground.
+
+### 11.2 The figures were the actual failure
+
+The same build reported `figures: 0` and, separately, `descriptions: 3 done, 0
+outstanding`. Both were true, and together they were a silent failure: the
+worklog was full and the PDF had no `Figure` element in it at all. Structure
+tags emitted were `float`, `Caption`, `Div`, `Formula` — nothing else.
+`check --pdf` reported nothing, because a checker cannot see a figure that
+produced no element.
+
+What Ally's MP3 said where each plot should be:
+
+```
+−2 −1 1 2 3 4 −3 −2 −1 1 2 3 Re Im
+Figure 1: Complex Plane for a
+```
+
+`ALLY-FMT-010` catches this from the artefact side, which is the only side that
+can see it: a run of six or more bare numeric or axis tokens with no `Figure` or
+`Artifact` around them. Announcing that as data is worse than announcing
+nothing — silence prompts a question and "minus two minus one one two three
+four" does not.
+
+The root cause was a two-line gate in `apply_descriptions`, and it is worth
+recording in full because both halves were individually defensible:
+
+| mode | `scans` | `touches_sources` | what happened |
+|---|---|---|---|
+| `worklog` | yes | no | returned at the gate; nothing applied |
+| `caption` | no | yes | reached the wrapper with an empty `entries` |
+| `placeholders` | yes | yes | the only mode that ever wrapped a figure |
+| `off` | no | no | correct, by accident |
+
+`scans` governs whether a run *authors* alt-text work — a worklog, a `<<TODO>>`
+marker, an undescribed-figure warning — which `caption` mode deliberately does
+not do. It has nothing to say about whether a description a human already wrote
+is allowed to reach the PDF. Applying one is not a mode; `off` is the only
+answer to "do nothing here". `tests/test_build.py` pins all four.
+
+With the three `00B` descriptions written, the same build produces 8 `Figure`
+elements, 46 `/Alt`, and `formats` goes clean.
+
+### 11.3 Evidence you can play
+
+A transcript diff settles a disagreement between two engineers. It does not
+settle "does this actually work for a student", so `formats` also writes an MP3
+(`say` plus `ffmpeg`) and a BRF (`lou_translate`, UEB grade 2) rendered from the
+PDFBox transcript — the same text Ally will use.
+
+Neither is the shipped artefact. Ally synthesises its own audio on its own
+servers from its own voices, and its braille from its own tables. These are
+evidence: a file a person can play or emboss. Both renderers are rule-based and
+offline, so `tests/test_no_ai_in_production.py` remains true.
+
+**Still outstanding: one Ally round-trip.** Upload a converted PDF, download
+Ally's MP3 and BRF, transcribe the audio by ear, and compare against all five
+local transcripts. Whichever matches is the one `ALLY-FMT-001` should weight.
+PDFBox is chosen on the strength of Ally being a PDFBox-based Java service, and
+that is an inference, not a measurement. Until it is measured, treat
+`ALLY-FMT-002` as the conservative gate: agreement across every engine is right
+whichever one Ally turns out to use.
+
+### 11.4 Two tooling hazards found on the way
+
+Both cost more time than the feature did, and both are the kind that present as
+a hang rather than an error.
+
+**PyMuPDF segfaults after pikepdf.** `pymupdf._extra`'s `create_module` crashes
+when it is imported into a process that has already loaded pikepdf — which
+`check_formats` always has, since `read_structure` reads the tag tree with
+pikepdf. It takes the interpreter with it, and under pytest that presents as the
+suite stopping silently on whichever test happens to run sixth. `_extract_mupdf`
+therefore runs out-of-process, like four of the five extractors already did.
+
+**An extractor that writes beside its input can block on stdin.** PDFBox's
+`export:text` and Ghostscript's `txtwrite` both need an output path. Writing it
+next to the PDF meant a killed run left the file behind, and the next run found
+its output occupied and asked — on stdin — whether to overwrite. Extractor
+scratch now goes to a temp directory and every subprocess gets
+`stdin=DEVNULL`. Writing into the corpus was also simply wrong: `check` is a
+read-only command.
+
+### 11.5 A numbered equation loses its number, and only for some readers
+
+`ALLY-PDF-050` on `fa26/dis/00B`:
+
+```
+text inside a Formula described as <the square root of z z bar; ...>
+is never announced: '(1)'
+```
+
+Reproduced in six lines — an `amsmath` `equation` environment under
+`tagging=on` produces:
+
+```
+Formula   mcids [1, 3]
+└── Lbl   mcids [2]        <- the equation number
+```
+
+The `Lbl` is a *child* of the `Formula`, and `/Alt` on an element replaces its
+entire subtree, so the number goes with it. This is latex-lab's structure, not
+anything this tool emits.
+
+Who loses it is worth stating precisely, because the two answers differ:
+
+| Reader | Announces |
+|---|---|
+| structure tree (JAWS, NVDA, VoiceOver) | `…the absolute value of z` then straight on to part (d) |
+| PDFBox (Canvas Ally) | `…the absolute value of z (1)` |
+
+So Ally's MP3 and braille are unaffected; a screen reader following the tag tree
+is not. **Not fixed here.** The socket plugs in `latexally-math.sty` have a
+documented history of failing subtly when reached into — a literal `#2` that
+shipped, an undeclared socket that raised twice per formula — and none of the
+available hooks knows whether the formula it is describing is numbered. The
+finding now names the tag, says which readers are affected, and gives a remedy
+the author can actually apply (use an unnumbered environment, or reference the
+equation in prose) rather than "move the readable content out of it", which is
+not advice anyone can follow against kernel-emitted structure.
+
+Fixing it properly means either persuading latex-lab to make `Lbl` a sibling of
+`Formula`, or folding `\theequation` into the speech string at the point the
+alt is set. The first is upstream; the second needs a reliable way to know a
+formula is numbered from inside the `math/content` socket.
+
+## 12. One palette, for text and for drawings
+
+### 12.1 What the corpus actually had
+
+Three blues, for one purpose:
+
+| where | value | contrast |
+|---|---|---|
+| `solutionColor`, discussion preambles | `rgb(0.2,0.6,0.9)` = #3399E6 | 3.07:1 — **fails AA** |
+| `\sol` in every homework driver | plain `blue` = #0000FF | 8.59:1 |
+| `blueish` in `ee66.sty` | `rgb(0.7,0.1,0.7)` | 5.65:1 — and it is magenta |
+
+`answerColor` was two different colours depending on document type:
+`rgb(0.1,0.6,0.9)` from `fa26/fa26.sty:6`, silently overridden to
+`rgb(0.2,0.2,0.9)` by `fa26/dis/preambleFa24.tex:30` for every discussion. The
+undocumented override was the only accessible one of the pair.
+
+And the figures used none of these names. Counted across `fa26`: 114 uses of
+`solutionColor` in prose and **zero** in any drawing — every `\addplot`,
+`\draw` and `\fill` in the corpus spells its colour as a bare xcolor word. So
+`fa26/dis/00B` drew its answer text in `answerColor` and its answer vectors in
+`blue`, side by side on one page, with nothing able to reconcile them.
+
+### 12.2 Why the old remap could not fix it
+
+`\accessconformingcolors` derived a value per colour *name*, darkening each just
+enough to clear 4.5:1. That is the right operation for the question it was
+asked — "does this colour pass?" — and it cannot answer the other one: "is this
+the same colour as the one beside it?". Deriving per name is in fact how the
+three blues stayed three blues, and it never touched a figure at all.
+
+### 12.3 The palette
+
+Five tokens, hue held exactly at the primaries and secondaries, lightness moved
+until each is as dark as it can be and still recognisably its own hue:
+
+| token | hex | on white | hue |
+|---|---|---|---|
+| `allyBlue` | #0000FF | 8.59:1 | 240°, pure |
+| `allyRed` | #CC0000 | 5.89:1 | 0° |
+| `allyGreen` | #006600 | 7.24:1 | 120° |
+| `allyPurple` | #6A0DAD | 9.24:1 | 275° |
+| `allyOrange` | #B35A00 | 4.80:1 | 30° |
+
+Pure primaries were the brief and only one survives WCAG: #FF0000 is 4.00:1 and
+fails AA for body text, #00FF00 is 1.37:1 and fails comprehensively. Only pure
+blue passes untouched, and it is kept exactly.
+
+`\accesspalette` binds the course's five names *and* xcolor's base names —
+`blue`, `red`, `green`, `purple`, `orange` — to those tokens at `begindocument`.
+Binding the base names is what reaches the drawings, and it costs no document
+edits at all across roughly 2,000 figure-bearing files. Measured on
+`fa26/dis/00B`: before, #187AC4 ×18 (text) and #0000FF ×8 (vectors); after,
+#0000FF ×26.
+
+`conforming` survives as the narrower mode, for a document whose figures must
+keep the exact hues they were drawn in.
+
+### 12.4 What this does not fix
+
+A figure that encodes meaning in hue alone — `fill=red` against `fill=green`
+with no marker, pattern or label to tell them apart — is still a WCAG 1.4.1
+failure after both are darkened. Darker is not distinguishable. Counted in
+`fa26`: 32 `fill=red`, 20 `fill=green`, 20 `fill=yellow`. Fixing it means
+editing the drawings, and that is the next piece of work, not this one.
+
+`ALLY-SRC-010` also still reports the failing source colours, and should: a
+document that only conforms with a tool in the loop still fails under a bare
+`pdflatex`. The hint now says so, so the finding reads as a statement about the
+source rather than a contradiction of the build.

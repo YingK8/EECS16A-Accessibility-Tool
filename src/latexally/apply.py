@@ -17,6 +17,7 @@ wrapper but can never corrupt the figure it wraps.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -88,6 +89,7 @@ class ApplyPlan:
     wrapped: int = 0
     artifacts: int = 0
     placeholders: int = 0
+    captioned: int = 0
     skipped: list[tuple[str, str]] = field(default_factory=list)
     #: (figure id, line) for each placeholder written, so the run can log
     #: exactly what a person still has to fill in and where it sits.
@@ -122,15 +124,24 @@ def plan_file(
     entries: dict[str, Entry],
     *,
     placeholders: bool = False,
+    captions: bool = False,
 ) -> ApplyPlan:
     """Compute the edits for one file without touching it."""
     source = TexSource.from_path(path)
     plan = ApplyPlan(path=path, buffer=EditBuffer(path), original=source.text)
 
     for reference in scan_file(path, profile):
+        # Captions first, and deliberately before the worklog lookup: a caption
+        # is not a description and does not need one to have been written, so
+        # `caption` mode works with no worklog on disk at all.
+        if captions and _add_caption(plan, reference, source.text):
+            plan.captioned += 1
         entry = entries.get(reference.id)
         if entry is None:
-            plan.skipped.append((reference.id, "not in any worklog; run scan first"))
+            if not captions:
+                plan.skipped.append(
+                    (reference.id, "not in any worklog; run scan first")
+                )
             continue
         if reference.already_described:
             continue  # idempotent: a second run changes nothing
@@ -270,6 +281,89 @@ def _wrap_placeholder(plan: ApplyPlan, reference: FigureRef) -> None:
         )
 
 
+#: Float environments `\caption` is legal inside. A caption anywhere else is a
+#: LaTeX error ("\caption outside float"), so a figure that is not in one of
+#: these is left alone rather than given a caption that breaks the build.
+_FLOATS = ("figure", "figure*", "table", "table*")
+
+_CAPTION_CALL = re.compile(r"\\caption\*?\s*(?:\[[^\]]*\])?\s*\{")
+
+
+def _enclosing_float(text: str, reference: FigureRef) -> tuple[int, int] | None:
+    r"""``(begin_start, end_start)`` of the float wrapping the figure, or None.
+
+    Scans outward from the graphic rather than parsing the file: the nearest
+    unclosed ``\begin{figure}`` before it, and the ``\end{figure}`` that closes
+    that one. Nested floats are not legal LaTeX, so depth counting is enough.
+    """
+    for name in _FLOATS:
+        opener = f"\\begin{{{name}}}"
+        closer = f"\\end{{{name}}}"
+        start = text.rfind(opener, 0, reference.start)
+        if start == -1:
+            continue
+        end = text.find(closer, reference.end)
+        if end == -1:
+            continue
+        # Another float of the same kind opening and closing in between would
+        # mean this one is not the enclosing environment.
+        if text.count(opener, start + len(opener), reference.start) != text.count(
+            closer, start, reference.start
+        ):
+            continue
+        return start, end
+    return None
+
+
+def _add_caption(plan: ApplyPlan, reference: FigureRef, text: str) -> bool:
+    r"""Give a float with no caption one for an author to fill in.
+
+    Returns whether an edit was recorded. Unlike the alt-text marker, this one
+    is *read on the page*: the point of choosing captions over a silent
+    ``/Alt`` placeholder is that an unfilled marker is impossible to miss in
+    the PDF -- the same guarantee strict mode used to buy with a build failure,
+    bought instead with ink.
+    """
+    # NOT `reference.caption`: the scan attributes any `\caption` within 400
+    # characters *after* the graphic, so in a file of back-to-back figures the
+    # first one inherits the second one's caption. Good enough as context for a
+    # describer, useless as "does this figure have a caption" -- which is what
+    # the bounded search below actually answers.
+    span = _enclosing_float(text, reference)
+    if span is None:
+        plan.skipped.append(
+            (reference.id, "not inside a figure or table; \\caption would not compile")
+        )
+        return False
+    begin, end = span
+    if _CAPTION_CALL.search(text, begin, end):
+        return False  # idempotent: a captioned float is left alone
+    caption = f"\\caption{{{PLACEHOLDER.format(id=reference.id)}}}"
+    # The graphic's own indentation, not the `\end{figure}` line's: LaTeX style
+    # puts the caption with the float's body, and a float whose `\end` sits at
+    # column 0 would otherwise get a caption at column 0 too.
+    indent = _indent_of(plan, reference)
+    line_start = text.rfind("\n", 0, end) + 1
+    before_end = text[line_start:end]
+    if before_end.strip():
+        # `\end{figure}` shares its line with content. Open a line for the
+        # caption rather than appending to whatever that content is.
+        plan.buffer.insert(
+            end,
+            f"{caption}\n{indent}",
+            reason="figure caption marked for a human",
+            rule="APPLY-CAPTION",
+        )
+    else:
+        plan.buffer.insert(
+            line_start,
+            f"{indent}{caption}\n",
+            reason="figure caption marked for a human",
+            rule="APPLY-CAPTION",
+        )
+    return True
+
+
 def _wrap_decorative(plan: ApplyPlan, reference: FigureRef) -> None:
     indent = _indent_of(plan, reference)
     plan.buffer.wrap(
@@ -289,6 +383,7 @@ def apply_scope(
     *,
     dry_run: bool = True,
     placeholders: bool = False,
+    captions: bool = False,
     files: list[Path] | None = None,
 ) -> list[ApplyPlan]:
     """Plan (and optionally write) edits across a scope.
@@ -303,7 +398,9 @@ def apply_scope(
         if path.suffix.lower() != ".tex":
             continue
         try:
-            plan = plan_file(path, profile, entries, placeholders=placeholders)
+            plan = plan_file(
+                path, profile, entries, placeholders=placeholders, captions=captions
+            )
         except Exception:  # pragma: no cover - one bad file must not stop a sweep
             continue
         if not plan.changed and not plan.skipped:

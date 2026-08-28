@@ -513,6 +513,25 @@ _BREAK_AFTER_DISPLAY = re.compile(
 )
 
 
+#: Extra guidance for the shapes of this finding that are not the author's
+#: doing. A hint that says "move the readable content out of it" is useless
+#: against structure the LaTeX kernel emitted, and a rule whose advice cannot be
+#: followed is a rule people learn to ignore.
+_UNREACHABLE_EXTRA = {
+    "Formula": (
+        "On a numbered equation this is latex-lab's own structure, not yours: it "
+        "nests the equation number in a Lbl INSIDE the Formula, and the "
+        "Formula's /Alt then replaces it. Measured on fa26/dis/00B: a "
+        "tag-following reader (JAWS, NVDA, VoiceOver) skips the '(1)' and "
+        "continues to the next part, while a positional reader -- including "
+        "PDFBox, which is what Canvas Ally extracts with -- still announces it, "
+        "so the MP3 and braille are unaffected. Use an unnumbered environment "
+        "where the number carries no meaning, or reference the equation in the "
+        "surrounding prose."
+    ),
+}
+
+
 def _darken_hint(
     rgb: tuple[float, float, float],
     background: tuple[float, float, float],
@@ -533,7 +552,10 @@ def _darken_hint(
     )
     return (
         f"darken to {proposed} ({ratio:.2f}:1) -- the smallest change to this "
-        f"colour that reaches {threshold}:1, hue and saturation unchanged"
+        f"colour that reaches {threshold}:1, hue and saturation unchanged. "
+        "A converted build already remaps this at begindocument via "
+        "\\accesspalette, so this finding is about the SOURCE: the file still "
+        "fails on its own, under a bare pdflatex, with no tool in the loop."
     )
 
 
@@ -1372,19 +1394,22 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
     # What a reader actually says, in the order it says it. Every rule above
     # inspects the tag tree or the content stream; this one inspects the join,
     # which is where a document that passes both can still be read out wrong.
-    for tag, text in unreachable_text(pdf_path):
+    for tag, alt, text in unreachable_text(pdf_path):
         findings.append(
             Finding(
                 "ALLY-PDF-050",
                 Severity.ERROR,
-                f"text inside <{tag}> is never announced: {text[:60]!r}",
+                f"text inside a {tag} described as <{alt[:50]}> is never "
+                f"announced: {text[:60]!r}",
                 file=name,
                 standard="PDF/UA-1, Matterhorn 09-001",
                 hint=(
                     "an ancestor carries /Alt, which REPLACES its whole subtree. "
                     "Move the readable content out of it, or describe the "
-                    "element without wrapping the words in it"
-                ),
+                    "element without wrapping the words in it. "
+                    + _UNREACHABLE_EXTRA.get(tag, "")
+                ).strip(),
+                data={"tag": tag, "alt": alt, "buried": text[:200]},
             )
         )
 

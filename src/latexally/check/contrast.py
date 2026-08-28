@@ -22,7 +22,55 @@ __all__ = [
     "find_colors",
     "minimum_conforming",
     "rgb_to_hex",
+    "PALETTE",
+    "PALETTE_BINDINGS",
+    "palette_value",
 ]
+
+#: The unified palette. Hue-anchored to the primaries and secondaries, each as
+#: dark as it can be while staying a recognisable member of its hue family.
+#:
+#: This is a MIRROR of ``\definecolor{ally*}`` in ``tex/latexally-core.sty``,
+#: which is where the values actually take effect -- nothing here is emitted
+#: into a document. It exists so the runner can show a person what a name will
+#: become before they agree to it. ``tests/test_style_fidelity.py`` asserts the
+#: two agree, because a mirror nobody checks is just a second source of truth.
+PALETTE: dict[str, str] = {
+    "allyBlue": "#0000FF",    # 8.59:1 on white, hue 240, pure
+    "allyRed": "#CC0000",     # 5.89:1, hue 0.   Pure #FF0000 is 4.00:1 and fails AA.
+    "allyGreen": "#006600",   # 7.24:1, hue 120. Pure #00FF00 is 1.37:1.
+    "allyPurple": "#6A0DAD",  # 9.24:1, hue 275
+    "allyOrange": "#B35A00",  # 4.80:1, hue 30. The tightest of the five.
+}
+
+#: Which colour name binds to which token, mirroring ``\accesspalette``.
+#:
+#: The second half is the half that matters and the half a text-only remap
+#: misses: no figure in this corpus spells its colour as ``solutionColor``.
+#: Every ``\addplot``, ``\draw`` and ``\fill`` uses a bare xcolor word, so
+#: unless those move too, the prose is recoloured and the picture beside it is
+#: not -- which is how one page came to draw its answer text in #187AC4 and its
+#: answer vectors in #0000FF.
+PALETTE_BINDINGS: dict[str, str] = {
+    # the course's own names
+    "solutionColor": "allyBlue",
+    "solansColor": "allyBlue",
+    "answerColor": "allyBlue",
+    "blueish": "allyPurple",
+    "redish": "allyRed",
+    # xcolor's base names, which is what the drawings use
+    "blue": "allyBlue",
+    "red": "allyRed",
+    "green": "allyGreen",
+    "purple": "allyPurple",
+    "orange": "allyOrange",
+}
+
+
+def palette_value(name: str) -> str | None:
+    """The hex ``name`` binds to under the palette, or ``None`` if it does not."""
+    token = PALETTE_BINDINGS.get(name)
+    return PALETTE.get(token) if token else None
 
 _DEFINECOLOR = re.compile(
     r"\\definecolor\s*\{(?P<name>[^{}]+)\}\s*\{(?P<model>[^{}]+)\}\s*\{(?P<spec>[^{}]+)\}"

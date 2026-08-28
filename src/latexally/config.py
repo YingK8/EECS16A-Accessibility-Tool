@@ -120,6 +120,62 @@ def _builtin_profile_names() -> list[str]:
     return sorted(item.stem for item in directory.glob("*.yaml"))
 
 
+def builtin_profile_names() -> list[str]:
+    """Public alias: every installed profile, by name."""
+    return _builtin_profile_names()
+
+
+def default_builtin_profile() -> str | None:
+    """The profile a picker should land on, or None when there is no answer.
+
+    Declared in the profile itself with a top-level ``default: true``, so which
+    course is current is course data like every other field -- not a name
+    compiled into the tool, which would have to be edited to onboard a course
+    or to hand this corpus to the next term's staff.
+
+    With exactly one installed that one is the answer whether or not it says
+    so. With several and none declaring, there is no answer: returning the
+    alphabetically-first would be a guess wearing a default's clothes.
+    """
+    directory = builtin_profile_dir()
+    if not directory.is_dir():
+        return None
+    declared = []
+    for item in sorted(directory.glob("*.yaml")):
+        try:
+            data = yaml.safe_load(item.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            # A malformed profile is `load_profile`'s error to raise, with the
+            # filename in it. Picking a default is not the place to fail.
+            continue
+        if isinstance(data, dict) and data.get("default") is True:
+            declared.append(item.stem)
+    if len(declared) == 1:
+        return declared[0]
+    if declared:
+        # Two courses both claiming to be current is a contradiction in the
+        # data, and quietly taking the first would hide it.
+        return None
+    return _only_builtin_profile()
+
+
+def profile_summary(name: str) -> str:
+    """``EE 66 - Signals, Dynamics, and Information`` for a picker row.
+
+    Falls back to the bare name, because a profile too broken to read is still
+    a profile someone may need to select in order to see the error.
+    """
+    path = builtin_profile_dir() / f"{name}.yaml"
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        course = data.get("course") or {}
+        number = str(course.get("number") or "").strip()
+        title = str(course.get("name") or "").strip()
+    except (OSError, yaml.YAMLError, AttributeError):
+        return name
+    return " - ".join(part for part in (number, title) if part) or name
+
+
 def _only_builtin_profile() -> str | None:
     """The one shipped profile, when there is exactly one.
 

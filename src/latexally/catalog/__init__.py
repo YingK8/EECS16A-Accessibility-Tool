@@ -65,7 +65,12 @@ class CatalogResult:
 #: importing the other.
 
 
-def worklog_dir(profile: Profile, output_root: Path | None = None) -> Path:
+def worklog_dir(
+    profile: Profile,
+    output_root: Path | None = None,
+    *,
+    directory: Path | None = None,
+) -> Path:
     """Where description worklogs live: ``<corpus>/ally-out/descriptions``.
 
     The default is inside the corpus on purpose, and this reverses an earlier
@@ -81,6 +86,14 @@ def worklog_dir(profile: Profile, output_root: Path | None = None) -> Path:
     content-addressed and serves every assignment that uses the figure, so
     scattering copies through the tree makes the shared ones ambiguous.
     """
+    # An explicit directory wins outright. `in-place` re-roots a run's output
+    # at the assignment's own folder, and descriptions are the one artifact
+    # that must NOT follow it there: a description is content-addressed and
+    # serves every assignment using the figure, so one copy per assignment
+    # folder would make the shared ones ambiguous. The re-rooted `Output` pins
+    # the old location and passes it through here.
+    if directory is not None:
+        return Path(directory).resolve()
     root = (
         Path(output_root)
         if output_root is not None
@@ -213,6 +226,7 @@ def build_catalog(
     files: list[Path] | None = None,
     output_root: Path | None = None,
     shard_root: Path | None = None,
+    worklogs: Path | None = None,
 ) -> CatalogResult:
     """Scan a scope and refresh its worklogs.
 
@@ -275,7 +289,7 @@ def build_catalog(
         shard_of[identity] = _shard_for(primary, root)
         dir_of[identity] = _dir_for(primary, root)
 
-    directory = worklog_dir(profile, output_root)
+    directory = worklog_dir(profile, output_root, directory=worklogs)
     # Descriptions outlive any one run. They are content-addressed and were
     # written by a person, so the corpus catalogue is always the merge base --
     # even when `output_root` sends this run's worklogs somewhere else.
@@ -322,7 +336,10 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 def load_entries(
-    profile: Profile, output_root: Path | None = None
+    profile: Profile,
+    output_root: Path | None = None,
+    *,
+    worklogs: Path | None = None,
 ) -> dict[str, Entry]:
     """Every description on disk, keyed by content hash.
 
@@ -331,7 +348,7 @@ def load_entries(
 
     """
     entries: dict[str, Entry] = {}
-    directory = worklog_dir(profile, output_root)
+    directory = worklog_dir(profile, output_root, directory=worklogs)
     if not directory.is_dir():
         return entries
     # Recursive: the worklogs sit one semester folder down.

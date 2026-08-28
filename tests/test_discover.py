@@ -169,6 +169,22 @@ def test_selecting_a_missing_assignment_raises(profile: Profile):
         list(iter_selected(profile, config))
 
 
+@pytest.mark.parametrize("empty", ["", ".", "/"])
+def test_the_corpus_root_is_not_an_assignment(profile: Profile, empty: str):
+    """The empty scope means "all of it" everywhere else, and nothing here.
+
+    `scope_from_cwd` returns "" at the corpus root, and `build` takes assignment
+    directories rather than a scope. Resolving "" against the root gave a real
+    directory full of real .tex files, so `find_drivers` nominated whichever one
+    sorted first -- in the live corpus, the two-line `circuitikz_version.tex` --
+    compiled it, wrote seven figure worklog entries against it, and reported a
+    successful conversion of an assignment that does not exist.
+    """
+    config = RunConfig().with_assignments([empty])
+    with pytest.raises(ConfigError, match="not an assignment"):
+        list(iter_selected(profile, config))
+
+
 # ---------------------------------------------------------------------- #
 # the include graph
 # ---------------------------------------------------------------------- #

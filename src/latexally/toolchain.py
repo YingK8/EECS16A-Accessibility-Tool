@@ -516,6 +516,59 @@ def probe(profile: Profile) -> ToolchainReport:
         )
     )
 
+    # T013 -- the format-fidelity extractors. Each one stands for a class of
+    # downstream reader and they demonstrably disagree, so `latexally formats`
+    # runs all of them; a missing one narrows the evidence rather than failing.
+    # PDFBox is called out separately below because it is the only one whose
+    # answer is a student's answer.
+    from .check.formats import _pdfbox_jar
+
+    jar = _pdfbox_jar()
+    has_java = shutil.which("java") is not None
+    add(
+        Check(
+            "T013",
+            "PDFBox (Ally's text layer)",
+            Status.OK if has_java and jar.is_file() else Status.WARN,
+            f"{jar}" if has_java and jar.is_file() else (
+                "java not found" if not has_java else f"jar missing: {jar}"
+            ),
+            None
+            if has_java and jar.is_file()
+            else (
+                "Canvas Ally builds its MP3 and braille from the PDFBox text "
+                "layer, so without this `latexally formats` cannot say what a "
+                "student will hear. Run ./vendor/pdfbox/fetch.sh (or set "
+                "LATEXALLY_PDFBOX_JAR)"
+                + ("" if has_java else "; and install a JRE 11 or newer")
+            ),
+        )
+    )
+
+    optional = [
+        ("pdftotext", "poppler", "brew install poppler"),
+        ("gs", "ghostscript", "brew install ghostscript"),
+        ("lou_translate", "liblouis", "brew install liblouis"),
+        ("say", "macOS speech", "macOS only; the MP3 is evidence, not the artefact"),
+        ("ffmpeg", "ffmpeg", "brew install ffmpeg"),
+    ]
+    missing = [label for binary, label, _ in optional if not shutil.which(binary)]
+    add(
+        Check(
+            "T014",
+            "format evidence tools",
+            Status.OK if not missing else Status.WARN,
+            "all present"
+            if not missing
+            else "missing: " + ", ".join(missing),
+            None
+            if not missing
+            else "; ".join(
+                fix for binary, label, fix in optional if not shutil.which(binary)
+            ),
+        )
+    )
+
     from .mathspeech import DRIVER, RULES_DIR
 
     # Three separate ways this can be half-installed, and the hint has to name
