@@ -29,7 +29,7 @@ from typing import Iterable
 
 import yaml
 
-from .check.contrast import minimum_conforming
+from .check.contrast import minimum_conforming, palette_value
 from .config import Profile
 from .errors import ConfigError
 
@@ -263,20 +263,32 @@ class ColorChoice:
     def replacements(self, profile: Profile) -> dict[str, str]:
         """Name -> hex for every colour this run changes.
 
-        Derived, not looked up: each of the profile's originals is darkened
-        just enough to clear its floor, and one that already conforms is not
-        in the result at all. ``overrides`` -- what the runner asked the user
-        to confirm -- wins over the derivation, including when the user chose
-        to keep the original, which is recorded as an override to itself.
+        The full picture, not a list of confirmations: this is what the colour
+        table shows and what ``run.yaml`` records, so it has to describe the run
+        that will actually happen.
+
+        Under ``conforming`` each of the profile's originals is darkened just
+        enough to clear its floor, and one that already conforms is absent.
+        Under ``palette`` every colour is already remapped. ``overrides`` layer
+        on top and win either way -- including an override to a colour's own
+        original, which is how "keep this one" is recorded.
         """
         if self.mode == "house":
             return {}
         if self.mode == "palette":
-            # The palette is a fixed set of tokens defined in latexally-core.sty
-            # and applied by \accesspalette, so there is nothing per-name to
-            # derive. Only what a person overrode by hand is emitted, and it is
-            # emitted after the palette so it still wins.
-            return dict(self.overrides)
+            # Every colour the profile names, already remapped. The palette is
+            # not a proposal waiting on approval: `\accesspalette` binds these
+            # in the .sty whether or not anyone opens the colour screen, so a
+            # `replacements` that returned only what someone had confirmed
+            # described a different run from the one that would happen -- and
+            # the colour table, which reads this, showed a corpus of unchanged
+            # colours next to a build that changed all of them.
+            applied = {
+                name: value
+                for name in profile.colors.originals
+                if (value := palette_value(name))
+            }
+            return {**applied, **self.overrides}
         derived = {
             name: proposed
             for name, original in profile.colors.originals.items()
@@ -303,8 +315,19 @@ class ColorChoice:
         if self.mode == "house":
             return "course originals kept (may fail WCAG 1.4.3)"
         if self.mode == "palette":
-            custom = f", {len(self.overrides)} confirmed by hand" if self.overrides else ""
-            return f"one palette across text and figures{custom}"
+            kept = sum(
+                1
+                for name, value in self.overrides.items()
+                if value.upper() == (profile.colors.originals.get(name) or "").upper()
+            )
+            notes = []
+            if kept:
+                notes.append(f"{kept} rejected, kept as the course had them")
+            if len(self.overrides) - kept:
+                notes.append(f"{len(self.overrides) - kept} set by hand")
+            return "one palette across text and figures" + (
+                f" ({', '.join(notes)})" if notes else ""
+            )
         count = len(self.replacements(profile))
         custom = f", {len(self.overrides)} confirmed by hand" if self.overrides else ""
         return f"{count} colours darkened to the floor{custom}"

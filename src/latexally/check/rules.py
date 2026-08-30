@@ -884,13 +884,21 @@ _LOG_PATTERNS: tuple[tuple[str, str, str, str, str], ...] = (
         "a requested testphase module is not installed",
         "the build continued and produced an UNTAGGED PDF; run latexally doctor",
     ),
-    (
-        "ALLY-LOG-007",
-        r"WARNING: mathml missing for hash",
-        Severity.WARNING,
-        "an equation has no MathML and will fall back to its /Alt string",
-        "re-run the math conversion step",
-    ),
+    #: ALLY-LOG-007 is NOT here. It used to be, matching
+    #: `WARNING: mathml missing for hash`, and it was wrong on every clean
+    #: build: a run is three LaTeX passes, and pass 1 is the one that GENERATES
+    #: the speech table by reporting which formulas exist. Every formula is
+    #: "missing" then, by construction. `fa26/hw/1` emitted 64 of those warnings
+    #: and finished with 64 of 64 formulas carrying /Alt.
+    #:
+    #: Counting them across a concatenated three-pass log therefore reported a
+    #: failure that had not happened, in the log the tool tells you to read.
+    #: `_mathml_findings` reads the outcome instead. See below.
+)
+
+#: latex-lab's own end-of-run report. The LAST one in the log is the real one.
+_MATHML_STATISTIC = re.compile(
+    r"==> (\d+) math fragments found\s*\n==> (\d+) MathML AF attached"
 )
 
 _FINALIZE = re.compile(
@@ -938,6 +946,8 @@ def check_log(log_path: Path) -> list[Finding]:
             )
         )
 
+    findings.extend(_mathml_findings(text, log_path))
+
     for rule, pattern, severity, message, hint in _LOG_PATTERNS:
         hits = re.findall(pattern, text)
         if hits:
@@ -952,6 +962,40 @@ def check_log(log_path: Path) -> list[Finding]:
                 )
             )
     return findings
+
+
+def _mathml_findings(text: str, log_path: Path) -> list[Finding]:
+    """Whether the maths ended up with MathML, judged on the outcome.
+
+    Reads the LAST ``MathML statistic`` block, because a run is three passes
+    and only the last one describes the artefact. The per-formula
+    ``WARNING: mathml missing for hash`` lines that precede it are the first
+    pass doing its job -- it exists to report which formulas are there, so that
+    the table can be built from them -- and counting those reported every
+    healthy build as broken.
+    """
+    blocks = _MATHML_STATISTIC.findall(text)
+    if not blocks:
+        return []
+    found, attached = (int(value) for value in blocks[-1])
+    if found == 0 or attached >= found:
+        return []
+    return [
+        Finding(
+            "ALLY-LOG-007",
+            Severity.WARNING,
+            f"{found - attached} of {found} formulas have no MathML and fall "
+            "back to their /Alt string",
+            file=str(log_path),
+            standard="WCAG 1.1.1; Matterhorn 17",
+            hint=(
+                "the speech in /Alt still reaches a reader; what is missing is "
+                "the MathML attachment a reader may prefer. Check the math "
+                "conversion stage ran -- `<jobname>-mathml.html` beside the PDF"
+            ),
+            data={"found": found, "attached": attached},
+        )
+    ]
 
 
 # ---------------------------------------------------------------------- #

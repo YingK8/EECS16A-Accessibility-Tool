@@ -9,7 +9,12 @@ import shutil
 
 import pytest
 
-from latexally.check.contrast import contrast_ratio, minimum_conforming, rgb_to_hex
+from latexally.check.contrast import (
+    contrast_ratio,
+    minimum_conforming,
+    palette_value,
+    rgb_to_hex,
+)
 from latexally.config import ColorPolicy, CorpusScope, Profile
 from latexally.run import ColorChoice, hex_to_rgb
 
@@ -96,22 +101,52 @@ def test_replacements_are_derived_and_skip_what_already_conforms():
     assert "blueish" not in replacements
 
 
-def test_palette_mode_derives_nothing_and_emits_only_hand_overrides():
-    """The palette is a fixed token set in the .sty, not a per-name derivation.
+def test_palette_mode_applies_everything_without_being_asked():
+    """The palette is applied, not proposed.
 
-    `conforming` computed a different value for every colour NAME, which is how
-    one page ended up drawing its answer text in #187AC4 and its answer vectors
-    in #0000FF -- two blues nothing could reconcile, because nothing was
-    reconciling them. `palette` binds both to one token, in LaTeX, so there is
-    nothing for the runner to compute. What a person overrode by hand still
-    comes through, and still wins: it is emitted after \\accesspalette.
+    `\\accesspalette` binds these in the .sty whether or not anyone opens the
+    colour screen, so `replacements` has to say so. It used to return only what
+    a person had confirmed, which meant the colour table and `run.yaml` both
+    described a run where nothing changed, next to a build that changed
+    everything.
     """
     assert ColorChoice().mode == "palette"
-    assert ColorChoice().replacements(_profile()) == {}
+    assert ColorChoice().replacements(_profile()) == {
+        "solutionColor": "#0000FF",
+        "redish": "#CC0000",
+        "blueish": "#6A0DAD",
+    }
 
+
+def test_a_hand_typed_hex_wins_over_the_palette():
     chosen = ColorChoice()
     chosen.set("solutionColor", "#123456")
-    assert chosen.replacements(_profile()) == {"solutionColor": "#123456"}
+    assert chosen.replacements(_profile())["solutionColor"] == "#123456"
+
+
+def test_rejecting_a_colour_is_recorded_as_an_override_to_its_own_original():
+    """How "leave this one alone" survives into the build.
+
+    There is no third state to store: an override to the colour's own value is
+    both the record that someone decided, and the value that wins over the
+    palette when the preamble is emitted. `blueish` passing contrast is not a
+    reason it cannot be rejected -- the palette moves it for consistency, not
+    for conformance, and that is a choice a person is allowed to decline.
+    """
+    chosen = ColorChoice()
+    chosen.set("blueish", "#B31AB3")  # the course's own value
+    assert chosen.replacements(_profile())["blueish"] == "#B31AB3"
+    # Still applied everywhere it was not rejected.
+    assert chosen.replacements(_profile())["redish"] == "#CC0000"
+
+
+def test_palette_mode_still_derives_nothing_per_name():
+    """`conforming` computed a different value for every colour NAME, which is
+    how one page ended up drawing its answer text in #187AC4 and its answer
+    vectors in #0000FF. The palette is a lookup, so two names that share a hue
+    cannot come out different."""
+    replacements = ColorChoice().replacements(_profile())
+    assert replacements["solutionColor"] == palette_value("blue")
 
 
 def test_house_mode_still_changes_nothing():

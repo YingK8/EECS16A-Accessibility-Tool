@@ -105,12 +105,6 @@ commands will not guess which one you mean. Alias it if the flag gets old:
 alias latexally='latexally -p ee66'
 ```
 
-#### 2. Or run it interactively
-
-```bash
-latexally run
-```
-
 The only command that needs no `-p`: it asks which course on its first screen,
 then walks scope, standards, colours and output, showing what each option costs
 before anything is written. `Enter` moves on, `\` goes back, `space` ticks.
@@ -121,7 +115,7 @@ It saves the answers to `ally-out/run.yaml`, which replays unchanged:
 latexally -p ee66 build --config ally-out/run.yaml --write
 ```
 
-#### 3. What it does to figures
+#### 2. What it does to figures
 
 By default a run adds `\caption{<<TODO:figure-id>>}` to every figure and table
 that has none, so what still needs writing is printed on the page rather than
@@ -157,7 +151,7 @@ An unfilled marker does not fail the build. It is reported by
 `latexally -p ee66 check` and, under captions, visible in the PDF — so check
 before handing anything out.
 
-#### 4. Filling alt texts
+#### 3. Filling alt texts
 
 `scan` writes YAML worklogs with one entry per figure. Course staff fill in
 `alt_text`; writing the text is what approves it. Descriptions are filed by
@@ -180,7 +174,7 @@ Then `latexally -p ee66 apply --write` writes them into the sources.
 worklogs outlive any checkout of the tool, and a description that is lost has
 to be written again by hand. The rest of `ally-out/` is build output.
 
-#### 5. Checking what a student will actually hear
+#### 4. Checking what a student will actually hear
 
 `check` reads the PDF. It does not read what Canvas Ally makes *from* the PDF,
 and those are different questions — five text extractors disagree about the same
@@ -224,7 +218,7 @@ Errors worth knowing:
 `ALLY-FMT-002` is a warning, not an error: poppler and Ghostscript drop
 substitute text by design and no change to your document alters that.
 
-#### 6. Undoing a run
+#### 5. Undoing a run
 
 ```bash
 latexally -p ee66 clean --write     # delete what the run produced; sources untouched

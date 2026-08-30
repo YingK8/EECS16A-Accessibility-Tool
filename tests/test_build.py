@@ -16,7 +16,9 @@ from pathlib import Path
 import pytest
 
 from latexally.build import (
+    BuildReport,
     _log_findings,
+    build_assignment,
     inject,
     materialise,
     mirror_dependencies,
@@ -308,6 +310,82 @@ def test_in_place_refuses_a_dirty_worktree(corpus: Path):
     (corpus / "sem" / "hw" / "3" / "body.tex").write_text("edited\n")
     with pytest.raises(LatexAllyError, match="uncommitted"):
         require_clean_worktree(corpus)
+
+
+def test_edit_mode_does_not_trip_over_its_own_edits(
+    corpus: Path, profile: Profile, monkeypatch, tmp_path: Path
+):
+    r"""One run, several variants, one worktree check.
+
+    `--edit` rewrites the corpus sources, which is the point, and the clean-git
+    guard is what makes that undoable. But the guard was evaluated per DOCUMENT
+    as well as per run, so the second variant saw the first variant's edit and
+    refused:
+
+        fa26/hw/1  solution  OK
+        fa26/hw/1  problem   failed -- no PDF
+          the corpus has 1 uncommitted change(s):
+             M fa26/hw/1/sol1.tex
+
+    The run reported its own write as the user's uncommitted work, and every
+    assignment with more than one variant was unbuildable in edit mode.
+    """
+    from latexally.build import build_run
+
+    _git(corpus, "init", "-q")
+    _git(corpus, "config", "user.email", "t@example.com")
+    _git(corpus, "config", "user.name", "T")
+    _git(corpus, "add", "-A")
+    _git(corpus, "commit", "-qm", "initial")
+
+    seen: list[tuple[str, str]] = []
+
+    def fake_build_assignment(assignment, config, prof, **kwargs):
+        seen.append((assignment.path, kwargs.get("variant", "document")))
+        # What the real one does at this point, and the whole cause: the first
+        # variant leaves the corpus dirty for the second.
+        (corpus / "sem" / "hw" / "3" / "sol3.tex").write_text("% converted\n")
+        assert kwargs.get("worktree_checked") is True, (
+            "build_run must tell build_assignment it already checked"
+        )
+        return BuildReport(
+            assignment=assignment.path, variant=kwargs.get("variant", "document"), ok=True
+        )
+
+    import latexally.build as build
+
+    monkeypatch.setattr(build, "build_assignment", fake_build_assignment)
+
+    config = RunConfig(write=True).with_assignments(["sem/hw/3"])
+    config.output = replace(config.output, root=tmp_path / "out", write_mode="edit")
+    reports = build_run(config, profile)
+
+    assert reports, "nothing was built"
+    assert all(report.ok for report in reports), [r.note for r in reports if not r.ok]
+
+
+def test_a_direct_caller_still_gets_the_worktree_guard(
+    corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path
+):
+    """The guard is not removed, only moved up to the run.
+
+    `tests/corpus_compile.py`, `tests/revert_e2e.py` and the agent API all call
+    `build_assignment` without a `build_run` above them, and in edit mode they
+    are exactly the callers that need the refusal.
+    """
+    _git(corpus, "init", "-q")
+    _git(corpus, "config", "user.email", "t@example.com")
+    _git(corpus, "config", "user.name", "T")
+    _git(corpus, "add", "-A")
+    _git(corpus, "commit", "-qm", "initial")
+    (corpus / "sem" / "hw" / "3" / "body.tex").write_text("a person's own edit\n")
+
+    config = RunConfig(write=True)
+    config.output = replace(config.output, root=tmp_path / "out", write_mode="edit")
+    # Raises rather than returning a failed report: turning the refusal into a
+    # BuildReport is `build_run`'s job, and a direct caller has no such wrapper.
+    with pytest.raises(LatexAllyError, match="uncommitted"):
+        build_assignment(assignment, config, profile, variant="solution")
 
 
 def test_in_place_never_edits_the_corpus_sources(

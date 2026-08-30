@@ -30,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
+from ..check.contrast import palette_value
 from ..config import Profile
 from ..errors import LatexAllyError, ToolchainError
 from ..run import RunConfig
@@ -228,13 +229,21 @@ def preamble_for(
             lines.append("\\accesssetup{palette}")
         elif config.colors.mode == "conforming":
             lines.append("\\accesssetup{conforming-colors}")
-        # Order is load-bearing. Both this and conforming-colors act from a
+        # Order is load-bearing. Both this and the palette act from a
         # begindocument hook, and hooks run in the order they are declared, so
-        # the per-name values must come second to win over the blind allySolution
-        # fallbacks. Without these lines nothing the runner computed or the user
-        # confirmed ever reaches the page: `conforming-colors` alone remaps to a
-        # fixed palette and ignores the run entirely.
+        # the per-name values must come second to win over the blind
+        # allySolution fallbacks. Without these lines nothing the runner
+        # computed or the user chose ever reaches the page.
+        #
+        # Only the DEVIATIONS, though. Under `palette` the .sty has already
+        # bound every one of these, so restating them would emit ten lines of
+        # preamble that change nothing -- and, worse, would read as the run
+        # having made ten decisions when it made none. What is left is exactly
+        # the interesting set: a colour someone rejected (recorded as an
+        # override to its own original) and a hex someone typed.
         for name, value in recolours.items():
+            if config.colors.mode == "palette" and value == palette_value(name):
+                continue
             lines.append(f"\\accessrecolor{{{name}}}{{{value.lstrip('#')}}}")
         if config.alt.injects and not config.alt.strict:
             lines.append("\\accesssetup{strict=false}")
@@ -1552,12 +1561,17 @@ def build_assignment(
     variant: str = "document",
     driver: str | None = None,
     siblings_to_skip: frozenset[str] = frozenset(),
+    worktree_checked: bool = False,
 ) -> BuildReport:
     """Convert and build ONE variant of one assignment.
 
     An assignment is several documents built from one body -- solutions, the
     blank handout students receive, sometimes answers-only -- so the caller says
     which. :func:`build_run` expands the selection; this builds one.
+
+    ``worktree_checked`` says the caller has already required a clean worktree
+    for the whole run. :func:`build_run` passes it; a direct caller does not,
+    and gets the guard here. See the check below for why the difference matters.
     """
     driver = driver or assignment.driver
     report = BuildReport(assignment=assignment.path, variant=variant, driver=driver)
@@ -1595,10 +1609,20 @@ def build_assignment(
     # Before the first byte reaches the corpus, and that is the whole point of
     # the position: `apply_descriptions` below writes the worklog beside the
     # sources in `edit` mode, so a guard placed after it would be checking a
-    # tree this run had already dirtied. `build_run` checks once up front too,
-    # so a multi-document run cannot get half way; this one is for the callers
-    # that reach here directly -- the agent API and the tests both do.
-    if config.output.edits_sources:
+    # tree this run had already dirtied.
+    #
+    # `worktree_checked` is what keeps this from firing between documents of one
+    # run, and that is not a nicety -- it was a bug that made `--edit` unusable
+    # on any assignment with more than one variant. fa26/hw/1 built `solution`,
+    # which rewrote `sol1.tex` exactly as asked, and then `problem` refused to
+    # start because "the corpus has 1 uncommitted change(s): M fa26/hw/1/sol1.tex".
+    # The run tripped over its own edit and reported it as the user's.
+    #
+    # The guard belongs to the RUN, so `build_run` performs it once before
+    # anything is written and says so here. This remains for callers that reach
+    # build_assignment directly -- the agent API, tests/corpus_compile.py and
+    # tests/revert_e2e.py all do -- where nothing else has checked.
+    if config.output.edits_sources and not worktree_checked:
         require_clean_worktree(
             profile.corpus.root.resolve(), ignore=config.output.root
         )
@@ -2170,6 +2194,9 @@ def build_run(
                 variant=variant,
                 driver=driver,
                 siblings_to_skip=converted,
+                # Checked once, above, before anything was written. Re-checking
+                # per document means checking a tree this run has been editing.
+                worktree_checked=True,
             )
         except LatexAllyError as exc:
             report = BuildReport(
