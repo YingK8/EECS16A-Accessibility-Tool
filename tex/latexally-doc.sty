@@ -1,82 +1,35 @@
 %% latexally-doc.sty
 %% Shared document machinery for assignments, exams and worksheets.
-%%
-%% ---------------------------------------------------------------------------
-%% THIS FILE REPRODUCES THE EECS 16A HOUSE STYLE
-%% ---------------------------------------------------------------------------
-%% Every dimension, font, rule and skip below is copied from the course's
-%% ee16.sty, and the author-facing macros keep their existing names and
-%% behaviour: \qns, \q, \qitem, \sol, \ans and qunlist all work exactly as they
-%% always have. A document written for ee16.sty typesets the same here.
-%%
-%% What is added is invisible on the page: a heading structure (H1-H4), PDF
-%% bookmarks, document metadata, artifacts for decorative rules, and
-%% Unicode-mapped text.
-%%
-%% Unlike latexally-ee16.sty, which patches the real ee16.sty, this file is
-%% SELF-CONTAINED: no ee16.sty, no markup.sty, no timestamp.sty required. Use it
-%% for a new course, or for a document that should not depend on the legacy
-%% style files. Use latexally-ee16.sty instead when ee16.sty is present, because
-%% patching the real file guarantees fidelity automatically.
-%%
-%% Written in plain LaTeX2e rather than expl3 so that it reads alongside the
-%% ee16.sty definitions it mirrors.
-%%
-%% THE ONE DELIBERATE VISUAL DEVIATION is the solution/answer colour. ee16
-%% documents use `blue` (8.59:1, conforming) in homework drivers but
-%% solutionColor = rgb(0.2,0.6,0.9) in discussion worksheets, which measures
-%% 3.07:1 against the 4.5:1 that WCAG 2.1 SC 1.4.3 requires. This file uses a
-%% conforming blue everywhere. Pass [housecolors] to get the originals back.
+%% Self-contained: reproduces the EECS 16A house style without ee16.sty,
+%% markup.sty or timestamp.sty.
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
 \ProvidesPackage{latexally-doc}[2026-08-11 v0.2.0 EECS 16A house style, tagged]
 
 \RequirePackage{latexally-core}
 
-%% Interword-space injection OFF -- same reason as latexally-ee16.sty.
-%% Activating tagging also enables tagpdf's `activate/spaces`, which injects
-%% real space glyphs. With the Times/Dunhill setup used here that reflows text
-%% in the running header and footer and inside \emph and \Large groups until the
-%% glyphs stack on top of each other and the header is unreadable. Not caused by
-%% this package: \DocumentMetadata{testphase={tagpdf}} alone reproduces it.
-%% Re-enable with \tagpdfsetup{activate/spaces} if your document is unaffected,
-%% and check the header before shipping.
 \AddToHook{begindocument}{\tagpdfsetup{activate/spaces=false}}
 
-%% ---------------------------------------------------------------------------
 %% 0. Options
-%% ---------------------------------------------------------------------------
 
 \newif\ifaccess@housecolors \access@housecolorsfalse
 \DeclareOption{housecolors}{\access@housecolorstrue}
 \DeclareOption*{}
 \ProcessOptions\relax
 
-%% ---------------------------------------------------------------------------
 %% 1. Packages  (ee16.sty line 297 onwards)
-%% ---------------------------------------------------------------------------
 
 \RequirePackage{times,mathptmx}
 \RequirePackage[T1]{fontenc}
 \RequirePackage{amsmath,amssymb,amsfonts,textcomp,graphicx,url}
 \RequirePackage{xcolor}
 
-%% ee16.sty selects the title fonts with the \font primitive, which produces
-%% text with no ToUnicode CMap: unextractable, unsearchable, unspeakable.
-%% Switching on glyph-name mapping makes pdfTeX emit one, so the course keeps
-%% its typography AND the text is readable. Verified: cmdunh10 then extracts as
-%% real words. This is why no font substitution is needed.
 \ifdefined\pdfgentounicode
   \pdfgentounicode=1
   \InputIfFileExists{glyphtounicode.tex}{}{}
 \fi
 
-%% ---------------------------------------------------------------------------
 %% 2. Page geometry  (ee16.sty lines 77-90, verbatim)
-%% ---------------------------------------------------------------------------
-%% Raw dimension assignment, deliberately NOT the geometry package: geometry
-%% recomputes the text block from margins and would silently produce a
-%% different one.
 
 \textheight=9in
 \textwidth=6.5in
@@ -91,18 +44,13 @@
 \textfloatsep=9pt plus 2pt minus 3pt
 \renewcommand{\baselinestretch}{1.0}
 
-%% Display fonts for the masthead (ee16.sty lines 91-95, verbatim).
 \font\dunhd=cmdunh10 scaled \magstep5
 \font\dunhc=cmdunh10 scaled \magstep4
 \font\dunhbb=cmdunh10 scaled \magstep3
 \font\dunhb=cmdunh10 scaled \magstep2
 \font\dunha=cmdunh10 scaled \magstep2
 
-%% ---------------------------------------------------------------------------
 %% 3. Course identity
-%% ---------------------------------------------------------------------------
-%% ee16.sty hard-codes these with \def and the semester file overrides them.
-%% Here they are settable, which is what makes the file course-agnostic.
 
 \def\coursenumber{COURSE}
 \def\class{}
@@ -114,21 +62,13 @@
 \newcommand{\setcoursename}[1]{\def\class{#1}}
 \newcommand{\setsemester}[1]{\def\semester{#1}}
 \newcommand{\setuniversity}[1]{\def\university{#1}}
-%% Aliases matching the ee16 spelling, so either form works.
 \newcommand{\coursename}[1]{\def\class{#1}}
 
-%% body.tex files write `\def\title{Homework 9}` -- an argument-less macro. Both
-%% that form and \title{...} must work, so \title is left alone and the title
-%% block reads whatever \title expands to at \maketitle time.
 \providecommand{\title}{}
 
-%% timestamp.sty is a separate package in the course tree; without it the
-%% running header would fail. Fall back to the build date.
 \providecommand{\timestamp}{\today}
 
-%% ---------------------------------------------------------------------------
 %% 4. Running header and footer  (ee16.sty \ps@myheadings, verbatim)
-%% ---------------------------------------------------------------------------
 
 \def\oddfoottext{\begin{footnotesize}UCB \coursenumber, \semester, \title, All
 Rights Reserved. This may not be publicly shared without explicit
@@ -145,13 +85,7 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
 
 \pagestyle{myheadings}
 
-%% ---------------------------------------------------------------------------
 %% 5. Title block  (ee16.sty \maketitle / \@maketitle)
-%% ---------------------------------------------------------------------------
-%% Identical to ee16's, with exactly two additions, both invisible:
-%%   * the title text is wrapped in an H1 and registers the top bookmark;
-%%   * the two 6pt rules become artifacts, so a screen reader skips them
-%%     instead of meeting untagged content.
 
 \def\maketitle{%
  \begingroup
@@ -163,25 +97,11 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
  \let\maketitle\relax
  \let\@maketitle\relax}
 
-%% The masthead as a whole is the H1, rather than just the title text.
-%%
-%% ee16's layout puts the title on the same line as the semester, and the
-%% \vskip between the two masthead lines forces an implicit \par -- so at the
-%% moment the title is typeset a paragraph is already open, and a heading inside
-%% a paragraph is invalid PDF (`Parent-Child 'P' --> 'H1'`). Giving the title its
-%% own paragraph would insert a \parskip and move the page.
-%%
-%% So paragraph tagging is suspended across the whole block and the masthead
-%% becomes a single H1 element. The bookmark still reads just "Homework 9",
-%% because \accessbookmarkonly is given the title on its own.
 \def\@maketitle{\newpage
 \accessrecordtitle
 \accessbookmarkonly{1}{\title}%
 \tagpdfparaOff
 \begin{Decorative}\hrule height6pt\end{Decorative} \vskip .7em
-%% One marked-content sequence per masthead LINE. The \vskip between the two
-%% lines forces an implicit \par, and a sequence cannot span that: doing so
-%% leaves the structure stack open and the rest of the document untagged.
 \tagstructbegin{tag=P}\tagmcbegin{tag=P}%
 \makebox[1.3in][l]{\dunhb \coursenumber}{\dunhb \class \hfill \ }%
 \tagmcend\tagstructend
@@ -196,18 +116,9 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
 \tagpdfparaOn
  \vskip .5em}
 
-%% Records the title in the PDF metadata (Matterhorn 06-003). Called from
-%% \@maketitle rather than \begin{document} because body.tex writes
-%% `\def\title{...}` AFTER \begin{document}: probing \title earlier would
-%% consume the following brace group.
 \newcommand{\accessrecordtitle}{\expandafter\accesstitle\expandafter{\title}}
 
-%% ---------------------------------------------------------------------------
 %% 6. Questions  (ee16.sty lines 68-69, 321-325, verbatim)
-%% ---------------------------------------------------------------------------
-%% The question NUMBER comes from the list label, not from the macro. There is
-%% no "Question 1." prefix anywhere in an EECS 16A document, so the tagged
-%% version must not invent one; the heading wraps the question's own title.
 
 \newcounter{sparectr}
 \newenvironment{qunlist}{\begin{list}{{\bf\arabic{sparectr}.}}%
@@ -224,24 +135,6 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
   \accessheadinginline[Question \theaccessqcount]{2}{#1}%
 }
 
-%% Question headings: a real H2 tag, or a bookmark only?
-%%
-%% A real H2 costs a forced \par. Paragraph tagging must be off across the
-%% heading or the H2 lands inside a P, which PDF forbids; but switching it off
-%% part-way through a list item skips the paragraph's BEGIN hook while its END
-%% hook still fires, and tagpdf aborts with "the number of automatic begin and
-%% end text para hooks differ". Closing the paragraph with \par while tagging is
-%% still off makes neither hook fire, so they balance.
-%%
-%% That \par is free ONLY when the author already left a blank line after the
-%% question title. Measured across the live question bank: 362 \qns calls, of
-%% which 74 (20%) are followed immediately by text. For those, the \par moves
-%% the body onto its own line -- a real, visible reflow.
-%%
-%% So the default preserves the page exactly and registers a level-2 bookmark,
-%% matching how parts and solutions are handled. \accessquestiontags switches to
-%% real H2 tags for courses that would rather have the heading structure and can
-%% accept the reflow (or that always leave a blank line).
 \newif\ifaccess@qtag \access@qtagfalse
 \newcommand{\accessquestiontags}{\access@qtagtrue}
 
@@ -267,12 +160,7 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
   \ifaccess@qtag\par\tagpdfparaOn\fi
 }
 
-%% ---------------------------------------------------------------------------
 %% 7. Parts
-%% ---------------------------------------------------------------------------
-%% Parts are ordinary enumerate items with the label formats every body.tex
-%% sets. \qitem adds a level-3 bookmark; it prints nothing of its own, because
-%% the list label already shows "(a)".
 
 \renewcommand{\labelenumi}{(\alph{enumi})}
 \renewcommand{\theenumi}{(\alph{enumi})}
@@ -287,12 +175,7 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
   \accessbookmarkonly{3}{Part (\alph{accesspartcount})}%
 }
 
-%% ---------------------------------------------------------------------------
 %% 8. Solutions, answers, guidance
-%% ---------------------------------------------------------------------------
-%% Rendered inline, exactly as the course's driver files do:
-%%     \newcommand{\sol}[1]{{\color{blue} \textbf{Solution: } #1}}
-%% Not a block heading -- that would change the page.
 
 \newif\ifaccess@showsol   \access@showsolfalse
 \newif\ifaccess@showans   \access@showansfalse
@@ -316,27 +199,12 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
 \setlength{\accessreservelen}{5\baselineskip}
 \newcommand{\accessreserve}[1]{\setlength{\accessreservelen}{#1}}
 
-%% Blank working space in the student version. It is decorative: it must not be
-%% announced, and must not become an empty tagged paragraph.
 \newcommand{\access@reservespace}{%
   \ifaccess@reserve
     \begin{Decorative}\vspace*{\accessreservelen}\end{Decorative}%
   \fi
 }
 
-%% Solutions get a level-4 BOOKMARK but no H4 tag, and that is deliberate.
-%%
-%% "Solution: " is inline: it opens the same paragraph that carries the solution
-%% text, exactly as `\newcommand{\sol}[1]{{\color{blue}\textbf{Solution: }#1}}`
-%% always has. PDF does not permit a heading inside a paragraph -- tagpdf
-%% reports `Parent-Child 'P' --> 'H4'` -- so tagging it would trade a valid
-%% document for a nominal extra heading level. Forcing it into its own paragraph
-%% instead would insert a \parskip and change the page, which is the one thing
-%% this refactor exists to avoid.
-%%
-%% The navigation the reader actually uses is unaffected: the bookmark tree
-%% still reads Homework > Question > Part > Solution. Block-level headings (the
-%% title and each question) do carry real H1 and H2 tags.
 \newcommand{\sol}[1]{%
   \ifaccess@showsol
     \accessbookmarkonly{4}{Solution}%
@@ -361,35 +229,11 @@ Rights Reserved. This may not be publicly shared without explicit permission.\en
   \fi
 }
 
-%% ee16.sty also provides these.
 \newcommand{\answer}{\smallskip\textbf{Answer:} }
 \newcommand{\answerp}[1]{\smallskip\textbf{Answer:} (#1 pts.)}
 
-%% ---------------------------------------------------------------------------
 %% 9. Answer regions
-%% ---------------------------------------------------------------------------
-%% Replaces \framebox(470,42){} -- a picture-mode box carrying no semantics --
-%% and \uline{\hfill} fill-in rules, neither of which a screen reader can report
-%% as "here is where you write your answer".
 
-%% \framebox with an explicit width and a strut, NOT \fbox{\parbox{...}{}}.
-%%
-%% An empty \parbox body collapses the box: `\fbox{\parbox[c][4\baselineskip][c]
-%% {\dimexpr\linewidth-2\fboxsep-2\fboxrule}{}}` draws a frame only 6.8pt wide
-%% -- 2\fboxsep + 2\fboxrule and nothing else -- which appears on the page as a
-%% thin tall rectangle at the left margin. Reproducible in a plain article
-%% class, so it is nothing to do with the tagging. Giving the box a \strut, or
-%% setting the width on \framebox directly as here, both fix it; this form also
-%% drops the width arithmetic, since \framebox sizes the OUTER box.
-%% The height may be given either way: \answerbox[1in] or \answerbox{1in}.
-%%
-%% Accepting both is not indulgence. With an optional argument alone,
-%% \answerbox{1in} is legal input that draws a default-height box and then
-%% TYPESETS the literal text "1in" underneath it -- no error, no warning, just a
-%% stray "1in" on the page. Braces are what the legacy vocabulary uses
-%% (\fillin{4cm}), so that is the mistake this command will actually be given,
-%% and silently rendering garbage is the failure mode this package exists to
-%% eliminate.
 \newcommand{\answerbox}[1][5\baselineskip]{%
   \@ifnextchar\bgroup{\access@answerbox@braced{#1}}{\access@answerbox{#1}}%
 }

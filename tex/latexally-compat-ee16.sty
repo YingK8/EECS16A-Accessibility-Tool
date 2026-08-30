@@ -1,27 +1,6 @@
 %% latexally-compat-ee16.sty
-%% Compatibility shim: the legacy EECS 16A macro vocabulary, re-expressed in
+%% Compatibility shim: the legacy EECS 16A macro vocabulary re-expressed in
 %% terms of tagged primitives, so existing question files keep compiling.
-%%
-%% WHAT IT COVERS
-%%   \qns{title}      question heading            -> H2
-%%   \q{pts}{title}   question heading + points   -> H2
-%%   \qitem           part heading                -> H3
-%%   \sol{...}        solution block              -> H4
-%%   \ans{...}        answer block                -> H4
-%%   \solans{...}     solution/answer block       -> H4
-%%   qunlist          question container          -> transparent
-%%   \fig, \twofig    epsf inclusion              -> \includegraphics
-%%   \fillin          rule-based blank            -> labelled answer blank
-%%
-%% WHAT STILL NEEDS A MIGRATION EDIT (the tool does these; see MIGRATION.md)
-%%   * `\newcommand{\qitem}{\qpart\item}` in every body.tex must be deleted:
-%%     \newcommand raises an error on an already-defined command, and \qitem is
-%%     defined here.
-%%   * `\renewcommand{\labelenumi}{(\alph{enumi})}` blocks become dead once
-%%     parts are headings rather than list items.
-%%   * `\def\title{Homework 9}` is rewritten to `\title{Homework 9}`. The shim
-%%     also recovers the argument-less form at \begin{document} (see below), so
-%%     a file that slips through still produces a correct title.
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
 \ProvidesExplPackage{latexally-compat-ee16}{2026-08-08}{0.1.0}
@@ -29,56 +8,30 @@
 
 \RequirePackage{latexally-doc}
 
-%% ---------------------------------------------------------------------------
 %% Questions and parts
-%% ---------------------------------------------------------------------------
 
 \ProvideDocumentCommand \qns { m } { \question {#1} }
 \ProvideDocumentCommand \q   { m m } { \question [#1] {#2} }
 
-%% markup.sty defines \qpart purely as an autograder position marker, and
-%% body.tex files build \qitem from it. Keep the name harmless.
 \ProvideDocumentCommand \qpart { } { }
 
-%% \qitem must work both inside a legacy `enumerate` wrapper and on its own.
-%% Legacy part lists look like:
-%%     \begin{enumerate} \qitem text \qitem text \end{enumerate}
-%% Emitting only a heading there would leave the list with no \item, which is a
-%% hard LaTeX error ("perhaps a missing \item"). So inside a list we still open
-%% an item -- with an empty label, because the H3 that follows already announces
-%% "Part (a)" and a list label would make a screen reader say it twice.
 \ProvideDocumentCommand \qitem { }
   {
     \int_compare:nNnT { \use:c { @listdepth } } > { 0 } { \item [ ] }
     \questionpart
   }
 
-%% ---------------------------------------------------------------------------
 %% Solution / answer blocks
-%% ---------------------------------------------------------------------------
-%% The legacy versions are commands taking one argument; the modern ones are
-%% environments. Both spellings stay available.
 
 \ProvideDocumentCommand \sol    { +m } { \begin{solution} #1 \end{solution} }
 \ProvideDocumentCommand \solans { +m } { \begin{solution} #1 \end{solution} }
 \ProvideDocumentCommand \ans    { +m } { \begin{answer}   #1 \end{answer} }
 
-%% ---------------------------------------------------------------------------
 %% Containers
-%% ---------------------------------------------------------------------------
-%% `qunlist` was a hand-built `list` with a custom label. A raw `list` gets no
-%% L/LI/Lbl/LBody structure from the block module, so it produced an untagged
-%% container. Questions now number themselves, so the container is transparent.
 
 \ProvideDocumentEnvironment { qunlist } { } { \par } { \par }
 
-%% ---------------------------------------------------------------------------
 %% Legacy figure inclusion
-%% ---------------------------------------------------------------------------
-%% \fig and \twofig used the epsf package, whose \epsffile predates graphicx and
-%% is invisible to the tagging code -- those images produce no Figure element
-%% and no /Alt at all. Routing them through \includegraphics makes them
-%% describable; the alt text itself is supplied by the migration tool.
 
 \ProvideDocumentCommand \fig { O{} m }
   { \described {#1} { \includegraphics{#2} } }
@@ -92,36 +45,17 @@
     \par
   }
 
-%% ---------------------------------------------------------------------------
 %% Fill-in blanks
-%% ---------------------------------------------------------------------------
 
 \ProvideDocumentCommand \fillin { O{4cm} } { \answerblank [#1] }
 \ProvideDocumentCommand \doublehrule { }
   { \begin{Decorative} \hrule \vskip 0.02in \hrule \end{Decorative} }
 
-%% ---------------------------------------------------------------------------
 %% Deprecated spellings of the description API
-%% ---------------------------------------------------------------------------
-%% `AltOnly` presupposed an `AltAlso` that describes a region AND still reads its
-%% contents. No such mode exists or could exist -- alt text always replaces the
-%% region; that is what alt text IS. The qualifier named the category rather than
-%% this member of it, so it carried no information and invented a sibling.
-%% `FigureBlock` likewise implied a `FigureInline`, and named layout rather than
-%% meaning. The current spellings are `Described` and `DescribedFigure`, which
-%% pair with `Decorative` to make the PDF/UA binary visible: a region is either
-%% an artifact or it is described.
-%%
-%% These aliases live here, in the compatibility shim, and deliberately NOT in
-%% latexally-core.sty, so the core API has exactly one spelling of each idea.
-%% They warn once each, naming the replacement.
 
 \msg_new:nnn { latexally } { deprecated-name }
   { '#1'~is~deprecated;~use~'#2'~instead. }
 
-%% \tl_to_str:n, not plain expansion: the argument may be a control sequence
-%% (\altonly), and a message argument that expands it would execute the very
-%% deprecated command being reported. Str-ifying prints "\altonly" as characters.
 \cs_new_protected:Npn \__access_compat_warn:nn #1#2
   {
     \msg_warning:nnee { latexally } { deprecated-name }
@@ -139,9 +73,6 @@
   { \__access_compat_warn:nn { \altonly } { \described }
     \described {#1} {#2} }
 
-%% The key changed with the environment: `alt` names the PDF dictionary entry the
-%% string lands in, not the thing an author writes. A key is not a control
-%% sequence, so the alias is a one-line `.meta:n` forward rather than a wrapper.
 \keys_define:nn { latexally / figure }
   { alt .meta:n = { description = {#1} } }
 
@@ -156,13 +87,7 @@
   { \__access_compat_warn:nn { \FigureDescription } { \LongDescription }
     \LongDescription [Figure~description] {#1} }
 
-%% ---------------------------------------------------------------------------
 %% Argument-less \title recovery
-%% ---------------------------------------------------------------------------
-%% Every legacy body.tex writes `\def\title{Homework 9}`, which overwrites the
-%% one-argument \title defined in latexally-doc. Rather than fail with an empty
-%% document title -- a PDF/UA metadata failure (Matterhorn 06-003) that is easy
-%% to miss -- detect the argument-less form and adopt its expansion.
 
 \AddToHook { begindocument }
   {

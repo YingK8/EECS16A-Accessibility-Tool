@@ -1,33 +1,7 @@
 %% latexally-ee16.sty
 %% Accessibility retrofit for the existing EECS 16A macro set.
-%%
-%% ---------------------------------------------------------------------------
-%% DESIGN: PATCH, DO NOT REIMPLEMENT
-%% ---------------------------------------------------------------------------
-%% This package loads the course's real ee16.sty and wraps a handful of its
-%% macros. It deliberately does NOT reimplement them.
-%%
-%% The reason is visual fidelity. Every dimension, font, rule thickness and skip
-%% still comes from ee16.sty itself, so the typeset result is identical by
-%% construction rather than by careful copying -- and it stays identical when
-%% the course edits ee16.sty. Authors keep writing \qns, \qitem and \sol exactly
-%% as they always have; nothing about the source needs to change.
-%%
-%% What the patches add is invisible on the page and decisive off it: a heading
-%% structure (H1-H4), PDF bookmarks, document metadata, and Unicode-mapped text.
-%%
-%% USAGE -- add two lines to a driver file, change nothing else:
-%%
-%%     \DocumentMetadata{lang=en-US, pdfversion=2.0,
-%%                       testphase={phase-III,math,table,graphic,firstaid}}
-%%     \documentclass[11pt]{article}
-%%     \usepackage{../../../timestamp}
-%%     \usepackage{../../../ee16}
-%%     \usepackage{../../../markup}
-%%     \usepackage{../../sp26}
-%%     \usepackage{latexally-ee16}     % <- after ee16 and markup
-%%
-%% \DocumentMetadata MUST be the first line of the file, before \documentclass.
+%% Patches the course's real ee16.sty instead of reimplementing it, so the page
+%% is unchanged and only the tagging is added.
 
 \NeedsTeXFormat{LaTeX2e}[2020-10-01]
 \ProvidesExplPackage{latexally-ee16}{2026-08-08}{0.1.0}
@@ -35,139 +9,36 @@
 
 \RequirePackage{latexally-core}
 
-%% ---------------------------------------------------------------------------
-%% 0. Why `proof' is NOT fixed here
-%% ---------------------------------------------------------------------------
-%% Once tagging is on the LaTeX kernel defines a `proof' environment of its
-%% own, and ee16.sty:21 does \newenvironment{proof}. That is "Command \proof
-%% already defined" -- a hard error, on every document in the corpus that loads
-%% ee16, on source that has compiled for years and still compiles untagged.
-%%
-%% The obvious fix is
-%%
-%%     \AddToHook{file/ee16.sty/before}{\let\proof\relax\let\endproof\relax}
-%%
-%% and putting it HERE does not work. This package is loaded by the line the
-%% converter injects at `_preamble_insertion_point', which is after the
-%% driver's own \usepackage{ee16} -- so by the time the hook is registered,
-%% ee16.sty has already been read and the hook can never fire. **[verified]**:
-%% with the lead-block hook removed and this one present, the error comes back.
-%%
-%% It has to lead the document instead, beside \DocumentMetadata, which is
-%% what `preamble_for` emits and `split_preamble` keeps in the lead block. The
-%% pairing is a profile key, `engine.unlet_before`, because which package
-%% clashes depends entirely on whose macros they are.
-
-%% ---------------------------------------------------------------------------
 %% 0. Interword-space injection -- OFF, for visual fidelity
-%% ---------------------------------------------------------------------------
-%% Activating tagging also switches on tagpdf's `activate/spaces`, which injects
-%% real space glyphs into the text so that extraction and copy-paste find word
-%% boundaries. On this corpus that injection reflows text set in the running
-%% header and footer and inside \emph groups: glyphs pile up on top of one
-%% another and the header becomes unreadable.
-%%
-%% Measured on sp26/hw/9 (13 pages): with injection on, 484 of 3585 adjacent
-%% word pairs overlap; with it off, 0 of 3537. The document is otherwise
-%% unchanged. Bisecting showed this is not caused by anything in this package --
-%% \DocumentMetadata{testphase={tagpdf}} alone reproduces it, and
-%% \DocumentMetadata without any testphase does not.
-%%
-%% The trade-off is real: without injected spaces, word separation in extracted
-%% text relies on pdfTeX's own positioning rather than explicit space glyphs.
-%% In practice extraction still finds words correctly here, and a legible page
-%% matters more than marginally more robust copy-paste. Re-enable with
-%% \tagpdfsetup{activate/spaces} after loading this package if your document
-%% does not show the problem -- and check the header before you ship it.
 \AddToHook { begindocument }
   { \tagpdfsetup { activate/spaces = false } }
 
-%% ---------------------------------------------------------------------------
 %% 1. Unicode-mapped text
-%% ---------------------------------------------------------------------------
-%% ee16.sty selects cmdunh10 with the \font primitive for the title block and
-%% section headings. Left alone, that text has no ToUnicode CMap: it cannot be
-%% extracted, searched or spoken, which fails PDF/UA regardless of tagging.
-%%
-%% It does NOT follow that the font must be replaced. pdfTeX will generate a
-%% ToUnicode CMap for a Type 1 font when glyph-name mapping is switched on,
-%% which keeps the course's typography exactly as it is and makes the text
-%% readable. Verified: cmdunh10 emits /ToUnicode and extracts as real words.
 \ifdefined\pdfgentounicode
   \pdfgentounicode=1
-  %% \ExplSyntaxOff is load-bearing, not tidiness. This is a
-  %% \ProvidesExplPackage, so expl3 catcodes are live here and SPACE IS
-  %% IGNORED -- and glyphtounicode.tex spells its multi-codepoint entries
-  %% "\pdfglyphtounicode{ffi}{0066 0066 0069}". Read under those catcodes the
-  %% spaces vanish, pdfTeX sees one number 0x006600660069, and warns
-  %% "ToUnicode: value out of range" 119 times while dropping the entry.
-  %% Every affected glyph then falls back to its presentation form: "difficult"
-  %% extracted as "di<U+FB03>cult", which breaks Ctrl+F and reads badly.
   \ExplSyntaxOff
   \InputIfFileExists{glyphtounicode.tex}{}{\input{glyphtounicode}}
   \ExplSyntaxOn
 \fi
 
-%% ---------------------------------------------------------------------------
 %% 2. Heading hooks
-%% ---------------------------------------------------------------------------
-%% \accessheadinginline is used rather than \accessheading because \qns expands
-%% inside a list item: a heading that issued \par would break the item apart and
-%% change the layout.
 
 \bool_new:N \g__access_ee_patched_bool
 
-%% ---------------------------------------------------------------------------
 %% 3. Title -> H1
-%% ---------------------------------------------------------------------------
-%% Every body.tex writes `\def\title{Homework 9}`, so \title is an
-%% argument-less macro whose expansion is the document title. ee16.sty's
-%% \@maketitle typesets it as `{\dunhb \hfill \dunhbb \title \par}`.
-%%
-%% Patching that one group leaves the layout untouched -- same fonts, same
-%% \hfill, same \par -- while wrapping the title text in an H1 and registering
-%% the top-level bookmark. The document metadata is taken from the same string.
 
-%% The title cannot be read at \begin{document}: body.tex writes
-%% `\def\title{Homework 9}` AFTER \begin{document}, so at hook time \title is
-%% still the kernel's one-argument version and probing it consumes the following
-%% brace group ("Argument of \title has an extra }"). It is captured inside
-%% \@maketitle instead, which runs after the \def.
-%% Letters-only name on purpose: this is called from the \ExplSyntaxOff block
-%% below, where `_` is a subscript character. An expl3 internal name used there
-%% parses as \_ followed by a bare subscript, and TeX demands math mode
-%% ("Missing $ inserted") at \maketitle.
 \NewDocumentCommand \accessrecordtitle { }
   { \exp_args:Ne \accesstitle { \title } }
 
-%% \@maketitle is restated below. Every dimension, font and skip is copied
-%% verbatim from ee16.sty; the ONLY change is that the title text is wrapped in
-%% an H1. It is restated rather than patched because \title is also used in the
-%% running footer, so wrapping \title itself would put a heading in the footer.
-%%
-%% If ee16.sty's title block is ever redesigned, update this block to match.
 \ExplSyntaxOff
 \AtBeginDocument{%
   \@ifundefined{@maketitle}{}{%
-    %% The masthead as a whole becomes the H1, and paragraph tagging is off
-    %% across the block. ee16 puts the title on the same line as the semester,
-    %% and the \vskip between masthead lines forces an implicit \par, so a
-    %% paragraph is already open by the time the title is set -- and a heading
-    %% inside a paragraph is invalid PDF. One marked-content sequence per LINE,
-    %% because a sequence cannot span that implicit \par. The bookmark is given
-    %% the title on its own, so the outline still reads "Homework 9".
     \gdef\@maketitle{\newpage
       \accessrecordtitle
       \accessbookmarkonly{1}{\title}%
       \tagpdfparaOff
       \begin{DecorativeBlock}\hrule height6pt\end{DecorativeBlock} \vskip .7em
       \tagstructbegin{tag=P}\tagmcbegin{tag=P}%
-      %% The course name is CENTRED on the text width, not set flush against
-      %% the course-number box. ee16.sty sets it left at 1.3in with a \hfill
-      %% after it, which reads as "left-aligned and then some space" rather
-      %% than as a masthead. The number keeps its box; the box is then made
-      %% zero-width so \centerline measures the full \textwidth and the name
-      %% lands on the page's centre rather than on the centre of what is left.
       \makebox[0pt][l]{\makebox[1.3in][l]{\dunhb \coursenumber}}%
       \centerline{\dunhb \class}%
       \tagmcend\tagstructend
@@ -185,51 +56,13 @@
 }
 \ExplSyntaxOn
 
-%% ---------------------------------------------------------------------------
 %% 4. Questions and parts
-%% ---------------------------------------------------------------------------
-%% ee16.sty defines:
-%%     \def\q#1#2{{\bf\item (#1 pts.)\quad #2}}
-%%     \def\qns#1{{\bf\item #1}}
-%% The replacements below are byte-for-byte the same apart from the heading
-%% wrapper around the visible text, so the bold item, the points and the \quad
-%% all render exactly as before.
-
-%% Everything from here down is plain LaTeX2e rather than expl3. These are the
-%% macros a TA is most likely to read when they want to know what changed, and
-%% they read most clearly next to the ee16.sty definitions they replace. It also
-%% avoids the parameter-doubling that nesting \RenewDocumentCommand inside an
-%% expl3 mapping requires -- getting that wrong silently truncated every
-%% solution body and cost four pages of a thirteen-page assignment.
 
 \newcounter{accessqcount}
 \newcounter{accesspartcount}
 
 \ExplSyntaxOff
 
-%% ee16.sty defines these as
-%%     \def\q#1#2{{\bf\item (#1 pts.)\quad #2}}
-%%     \def\qns#1{{\bf\item #1}}
-%% The replacements are identical apart from the heading wrapper around the
-%% visible text, so the bold item, the points and the \quad render as before.
-%% Question headings: a real H2 tag, or a bookmark only?
-%%
-%% A real H2 costs a forced \par. Paragraph tagging must be off across the
-%% heading or the H2 lands inside a P, which PDF forbids; but switching it off
-%% part-way through a list item skips the paragraph's BEGIN hook while its END
-%% hook still fires, and tagpdf aborts with "the number of automatic begin and
-%% end text para hooks differ", then cascades into "there is no open structure
-%% on the stack" for the rest of the document. Closing the paragraph with \par
-%% while tagging is still off makes neither hook fire, so they balance.
-%%
-%% That \par is free ONLY when the author already left a blank line after the
-%% question title. Measured across the live question bank: 362 \qns calls, of
-%% which 74 (20%) are followed immediately by text -- sp26/hw/13 has three such
-%% files. For those the \par moves the body onto its own line, a visible reflow.
-%%
-%% So the default preserves the page exactly and registers a level-2 bookmark,
-%% matching how parts and solutions are handled. \accessquestiontags switches to
-%% real H2 tags for courses that prefer the heading structure.
 \newif\ifaccess@qtag \access@qtagfalse
 \newcommand{\accessquestiontags}{\access@qtagtrue}
 
@@ -267,24 +100,6 @@
   \accessheadinginline[Question \theaccessqcount]{2}{#1}%
 }
 
-%% \qitem is built by each body.tex as `\newcommand{\qitem}{\qpart\item}`, where
-%% \qpart is markup.sty's autograder position marker. Patching \qpart rather
-%% than \qitem means the \item that follows is untouched, so list labels,
-%% indentation and spacing are unchanged.
-%%
-%% The patch must be applied INSIDE qunlist, not at \begin{document}. markup.sty
-%% redefines \qunlist to do `\newcommand\qpart{\SEP{new_part}}` in its own begin
-%% code, which silently discards any earlier patch -- the symptom is a bookmark
-%% tree with no "Part (a)" entries, solutions hanging directly off the question.
-%% The `env/.../begin` hook runs after an environment's begin code, so this wins.
-%% \qpart cannot be patched directly: markup.sty creates it with \newcommand
-%% inside qunlist's begin code, so it does not exist at \begin{document} and any
-%% patch applied there is discarded when the environment starts.
-%%
-%% \SEP is the hook that does work. markup.sty defines it at top level and calls
-%% \SEP{new_part} at exactly the point a part begins -- that is its whole
-%% purpose, marking positions for the autograder. Wrapping it gives us the part
-%% boundary without depending on environment-hook ordering.
 \newcommand{\accessseppart}{}
 \AtBeginDocument{%
   \@ifundefined{SEP}{}{%
@@ -301,20 +116,6 @@
   }%
 }
 
-%% \sol, \ans and \solans are defined in the driver file, after all packages,
-%% so they are patched at \begin{document}. The colour and the "Solution: "
-%% label are the driver's own; only the bookmark is added. The argument stays
-%% short, exactly as \newcommand{\sol}[1] declared it.
-%% A driver builds the blank handout by defining the printing macro to throw
-%% its argument away: `\newcommand{\ans}[1]{}'. Bookmarking it regardless put
-%% an "Answer" in the outline of every problem PDF, pointing at a page with no
-%% answer on it -- worse than no bookmark, because an outline that names
-%% something absent is one a reader cannot trust.
-%%
-%% \newcommand makes a \long macro, so a macro that discards its one argument
-%% is \ifx-identical to this. Comparing against it is exact: it cannot be
-%% fooled by a macro that merely LOOKS empty, and it costs one comparison at
-%% \begin{document} rather than a guess at every call site.
 \long\def\accessdiscardsarg#1{}
 \newcommand{\accesspatchsolution}[2]{%
   \expandafter\let\csname accessorig#1\expandafter\endcsname\csname #1\endcsname
