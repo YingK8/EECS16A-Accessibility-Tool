@@ -1167,3 +1167,108 @@ def test_off_is_still_the_way_to_do_nothing(tmp_path: Path):
     )
     assert apply_descriptions(prepared, config, profile) == 0
     assert driver.read_text() == before
+
+
+def _edit_run(tmp_path: Path, driver_text: str):
+    """A corpus, a converted mirror of one assignment, and a config that edits."""
+    from latexally.build import Prepared
+
+    corpus = tmp_path / "corpus"
+    mirror = corpus / "ally-out" / "tex" / "fa26" / "hw" / "1"
+    mirror.mkdir(parents=True)
+    (corpus / "fa26" / "hw" / "1").mkdir(parents=True)
+    (corpus / "fa26" / "hw" / "1" / "sol1.tex").write_text("\\documentclass{article}\n")
+    (mirror / "sol1.tex").write_text(driver_text)
+
+    profile = Profile(name="test", corpus=CorpusScope(root=corpus, include=("**/*.tex",)))
+    config = RunConfig(
+        output=Output(root=corpus / "ally-out", write_mode="edit"), write=True
+    )
+    prepared = Prepared(
+        assignment=Assignment(
+            path="fa26/hw/1", kind="homework", driver="sol1.tex", tex_files=1
+        ),
+        driver=mirror / "sol1.tex",
+        work_dir=mirror,
+    )
+    return corpus, prepared, config, profile
+
+
+def test_the_edited_driver_is_pointed_at_the_corpus_root(tmp_path: Path):
+    r"""One copy of each package per corpus, not one per assignment folder: that
+    was 3 files times the 2039 assignment directories in this corpus.
+
+    The line is injected with the rest of the preamble, so the mirror and the
+    corpus hold the same bytes -- patching the corpus copy afterwards loses the
+    patch to the next variant's copy-back, which writes the mirror out again.
+    """
+    from latexally.build import _with_root_package_path, root_package_path
+
+    assignment = Assignment(path="fa26/hw/1", kind="homework", driver="sol1.tex")
+    lines = ["\\DocumentMetadata{tagging=on}", "\\usepackage{latexally-ee16}"]
+    out = _with_root_package_path(lines, assignment, "\\documentclass{article}\n")
+
+    assert out == [lines[0], root_package_path(3), lines[1]]
+    assert root_package_path(3) == (
+        "\\makeatletter\\def\\input@path{{../../../}}\\makeatother"
+    )
+
+
+def test_a_driver_with_its_own_input_path_is_left_alone(tmp_path: Path):
+    r"""`\input@path` is the course's if the course set it. A second definition
+    silently wins or loses depending on which came last, so we do not write one
+    -- and the packages then go beside the driver, where they always worked."""
+    from latexally.build import _with_root_package_path, copy_back, root_package_path
+
+    assignment = Assignment(path="fa26/hw/1", kind="homework", driver="sol1.tex")
+    lines = ["\\usepackage{latexally-ee16}"]
+    theirs = "\\makeatletter\\def\\input@path{{../shared/}}\\makeatother\n"
+    assert _with_root_package_path(lines, assignment, theirs) == lines
+
+    corpus, prepared, config, profile = _edit_run(
+        tmp_path,
+        theirs + "\\usepackage{latexally-ee16}\n\\begin{document}x\\end{document}\n",
+    )
+    copy_back(prepared, config, profile)
+    assert (corpus / "fa26" / "hw" / "1" / "latexally-ee16.sty").is_file()
+    assert not (corpus / "latexally-ee16.sty").exists()
+    assert root_package_path(3) not in (
+        corpus / "fa26" / "hw" / "1" / "sol1.tex"
+    ).read_text()
+
+
+def test_the_packages_are_installed_once_per_corpus(tmp_path: Path):
+    """At the root, beside ee16.sty -- and the required package comes along."""
+    from latexally.build import copy_back, root_package_path
+
+    corpus, prepared, config, profile = _edit_run(
+        tmp_path,
+        "\\documentclass{article}\n"
+        + root_package_path(3)
+        + "\n\\usepackage{latexally-ee16}\n\\begin{document}x\\end{document}\n",
+    )
+    copy_back(prepared, config, profile)
+
+    assert (corpus / "latexally-ee16.sty").is_file()
+    assert (corpus / "latexally-core.sty").is_file(), "the required package too"
+    assert not list((corpus / "fa26" / "hw" / "1").glob("latexally-*.sty"))
+
+
+def test_a_stale_copy_beside_the_driver_is_swept(tmp_path: Path):
+    r"""pdflatex reads the working directory first, so a copy left by an older
+    per-assignment run would shadow the fresh one at the root, unnoticed."""
+    from latexally.build import copy_back, root_package_path
+
+    corpus, prepared, config, profile = _edit_run(
+        tmp_path,
+        "\\documentclass{article}\n"
+        + root_package_path(3)
+        + "\n\\usepackage{latexally-ee16}\n\\begin{document}x\\end{document}\n",
+    )
+    stale = corpus / "fa26" / "hw" / "1" / "latexally-core.sty"
+    stale.write_text("%% left by an older run\n")
+
+    copy_back(prepared, config, profile)
+
+    assert not stale.exists()
+    assert (corpus / "latexally-core.sty").is_file()

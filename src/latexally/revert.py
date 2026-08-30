@@ -207,6 +207,16 @@ def plan_revert(
                 resolved = path.resolve()
                 if not path.is_file() or resolved in tracked:
                     continue
+                # The packages live at the corpus root now, one copy for every
+                # converted assignment (see `build._install_packages`), so a
+                # scoped revert deleting them would unbuild every OTHER
+                # assignment that still points at them. A full revert owns them.
+                if (
+                    target != root
+                    and resolved.parent == root
+                    and resolved.name.startswith("latexally-")
+                ):
+                    continue
                 if not force and _holds_human_text(resolved):
                     plan.kept.append(resolved)
                     continue

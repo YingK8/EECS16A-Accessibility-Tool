@@ -274,6 +274,42 @@ def preamble_for(
 _LEADING = ("\\DocumentMetadata", "\\AddToHook")
 
 
+_INPUT_PATH = re.compile(r"\\def\s*\\input@path")
+_LATEXALLY_USE = re.compile(r"^\\usepackage(?:\[[^\]]*\])?\{latexally-")
+
+
+def root_package_path(depth: int) -> str:
+    r"""The line that sends a driver ``depth`` levels down to the corpus root."""
+    return "\\makeatletter\\def\\input@path{{" + "../" * depth + "}}\\makeatother"
+
+
+def _with_root_package_path(
+    lines: list[str], assignment: Assignment, text: str
+) -> list[str]:
+    r"""Add the ``\input@path`` line an edited driver needs to find the packages.
+
+    Only ``edit`` writes a folder that a bare pdflatex has to build on its own,
+    and this is what lets one copy of each ``latexally-*.sty`` at the corpus root
+    serve every assignment instead of one copy per folder. It goes in here, with
+    the rest of the injected preamble, rather than being patched into the file
+    afterwards: two variants of an assignment share one mirror, and the second
+    one's copy-back would write the first one's patch straight back out again.
+
+    Left alone: a driver at the corpus root, which has nothing to point at, and
+    one that defines ``\input@path`` itself -- that belongs to the course, and
+    a second definition would silently win or lose depending on which came last.
+    """
+    depth = len([part for part in Path(assignment.path).parts if part])
+    if not depth or _INPUT_PATH.search(text):
+        return lines
+    at = next(
+        (index for index, line in enumerate(lines) if _LATEXALLY_USE.match(line)), None
+    )
+    if at is None:
+        return lines
+    return lines[:at] + [root_package_path(depth)] + lines[at:]
+
+
 def split_preamble(lines: list[str]) -> tuple[list[str], list[str]]:
     """Separate the lines that must lead the file from the rest."""
     first = [line for line in lines if line.startswith(_LEADING)]
@@ -596,6 +632,8 @@ def materialise(
     lines = preamble_for(config, profile) if lines is None else lines
 
     source = TexSource.from_path(source_dir / driver_name)
+    if config.output.edits_sources:
+        lines = _with_root_package_path(lines, assignment, source.text)
     converted = inject(source, lines)
 
     mirror_root = config.output.tex_dir().resolve()
@@ -1770,12 +1808,12 @@ def copy_back(prepared: Prepared, config: RunConfig, profile: Profile) -> list[P
        pixel diff measures against. It is an artefact of the comparison, not
        output, and it would land beside the real driver as a duplicate.
 
-    The package's own ``.sty`` files are then copied in beside the driver. The
-    mirror never needed them on disk -- it reached them through ``TEXINPUTS``
-    (see :func:`materialise`) -- but the whole point of this mode is a folder
-    that builds with a bare ``pdflatex``, and a bare ``pdflatex`` has no such
-    path. They are named ``latexally-*``, which is what lets
-    :mod:`latexally.revert` recognise them again.
+    The package's own ``.sty`` files are then installed once at the corpus root
+    -- see :func:`_install_packages`. The mirror never needed them on disk (it
+    reaches them through ``TEXINPUTS``, see :func:`materialise`), but the whole
+    point of this mode is a folder that builds with a bare ``pdflatex``, and a
+    bare ``pdflatex`` has no such path. They are named ``latexally-*``, which is
+    what lets :mod:`latexally.revert` recognise them again.
     """
     mirror_root = config.output.tex_dir().resolve()
     corpus_root = profile.corpus.root.resolve()
@@ -1796,22 +1834,54 @@ def copy_back(prepared: Prepared, config: RunConfig, profile: Profile) -> list[P
         target.write_bytes(source.read_bytes())
         written.append(target)
 
-    written.extend(_install_packages(prepared.work_dir, corpus_root, prepared))
+    try:
+        driver = corpus_root / prepared.driver.resolve().relative_to(mirror_root)
+    except ValueError:
+        driver = corpus_root / prepared.assignment.path / prepared.driver.name
+    written.extend(_install_packages(prepared, corpus_root, driver))
     return written
 
 
 def _install_packages(
-    work_dir: Path, corpus_root: Path, prepared: Prepared
+    prepared: Prepared, corpus_root: Path, driver: Path
 ) -> list[Path]:
-    """Put the ``latexally-*.sty`` the driver loads beside it, for bare pdflatex."""
+    r"""One copy of each ``latexally-*.sty`` per corpus, not per assignment.
+
+    Bare pdflatex searches the current directory, so these used to be copied
+    into the assignment folder -- three files times the 2039 assignment
+    directories in this corpus, and six counting the mirror's own set. One copy
+    at the corpus root, where ``ee16.sty`` and ``markup.sty`` already live, plus
+    one line in the driver:
+
+        \makeatletter\def\input@path{{../../../}}\makeatother
+
+    ``\usepackage`` honours ``\input@path``, and so does the
+    ``\RequirePackage{latexally-core}`` *inside* ``latexally-ee16.sty`` -- which
+    is why the obvious ``\usepackage{../../../latexally-ee16}`` is not enough on
+    its own: that path is resolved against the working directory, and the
+    working directory is the assignment folder, not the root. **[verified]** with
+    a bare pdflatex on a throwaway tree.
+
+    Two cases keep the copies beside the driver instead: a driver that already
+    defines ``\input@path`` (the course's own, and not ours to rewrite), and an
+    assignment that sits at the corpus root, where there is nothing to point at.
+    """
     if not PACKAGE_TEX_DIR.is_dir():
         return []
-    target_dir = (corpus_root / prepared.assignment.path).resolve()
     wanted = {
         Path(name).stem
         for name in _package_names(prepared.driver)
     }
+    if not wanted:
+        return []
+    target_dir = _shared_package_dir(prepared, corpus_root, driver)
     installed: list[Path] = []
+    if target_dir != driver.parent:
+        # A copy left beside the driver by an older run SHADOWS the root one --
+        # pdflatex searches the working directory first -- so a stale package
+        # would quietly win over the one just installed. Untracked only: a copy
+        # the course committed is theirs.
+        installed.extend(_sweep_shadows(driver.parent, wanted, corpus_root))
     for package in sorted(PACKAGE_TEX_DIR.iterdir()):
         if package.suffix.lower() not in (".sty", ".cls") or package.stem not in wanted:
             continue
@@ -1821,6 +1891,40 @@ def _install_packages(
         shutil.copy2(package, target)
         installed.append(target)
     return installed
+
+
+def _sweep_shadows(folder: Path, wanted: set[str], corpus_root: Path) -> list[Path]:
+    """Delete this run's packages left in ``folder`` by an older per-assignment run."""
+    from ..revert import _tracked
+
+    stale = [
+        path
+        for stem in sorted(wanted)
+        for path in (folder / f"{stem}.sty", folder / f"{stem}.cls")
+        if path.is_file()
+    ]
+    if not stale:
+        return []
+    tracked = _tracked(corpus_root, folder)
+    removed = []
+    for path in stale:
+        if path.resolve() in tracked:
+            continue
+        path.unlink()
+        removed.append(path)
+    return removed
+
+
+def _shared_package_dir(prepared: Prepared, corpus_root: Path, driver: Path) -> Path:
+    r"""Where this driver's packages go: the corpus root, or beside the driver.
+
+    The conversion decides -- see :func:`_with_root_package_path`. The root only
+    if the driver it wrote actually carries the ``\input@path`` that finds them
+    there.
+    """
+    depth = len([part for part in Path(prepared.assignment.path).parts if part])
+    text = driver.read_text(encoding="utf-8", errors="replace") if driver.is_file() else ""
+    return corpus_root if root_package_path(depth) in text else driver.parent
 
 
 def _package_names(driver: Path) -> set[str]:
