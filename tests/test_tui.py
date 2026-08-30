@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import (
@@ -560,8 +561,12 @@ async def test_a_colour_that_already_conforms_is_still_unified(profile: Profile)
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await colors(pilot, BLUEISH)
-        await press(pilot, "u")
+        # Nothing pressed. The palette is applied on arrival, so the screen has
+        # nothing to approve -- `u` is the undo, and there is no decision yet to
+        # undo, so it is greyed out.
         assert app.config.colors.replacements(profile)["blueish"] == "#6A0DAD"
+        assert app.screen.check_action("use", ()) is None
+        assert app.screen.check_action("keep", ()) is True
 
     conforming = LatexAllyApp(profile)
     conforming.config.colors = ColorChoice(mode="conforming")
@@ -604,22 +609,42 @@ async def test_a_low_contrast_override_is_accepted_but_flagged(profile: Profile)
         assert "below the 4.5:1 floor" in visible(app)
 
 
-async def test_accepting_the_proposal_replaces_an_earlier_override(profile: Profile):
-    """`u` after a hand-typed hex means "never mind, use the palette's".
+async def test_undo_clears_a_decision_rather_than_recording_another(profile: Profile):
+    """`u` after a hand-typed hex means "never mind", and leaves no trace.
 
-    It records the token rather than clearing the override, and the difference
-    matters: under `conforming` the proposal is DERIVED, so clearing is what
-    lets the derivation supply it again. Under `palette` there is no derivation
-    to fall back on -- the binding lives in the .sty -- so clearing would agree
-    to nothing and the run.yaml would not record what was agreed.
+    Agreeing with what the run already does is not a decision. Recording it as
+    one would put a `*` beside a row nobody argued with, and an
+    `\\accessrecolor` line in the preamble that changes nothing.
     """
     app = LatexAllyApp(profile)
     async with app.run_test(size=SIZE) as pilot:
         await colors(pilot, REDISH)
         await set_hex(pilot, "#004400")
+        assert app.config.colors.overrides == {"redish": "#004400"}
         await press(pilot, "u")
-        assert app.config.colors.overrides == {"redish": "#CC0000"}
+        assert app.config.colors.overrides == {}
         assert app.config.colors.replacements(profile)["redish"] == "#CC0000"
+
+
+async def test_rejecting_is_the_only_decision_the_screen_asks_for(profile: Profile):
+    """The screen's whole purpose, after the palette started applying itself.
+
+    `k` is a rejection: the colour stays as the course wrote it, recorded as an
+    override to its own original so that "left alone on purpose" and "never
+    looked at" remain different things. Everything not rejected is applied,
+    including for someone who skips this step entirely.
+    """
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await colors(pilot, REDISH)
+        await press(pilot, "k")
+        assert app.config.colors.overrides == {"redish": "#FF0000"}
+        assert app.config.colors.replacements(profile)["redish"] == "#FF0000"
+        # Rejecting one does not reject the rest.
+        assert app.config.colors.replacements(profile)["solutionColor"] == "#0000FF"
+        # And the row now offers the undo instead of another rejection.
+        assert app.screen.check_action("keep", ()) is None
+        assert app.screen.check_action("use", ()) is True
 
 
 async def test_conforming_mode_clears_the_override_instead(profile: Profile):
@@ -1244,6 +1269,8 @@ async def test_the_build_screen_reports_every_document_and_its_failures(
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, ReviewScreen)
         await advance(pilot)
+        # `b`, because reaching this screen no longer starts anything.
+        await pilot.press("b")
         for _ in range(20):
             await pilot.pause()
             if app.reports:
@@ -1265,6 +1292,141 @@ async def test_the_build_screen_reports_every_document_and_its_failures(
         # A DataTable sizes a column to whatever was in it when the rows were
         # added -- "queued" -- and then crops every longer state to six.
         assert "FAILED" in shown
+
+
+async def test_enter_is_the_way_out_once_the_build_is_over(
+    profile: Profile, monkeypatch, tmp_path: Path
+):
+    """One key, said in words. `q Quit` is the App's and shows on every screen;
+    a screen-level `q` for the same word drew it twice and neither said the run
+    had finished."""
+    import latexally.build as build
+
+    monkeypatch.setattr(
+        build, "build_run", lambda config, prof, *, on_start=None, on_finish=None: []
+    )
+    monkeypatch.setattr(build, "describe_run", lambda config, prof: {})
+
+    config = RunConfig().with_assignments(["sem/hw/1"])
+    config.output.root = tmp_path / "out"
+    app = LatexAllyApp(profile, config)
+    async with app.run_test(size=SIZE) as pilot:
+        await walk_to(pilot, ReviewScreen)
+        await advance(pilot)
+        screen = app.screen
+        # Nothing has run: Enter is greyed, not live.
+        assert screen.check_action("finish", ()) is None
+        await pilot.press("b")
+        for _ in range(20):
+            await pilot.pause()
+            if screen._build_done:
+                break
+        assert screen.check_action("finish", ()) is True
+        assert "press Enter to exit" in visible(app)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app._exit is True
+
+
+async def test_reaching_the_build_screen_builds_nothing(
+    profile: Profile, monkeypatch, tmp_path: Path
+):
+    """Arriving is not consent.
+
+    Enter from Review used to compile immediately, and compiling is the one
+    thing in the runner that writes PDFs, takes minutes, and cannot be undone
+    with Escape. The queue is what you came here to read -- which documents,
+    which variants -- and it is worth being able to read it before anything
+    runs.
+    """
+    import latexally.build as build
+
+    called: list[str] = []
+
+    def fake_build_run(config, prof, *, on_start=None, on_finish=None):
+        called.append("built")
+        return []
+
+    monkeypatch.setattr(build, "build_run", fake_build_run)
+    monkeypatch.setattr(build, "describe_run", lambda config, prof: {})
+
+    config = RunConfig().with_assignments(["sem/hw/1"])
+    config.output.root = tmp_path / "out"
+    app = LatexAllyApp(profile, config)
+    async with app.run_test(size=SIZE) as pilot:
+        await walk_to(pilot, ReviewScreen)
+        await advance(pilot)
+        for _ in range(10):
+            await pilot.pause()
+        assert called == [], "the build started without being asked"
+        shown = visible(app)
+        assert "Press b to build" in shown
+        assert "Nothing has been written yet" in shown
+
+        await pilot.press("b")
+        for _ in range(20):
+            await pilot.pause()
+            if called:
+                break
+        assert called == ["built"]
+
+
+async def test_edit_mode_builds_on_arrival(
+    profile: Profile, monkeypatch, tmp_path: Path
+):
+    """Edit mode was already consented to twice -- on Output, and on Review."""
+    import latexally.build as build
+
+    called: list[str] = []
+    monkeypatch.setattr(
+        build,
+        "build_run",
+        lambda config, prof, *, on_start=None, on_finish=None: called.append("built")
+        or [],
+    )
+    monkeypatch.setattr(build, "describe_run", lambda config, prof: {})
+
+    config = RunConfig().with_assignments(["sem/hw/1"])
+    config.output.root = tmp_path / "out"
+    config.output.write_mode = "edit"
+    app = LatexAllyApp(profile, config)
+    async with app.run_test(size=SIZE) as pilot:
+        await walk_to(pilot, ReviewScreen)
+        await advance(pilot)
+        for _ in range(20):
+            await pilot.pause()
+            if called:
+                break
+        assert called == ["built"]
+        assert "Press b to build" not in visible(app)
+
+
+async def test_a_second_b_does_not_start_a_second_build(
+    profile: Profile, monkeypatch, tmp_path: Path
+):
+    """The key stays pressable, and the worker is `exclusive`, but relying on
+    that to swallow a double-press is relying on a scheduling detail."""
+    import latexally.build as build
+
+    called: list[str] = []
+    monkeypatch.setattr(
+        build,
+        "build_run",
+        lambda config, prof, **_: called.append("built") or [],
+    )
+    monkeypatch.setattr(build, "describe_run", lambda config, prof: {})
+
+    config = RunConfig().with_assignments(["sem/hw/1"])
+    config.output.root = tmp_path / "out"
+    app = LatexAllyApp(profile, config)
+    async with app.run_test(size=SIZE) as pilot:
+        await walk_to(pilot, ReviewScreen)
+        await advance(pilot)
+        await pilot.press("b")
+        await pilot.press("b")
+        for _ in range(20):
+            await pilot.pause()
+        assert called == ["built"]
 
 
 async def test_back_on_the_first_step_does_not_quit(profile: Profile):
@@ -1581,6 +1743,30 @@ async def test_revert_says_what_it_would_do_before_doing_it(profile: Profile):
         assert "git" in shown.lower()
 
 
+async def test_the_revert_heading_names_the_key(profile: Profile, monkeypatch):
+    """`y Yes, revert` in the footer is one line of small print among five, and
+    this is the one screen where a keypress rewrites course material."""
+    import latexally.revert as revert_mod
+
+    class Plan:
+        empty = False
+        root = Path("/corpus")
+        restore = [Path("/corpus/a.tex")]
+        remove: list = []
+        outputs: list = []
+
+    monkeypatch.setattr(revert_mod, "plan_revert", lambda config, prof: Plan())
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await press(pilot, "r")
+        for _ in range(20):
+            await pilot.pause()
+            if "Confirm revert (y)" in visible(app):
+                break
+        assert "Confirm revert (y)" in visible(app)
+
+
 async def test_revert_cannot_be_confirmed_without_a_plan(profile: Profile):
     """`y` is greyed, not missing: the footer still answers "why not".
 
@@ -1593,6 +1779,65 @@ async def test_revert_cannot_be_confirmed_without_a_plan(profile: Profile):
         await settle(pilot)
         await press(pilot, "r")
         assert app.screen.check_action("confirm", ()) is None
+
+
+async def test_enter_on_revert_refuses_out_loud(profile: Profile):
+    """Enter is Next on every other screen, so it arrives here out of habit.
+
+    It was unbound, which means a keypress with no reaction whatsoever --
+    indistinguishable from the app having hung, and the thing behind the key
+    rewrites course material. It now says why it did nothing.
+    """
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await press(pilot, "r")
+        await press(pilot, "enter")
+        shown = visible(app)
+        assert "Enter does not revert" in shown or "Nothing to revert" in shown
+        # And it is still the revert screen: Enter must not advance anything.
+        assert isinstance(app.screen, RevertScreen)
+
+
+async def test_the_footer_does_not_offer_two_keys_called_revert(profile: Profile):
+    """`r` opens this screen and `y` performs it, and both were labelled Revert.
+
+    Worse than a cosmetic clash: `action_revert` returns early when the screen
+    is already showing, so the `r` being advertised did nothing at all, right
+    beside the `y` that does everything.
+    """
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await press(pilot, "r")
+        # The App owns the binding, so the App is who decides. False, not None:
+        # hidden outright rather than shown greyed out.
+        assert app.check_action("revert", ()) is False
+        shown = visible(app)
+        assert "Yes, revert" in shown
+        # `r Revert` is gone from the footer; the screen heading still says
+        # "Revert", which is what the screen is called and is not a key.
+        assert "r Revert" not in shown, shown
+
+
+async def test_a_revert_in_flight_blocks_a_second_one(profile: Profile, monkeypatch):
+    """`y` twice must not start two git checkouts over the same tree."""
+    import latexally.revert as revert_mod
+
+    calls: list[int] = []
+    monkeypatch.setattr(revert_mod, "do_revert", lambda plan: calls.append(1))
+
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await press(pilot, "r")
+        screen = app.screen
+        # Force a non-empty plan; the fixture corpus is not a git repo.
+        screen._plan = SimpleNamespace(empty=False, restore=[], remove=[], outputs=[])
+        screen._reverting = True
+        assert screen.check_action("confirm", ()) is None
+        screen.action_confirm()
+        assert calls == []
 
 
 # ---------------------------------------------------------------------- #

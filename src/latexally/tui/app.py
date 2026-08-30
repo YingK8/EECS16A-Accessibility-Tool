@@ -1,35 +1,4 @@
-r"""The interactive runner, as a Textual app.
-
-Built on Textual rather than hand-rolled menus, and the reason is not taste. The
-previous front-end drew through Rich's ``Live``, which clips at the terminal
-height: a scope of sixteen assignments filled the screen, the footer that said
-``space toggle`` was cut off, and every row past the fold was unreachable. There
-was no scrolling to reach them with. "How do I tick a box?" had no answer on
-screen because the answer had been clipped off it.
-
-So: every list here is a real scrolling widget, the footer is always visible and
-always shows the real bindings, and the step that cannot be defaulted refuses to
-advance with a **disabled Next button that says why**. Pressing Enter with
-nothing chosen used to return ``None``, which the caller read as cancel and
-silently left the screen -- the wrong answer to "you have not chosen anything
-yet".
-
-The app is a sequence of steps, each a :class:`StepScreen`:
-
-    Scope → Documents → Standards → Colours → Alt text → Output → Review → Build
-
-Two rules hold across all of them:
-
-1. **The config is mutated as controls change**, never on the way out. Back is
-   therefore lossless, and there is no "apply" to forget.
-2. **A step with one possible answer is not a question.** A scope with one kind
-   does not ask which kind; a kind with one assignment ticks it and says so.
-
-The app's only product is a :class:`~latexally.run.RunConfig` and the reports
-from :func:`~latexally.build.build_run`. It never converts anything itself, so
-there is exactly one implementation of "what a run does", shared with
-``latexally build`` and with any agent driving the CLI.
-"""
+"""The interactive runner, as a Textual app."""
 
 from __future__ import annotations
 
@@ -40,7 +9,7 @@ from typing import Iterator
 from rich.segment import Segment
 from rich.style import Style
 from rich.text import Text
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -124,18 +93,8 @@ def _plural(count: int) -> str:
 
 
 class Checklist(SelectionList):
-    """A selection list that says what it means in characters, not in shades.
+    """A selection list that says what it means in characters, not in shades."""
 
-    Textual draws both tick states as the same ``X``, leaving colour to carry
-    the difference. Two shades of one glyph is not a distinction anyone should
-    have to squint at, and it is no distinction at all to a reader who cannot
-    see the difference between them. So: ``[x]`` versus ``[ ]``.
-
-    The cursor is reverse video on the whole row (see the app's CSS), which the
-    tick inherits because it is drawn in the row's own style.
-    """
-
-    #: ``"[x] "``
     GUTTER = 4
 
     def _get_left_gutter_width(self) -> int:
@@ -153,20 +112,11 @@ class Checklist(SelectionList):
         style = next((segment.style for segment in line), None) or self.rich_style
         tick = "[x] " if selection.value in self._selected else "[ ] "
         strip = Strip([Segment(tick, style=style), *line])
-        # Applied here rather than through `option-list--option-highlighted`:
-        # get_visual_style() merges the component classes but drops their
-        # text-style, so the CSS reverse never reached the rendered row.
         return strip.apply_style(Style(reverse=True)) if highlighted else strip
 
 
 class Choice(RadioSet):
-    """A radio group where ``↑`` ``↓`` choose rather than shop around.
-
-    Textual's arrows move a second cursor over the options and leave Enter to
-    commit, so ``(•)`` marks the value and something else marks where you are.
-    Two cursors for one decision between two options is one too many: here the
-    arrows move the value, and ``(•)`` is the only thing to read.
-    """
+    """A radio group where ``↑`` ``↓`` choose rather than shop around."""
 
     BINDINGS = [
         Binding("up,left", "step(-1)", "Choose", show=False),
@@ -198,35 +148,15 @@ class Radio(RadioButton):
         )
 
 
-# ---------------------------------------------------------------------- #
-# the shared step frame
-# ---------------------------------------------------------------------- #
-
-
 class StepScreen(Screen):
-    """One step: a heading, a body, and a footer that always names the keys.
-
-    There are no buttons anywhere in this app. With the mouse off, a button is
-    a worse key hint than the words ``n next`` -- it occupies three rows, it
-    needs focus to activate, and it says nothing about which key reaches it.
-    Textual's ``Footer`` already lists every binding and greys out the ones
-    :meth:`check_action` reports as unavailable, so Next-disabled-with-a-reason
-    lives there plus one line of prose in ``#reason``.
-    """
+    """One step: a heading, a body, and a footer that always names the keys."""
 
     heading = ""
     hint = ""
 
     BINDINGS = [
-        # `\`, not Escape. Deliberately NOT priority: an Input has to be able
-        # to take the key when a path is being typed into it, and an unhandled
-        # key bubbles up to here anyway.
         Binding("backslash", "back", "Back", key_display="\\"),
         Binding("b", "back", "Back", show=False),
-        # Enter is the key people press to go on, on every step. Priority,
-        # because the focused widget would otherwise swallow it -- an
-        # OptionList binds Enter to "tick this row". Ticking is `space`, which
-        # SelectionList binds for it anyway, and editing a colour is `e`.
         Binding("enter", "advance", "Next", priority=True),
         Binding("n", "next", "Next", show=False),
     ]
@@ -261,15 +191,11 @@ class StepScreen(Screen):
         with self.container():
             yield from self.body()
         yield Static("", id="reason", classes="reason")
-        # Docked, so it sits on the same rows on every step no matter how tall
-        # that step's body is. A note that moves between screens is one the eye
-        # has to find again each time.
         detail = Static("", id="detail-box", classes="detail-box")
         detail.display = False
         yield detail
         yield Footer()
 
-    # -- flow ----------------------------------------------------------- #
 
     @property
     def first(self) -> bool:
@@ -277,16 +203,10 @@ class StepScreen(Screen):
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action == "back":
-            # The first step has nowhere to go back to. Quitting is `q`.
             return False if self.first else True
         if action == "next":
-            # None greys it in the footer; False would drop it, and "why can I
-            # not go on" is exactly the question the footer should answer.
             return True if self._can_next else None
         if action == "advance":
-            # In a text field Enter is the field's own -- submitting a typed
-            # path, committing a hex -- and a priority binding that stole it
-            # would make those fields impossible to use.
             if isinstance(self.app.focused, Input):
                 return False
             return True if self._can_next else None
@@ -307,21 +227,13 @@ class StepScreen(Screen):
         self.action_next()
 
     def say(self, selector: str, text: str = "") -> None:
-        """Update a note, and give its row back when there is nothing to say.
-
-        Rows are the scarce resource on the terminal this rewrite exists for; a
-        permanently blank line is one fewer directory visible.
-        """
+        """Update a note, and give its row back when there is nothing to say."""
         widget = self.query_one(selector, Static)
         widget.update(Content(text))
         widget.display = bool(text)
 
     def describe(self, title: str, text: str = "") -> None:
-        """Explain the selected option, in the box every step keeps at the bottom.
-
-        Title in the border rather than a first bold line, so the explanation
-        starts on the box's first row and a short one does not cost two.
-        """
+        """Explain the selected option, in the box every step keeps at the bottom."""
         try:
             box = self.query_one("#detail-box", Static)
         except NoMatches:  # pragma: no cover - called before compose
@@ -362,24 +274,8 @@ class ListStepScreen(StepScreen):
         self.choices.deselect_all()
 
 
-# ---------------------------------------------------------------------- #
-# 0. which course
-# ---------------------------------------------------------------------- #
-
-
 class ProfileScreen(StepScreen):
-    """Which course, when more than one profile is installed.
-
-    This used to be an error. `latexally run` inherited the refusal every other
-    command makes when two courses are installed and neither was named -- which
-    is right for `build --write`, where guessing converts the wrong corpus in
-    silence, and wrong here, because a runner whose entire premise is asking
-    can ask this too.
-
-    The rows are read from the profiles directory, never from a list in this
-    file: onboarding a course is dropping a YAML in beside the others, and a
-    picker that needed editing to see it would defeat that.
-    """
+    """Which course, when more than one profile is installed."""
 
     heading = "Which course?"
     hint = "Every later step reads this one's corpus."
@@ -414,9 +310,6 @@ class ProfileScreen(StepScreen):
         try:
             self.app.use_profile(pressed.name)
         except LatexAllyError as exc:
-            # A profile that will not load is the one thing this screen cannot
-            # route around, and the footer is where "why can I not go on" is
-            # answered everywhere else in this app.
             self.set_next(False, str(exc))
             return
         self.set_next(True)
@@ -433,24 +326,8 @@ class ProfileScreen(StepScreen):
         )
 
 
-# ---------------------------------------------------------------------- #
-# 1. local or choose
-# ---------------------------------------------------------------------- #
-
-
 class ModeScreen(StepScreen):
-    """Local, or pick from the corpus. Asked before anything is listed.
-
-    This is one question with two words in it, on a screen of its own, and both
-    facts are deliberate. It used to sit at the top of the scope screen above a
-    list of sixty-two directories -- so the list was the first thing read, the
-    question the second, and the arrows that were supposed to answer it went to
-    the list instead, which had taken the focus.
-
-    "Local" rather than "everything": the choice is about *where*, and
-    "everything" reads as a quantity, as though the other option converted less
-    of the same thing. Both options convert everything they cover.
-    """
+    """Local, or pick from the corpus. Asked before anything is listed."""
 
     heading = "Which material?"
     hint = "The folder you started in is the usual answer."
@@ -475,8 +352,6 @@ class ModeScreen(StepScreen):
         here = self.app.here_scope
         radio = self.query_one("#local-radio", Radio)
         if here is None:
-            # Nothing to offer, and saying which directory is not the corpus is
-            # more use than a greyed row with no reason beside it.
             radio.label = "local — unavailable: you are not inside the corpus"
             radio.disabled = True
         else:
@@ -501,33 +376,8 @@ class ModeScreen(StepScreen):
         )
 
 
-# ---------------------------------------------------------------------- #
-# 2. scope
-# ---------------------------------------------------------------------- #
-
-
 class ScopeScreen(ListStepScreen):
-    """The one question the tool cannot answer for you, asked first.
-
-    One filter above the list: the named scopes the profile declares, walked
-    with the arrows whose glyphs are printed in the row's own gutter. It is
-    text, not widgets -- a row of buttons was unreachable without a mouse and,
-    being mounted asynchronously, went stale the moment the scope changed
-    underneath it.
-
-    There was a second row for *kind* (homework, discussion, note). It is gone:
-    scope is a glob over the corpus and kind is what a directory turned out to
-    be, which filter the same axis from two directions -- the profile declares
-    both a ``homeworks`` scope and a ``homework`` kind. One list holding
-    everything in the scope makes "two discussions and one homework" a plain
-    selection rather than something assembled across views. What each scope
-    holds is still said, as a count, above the list.
-
-    Nothing starts ticked. Starting with everything ticked made the common
-    mistake silent: a scope of forty directories would build all forty because
-    Next was the obvious key, and the run was well under way before anyone
-    noticed.
-    """
+    """The one question the tool cannot answer for you, asked first."""
 
     heading = "What do you want to convert?"
     hint = (
@@ -537,35 +387,19 @@ class ScopeScreen(ListStepScreen):
     list_id = "assignments"
 
     BINDINGS = [
-        # priority, because a SelectionList is a ScrollView and binds the bare
-        # arrows to a horizontal scroll it never needs -- which swallowed these
-        # before they ever reached the screen.
         Binding("left", "scope(-1)", "Scope", priority=True),
         Binding("right", "scope(1)", "Scope", show=False, priority=True),
     ]
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        """Claim the arrows only where they mean "other scope" / "other kind".
-
-        A footer listing a key that does nothing is worse than one listing
-        nothing: it sends you looking for a row you were promised. And in the
-        path field the arrows are the text caret, which outranks all of this.
-        """
+        """Claim the arrows only where they mean "other scope" / "other kind"."""
         if action == "scope":
-            # In the path field the arrows are the text caret, which outranks
-            # anything this screen wants them for. And in "everything here"
-            # mode the scope row is not on screen at all, so advertising a key
-            # that walks it sends someone looking for a row they were promised.
             typing = isinstance(self.app.focused, Input)
             if typing or not self._scopes:
                 return False
-            # Keyed on whether the row is actually on screen, not on the mode:
-            # a local scan that finds nothing buildable puts the row back, and
-            # the key that walks it has to come back with it.
             try:
                 return True if self.query_one("#scope-line").display else False
             except NoMatches:
-                # Called once before the row is mounted.
                 return True
         return super().check_action(action, parameters)
 
@@ -575,12 +409,7 @@ class ScopeScreen(ListStepScreen):
         self._scope_index: int | None = None
         self._scope = ""
         self._buildable: list[Assignment] = []
-        #: Every ticked path, from every scope visited. The list only ever
-        #: shows one scope, so its own selection cannot be the answer: moving
-        #: from sp26 to exams would silently drop the sp26 picks.
         self._chosen: set[str] = set()
-        #: What the list is showing right now, so a change can be attributed to
-        #: this scope and leave every other scope's ticks alone.
         self._showing: list[str] = []
         self._rebuilding = False
 
@@ -606,27 +435,11 @@ class ScopeScreen(ListStepScreen):
 
     @property
     def _here(self) -> bool:
-        """Is this run scoped to the folder the runner was started from?
-
-        Answered on the previous step, not here: the question "which folder"
-        must be settled before a list of sixty-two directories is drawn, or the
-        list is the first thing read and the question the second.
-        """
+        """Is this run scoped to the folder the runner was started from?"""
         return self.app.scope_mode == "local"
 
     def _apply_mode(self, browsing: bool | None = None) -> None:
-        """Show the browsing controls only when they are of use.
-
-        In `local` mode the scope row and the path field are two rows of chrome
-        above an answer that is already correct, and on a short terminal they
-        are two rows the list does not get.
-
-        ``browsing`` forces them back on. It is passed when a local scan comes
-        back with nothing buildable, because that screen was otherwise a dead
-        end: an empty list, a disabled Next, `a` and `c` with nothing to act
-        on, and no control on screen able to widen the scope. It looked exactly
-        like a hung program.
-        """
+        """Show the browsing controls only when they are of use."""
         here = self._here if browsing is None else not browsing
         self.query_one("#scope-line").display = bool(self._scopes) and not here
         self.query_one("#scope-path-line").display = not here
@@ -642,10 +455,6 @@ class ScopeScreen(ListStepScreen):
 
     def on_mount(self) -> None:
         self._scopes = list(self.profile.corpus.named)
-        # A config replayed from run.yaml already names its directories. Seeding
-        # the list from them is what makes `latexally run --config run.yaml`
-        # open on what was saved -- and it is why the opening scan is skipped:
-        # scanning clears the selection.
         self._chosen = set(self.config.assignments)
         self._rebuilding = True
         self.choices.add_options(
@@ -658,15 +467,11 @@ class ScopeScreen(ListStepScreen):
         self._render_rows()
         self._sync()
         if self._chosen:
-            # A replayed config skips the opening scan, so nothing has focused
-            # the list yet -- and the path field would otherwise take the focus
-            # and swallow every letter key as text.
             self.query_one("#scope-line").display = bool(self._scopes)
             self.choices.focus()
         else:
             self._apply_mode()
 
-    # -- the two filter rows -------------------------------------------- #
 
     def action_scope(self, delta: int) -> None:
         if not self._scopes:
@@ -683,7 +488,6 @@ class ScopeScreen(ListStepScreen):
     @on(Input.Submitted, "#scope-path")
     def _submitted_path(self, event: Input.Submitted) -> None:
         typed = event.value.strip()
-        # A typed path that happens to name a scope keeps the row in step.
         self._scope_index = (
             self._scopes.index(typed) if typed in self._scopes else None
         )
@@ -700,36 +504,21 @@ class ScopeScreen(ListStepScreen):
             )
         )
 
-    # -- discovery ------------------------------------------------------- #
 
     def scan(self, scope: str) -> None:
-        """Start a scan. The answer arrives in :meth:`_scanned`.
-
-        ``discover_assignments`` globs every ``.tex`` in the corpus and, for any
-        directory that does not follow the filename convention, reads each file
-        looking for ``\begin{document}``. That is seconds, not milliseconds, so
-        it cannot run on the message loop: the app would open frozen.
-        """
+        """Start a scan. The answer arrives in :meth:`_scanned`."""
         self._scope = scope
-        # Empty the list and put the spinner over it. A scan can take seconds,
-        # and leaving the previous scope's directories on screen the whole time
-        # invites ticking one that is about to disappear.
         self._buildable = []
         self._showing = []
         self._rebuilding = True
         self.choices.clear_options()
         self._rebuilding = False
-        # Beside the emptied list, not over it. `widget.loading` swaps the
-        # list out for the spinner, and Textual then refuses it focus and
-        # hands it to the path field -- where every letter is text, so the
-        # footer emptied for the length of the scan.
         self.query_one("#scanning").display = True
         self.choices.focus()
         self.say("#scope-note", f"scanning {scope or 'the corpus'}…")
         self.say("#pick-note", "")
         self._render_rows()
         self._sync()
-        # "0 of 0 selected" is not a fact about anything yet.
         self.say("#count", "")
         self._discover(scope)
 
@@ -749,10 +538,6 @@ class ScopeScreen(ListStepScreen):
         buildable = [item for item in found if item.buildable]
         skipped = len(found) - len(buildable)
         if not buildable:
-            # Usually the shared question bank. Saying only "nothing here"
-            # invites the conclusion that the tool is broken, when the scope is
-            # genuinely fragments rather than documents -- and they get
-            # converted anyway, via the assignments that include them.
             notes.append(
                 f"No buildable assignments in that scope — {len(found)} "
                 f"director{_plural(len(found))} scanned, none containing a file "
@@ -764,8 +549,6 @@ class ScopeScreen(ListStepScreen):
                 "discussions that include them and the questions come along."
             )
         elif skipped:
-            # Never silently drop material: a directory with no \begin{document}
-            # is usually a shared includes folder, but it might be a broken one.
             notes.append(
                 f"{skipped} director{_plural(skipped)} skipped — no file "
                 "containing \\begin{document}"
@@ -773,25 +556,17 @@ class ScopeScreen(ListStepScreen):
 
         self._buildable = buildable
         if buildable:
-            # What the scope turned out to hold, said rather than made into a
-            # second filter. Kind and scope narrow the same axis -- the profile
-            # declares both a `homeworks` scope and a `homework` kind -- so one
-            # of them had to be a sentence instead of a control.
             grouped = group_by_kind(buildable)
             notes.append(
                 f"{len(buildable)} director{_plural(len(buildable))} — "
                 + ", ".join(f"{len(items)} {kind}" for kind, items in grouped.items())
             )
         if not buildable and self._here:
-            # A dead end otherwise: nothing to tick and nothing on screen that
-            # could widen the scope. Give the controls back rather than leave
-            # the only way out unmentioned.
             self._apply_mode(browsing=True)
         self.refresh_bindings()
         self.say("#scope-note", "\n".join(notes))
         self.refresh_list()
 
-    # -- the list --------------------------------------------------------- #
 
     def refresh_list(self) -> None:
         self.query_one("#scanning").display = False
@@ -800,13 +575,8 @@ class ScopeScreen(ListStepScreen):
         if only:
             self._chosen.add(items[0].path)
         if self._here:
-            # "Everything here" means everything here. Ticked rather than
-            # merely implied, so the list still shows exactly what will be
-            # built and any one of them can still be unticked.
             self._chosen.update(item.path for item in items)
         self._showing = [item.path for item in items]
-        # Rebuilding the options fires SelectedChanged for each one; without
-        # this the handler would read a half-built list as the user's answer.
         self._rebuilding = True
         self.choices.clear_options()
         self.choices.add_options(
@@ -823,17 +593,12 @@ class ScopeScreen(ListStepScreen):
                 for item in items
             ]
         )
-        # clear_options() leaves nothing highlighted, and Enter toggles the
-        # highlighted row -- so without this the first Enter after a rescan
-        # did nothing at all.
         self.choices.highlighted = 0 if items else None
         self._rebuilding = False
         self.say(
             "#pick-note", f"{items[0].path} — the only assignment here" if only else ""
         )
         if items:
-            # Where the next action is. It also puts `a` and `c` on the list
-            # rather than in the path field, where they would just be letters.
             self.choices.focus()
         self._sync()
 
@@ -841,14 +606,11 @@ class ScopeScreen(ListStepScreen):
     def _selection_changed(self) -> None:
         if self._rebuilding:
             return
-        # Only the scope on screen is being answered; every other one stands.
         self._chosen.difference_update(self._showing)
         self._chosen.update(self.choices.selected)
         self._sync()
 
     def _sync(self) -> None:
-        # Newest first here too, so run.yaml and the build follow the order
-        # the list was picked in rather than flipping back to alphabetical.
         self.app.config = self.config.with_assignments(
             sorted(self._chosen, key=newest_first)
         )
@@ -860,15 +622,11 @@ class ScopeScreen(ListStepScreen):
             f"{len(here)} of {total} selected"
             + (f", {len(elsewhere)} in another scope" if elsewhere else ""),
         )
-        # Named, not just counted. A tick you cannot see is a tick you cannot
-        # take back, and it is still going to be built.
         shown = ", ".join(elsewhere[:3]) + (
             f" +{len(elsewhere) - 3} more" if len(elsewhere) > 3 else ""
         )
         self.say("#elsewhere", f"also ticked: {shown}" if elsewhere else "")
         self._render_rows()
-        # Two different situations, and one message for both was misleading:
-        # "tick at least one" is useless advice when there is nothing to tick.
         if self._chosen:
             reason = ""
         elif self._showing:
@@ -881,19 +639,8 @@ class ScopeScreen(ListStepScreen):
         self.set_next(bool(self._chosen), reason)
 
 
-# ---------------------------------------------------------------------- #
-# 2. documents
-# ---------------------------------------------------------------------- #
-
-
 class DocumentsScreen(ListStepScreen):
-    r"""Which documents of each assignment to build.
-
-    An assignment is not one document. ``sol9.tex`` and ``prob9.tex`` pull in
-    the same body and differ only in whether ``\sol`` prints; discussions add a
-    student handout and an answers-only build. Converting solutions alone leaves
-    the file students actually receive untagged, so the default is everything.
-    """
+    """Which documents of each assignment to build."""
 
     heading = "Which documents of each assignment?"
     hint = (
@@ -938,8 +685,6 @@ class DocumentsScreen(ListStepScreen):
             name for name, _ in VARIANT_LABELS if name in set(self.choices.selected)
         )
         if chosen:
-            # The default set is stored as no filter, so ticking back to it
-            # returns to the default rather than freezing today's list.
             self.config.variants = (
                 () if set(chosen) == set(DEFAULT_VARIANTS) & set(VARIANTS) else chosen
             )
@@ -950,18 +695,8 @@ class DocumentsScreen(ListStepScreen):
         )
 
 
-# ---------------------------------------------------------------------- #
-# 3. standards
-# ---------------------------------------------------------------------- #
-
-
 class StandardsScreen(ListStepScreen):
-    """Which accessibility standards this run applies.
-
-    No predicted cost next to the toggle. A number like "~2.6% of pixels move"
-    is an average of somebody else's documents; the build measures *your* pages
-    against their untouched originals and reports that per document instead.
-    """
+    """Which accessibility standards this run applies."""
 
     heading = "Which standards should this run apply?"
     hint = "The build measures what each one actually cost, page by page."
@@ -1009,37 +744,29 @@ class StandardsScreen(ListStepScreen):
                 standards.toggle(toggle.key)
 
 
-# ---------------------------------------------------------------------- #
-# 4. colours
-# ---------------------------------------------------------------------- #
-
-
 class ColorsScreen(StepScreen):
-    """Walk the course's own colours; fix the ones that fail contrast.
-
-    There is deliberately no palette to pick from. A fixed "conforming" palette
-    is what produced #0645AD for a course blue of #3399E6 -- 8.53:1 where 4.5:1
-    was asked for, and reported as harder to read than the colour it replaced.
-    So: show what the course defines, flag what fails, propose the smallest
-    change that clears the floor, and let the user confirm it, type their own,
-    or keep the original.
-    """
+    """Walk the course's own colours; fix the ones that fail contrast."""
 
     heading = "Course colours"
 
     BINDINGS = [
-        Binding("u", "use", "Use proposed"),
-        Binding("k", "keep", "Keep original"),
-        # `e`, not Enter. Enter is Next on every other step, and a screen where
-        # it silently means "edit this row" instead is a screen you get stuck
-        # on: you press the key that has moved you forward six times and the
-        # cursor drops into a text field.
+        Binding("k", "keep", "Reject (keep original)"),
+        Binding("u", "use", "Undo reject"),
         Binding("e", "edit", "Edit hex"),
     ]
 
     @property
     def hint(self) -> str:  # type: ignore[override]
         colors = self.profile.colors
+        if self.config.colors.mode == "palette":
+            return (
+                "Every colour below is already remapped — this screen is here to "
+                f"reject one, not to approve them. Floor is "
+                f"{colors.min_contrast_normal}:1 on {colors.background} "
+                "(WCAG 1.4.3 AA). * marks a row you changed. "
+                "↑ ↓ to a row, then k to keep the course original, u to undo "
+                "that, e to type your own hex."
+            )
         return (
             f"Floor is {colors.min_contrast_normal}:1 on {colors.background} "
             "(WCAG 1.4.3 AA). * marks a colour you set by hand. "
@@ -1056,15 +783,25 @@ class ColorsScreen(StepScreen):
         yield Static("", id="color-msg", classes="note")
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        if action in ("use", "keep"):
-            name = self.current
-            usable = name is not None and self._proposal(name) is not None
-            return True if usable else None
+        name = self.current
+        if action == "keep":
+            rejectable = (
+                name is not None
+                and self._proposal(name) is not None
+                and not self._is_kept(name)
+            )
+            return True if rejectable else None
+        if action == "use":
+            return True if name is not None and name in self.config.colors.overrides else None
         if action == "edit":
-            # Any colour can be typed over, conforming or not -- unlike u and
-            # k, which only mean something where there is a proposal.
-            return True if self.current is not None else None
+            return True if name is not None else None
         return super().check_action(action, parameters)
+
+    def _is_kept(self, name: str) -> bool:
+        """Whether this colour has been rejected back to the course's own value."""
+        original = self.profile.colors.originals.get(name) or ""
+        chosen = self.config.colors.overrides.get(name)
+        return bool(chosen) and chosen.upper() == original.upper()
 
     def action_back(self) -> None:
         """Escape cancels an edit before it means Back."""
@@ -1107,21 +844,11 @@ class ColorsScreen(StepScreen):
         self._describe()
 
     def action_edit(self) -> None:
-        """Type a new hex for the colour under the cursor.
-
-        Reached with `e`. It used to be Enter, which collided with Enter
-        meaning Next everywhere else.
-        """
+        """Type a new hex for the colour under the cursor."""
         name = self.current
         if name is None:
             return
         field = self.query_one("#hex", Input)
-        # What this run will use, in decreasing order of how deliberate it is:
-        # a hex already chosen by hand, then this mode's proposal, then the
-        # course's own value. The proposal step is not optional -- under
-        # `palette` the binding lives in the .sty and `replacements` is empty
-        # until something is confirmed, so without it `e` prefilled the failing
-        # original and the obvious keystroke was "retype what you already have".
         field.value = (
             self.config.colors.replacements(self.profile).get(name)
             or self._proposal(name)
@@ -1144,12 +871,7 @@ class ColorsScreen(StepScreen):
         )
 
     def _mark_cursor(self) -> None:
-        """Reverse the colour's *name*, not the whole row.
-
-        A cursor drawn across the row covers the swatches, which are the cells
-        on this screen that have to be seen rather than read. Reversing the one
-        cell that is pure text says the same thing and hides nothing.
-        """
+        """Reverse the colour's *name*, not the whole row."""
         table = self.query_one("#colors", DataTable)
         column = next(iter(table.columns), None)
         if column is None:
@@ -1175,10 +897,37 @@ class ColorsScreen(StepScreen):
         proposed = self._proposal(name)
         measured = f"{ratio:.2f}:1" if ratio is not None else "?"
         if proposed is None:
+            settled = (
+                "already the palette's own value"
+                if self.config.colors.mode == "palette"
+                else f"it already meets the {floor}:1 floor"
+            )
             note.update(
                 Content(
-                    f"{name} is {original} at {measured} — it already meets the "
-                    f"{floor}:1 floor. Nothing will be changed."
+                    f"{name} is {original} at {measured} — {settled}. "
+                    "Nothing will be changed."
+                )
+            )
+            return
+        if self._is_kept(name):
+            note.update(
+                Content.from_markup(
+                    f"[bold]Rejected.[/] {name} stays {original} "
+                    f"{swatch(original)} at {measured}.\n"
+                    f"  [dim]u puts it back to {proposed} {swatch(proposed)} "
+                    f"{contrast(self.profile, proposed)[1]}[/]"
+                )
+            )
+            return
+        if self.config.colors.mode == "palette":
+            note.update(
+                Content.from_markup(
+                    f"{name} is {original} {swatch(original)} at {measured}, and "
+                    f"[bold]becomes {proposed}[/] {swatch(proposed)} "
+                    f"{contrast(self.profile, proposed)[1]}.\n"
+                    "  [dim]The same token every other use of this hue gets, "
+                    "drawings included — that is what stops one page holding two "
+                    "unrelated blues. k to reject.[/]"
                 )
             )
             return
@@ -1198,21 +947,13 @@ class ColorsScreen(StepScreen):
         return proposal_for(self.profile, name, self.config.colors.mode)
 
     def action_use(self) -> None:
+        """Undo a decision on this row, putting it back to what the run does."""
         name = self.current
         if name is None:
             return
         original = self.profile.colors.originals.get(name, "")
-        proposed = self._proposal(name)
-        if self.config.colors.mode == "palette":
-            # Recorded, not reset. Under `conforming` the proposal is DERIVED,
-            # so clearing the override is what lets the derivation supply it
-            # again. Under `palette` there is no derivation to fall back on --
-            # the .sty holds the binding -- so clearing it would silently agree
-            # to nothing, and the run.yaml would not record what was agreed.
-            self.config.colors.set(name, proposed or original)
-        else:
-            self.config.colors.reset(name)
-        self._message(f"{name}: {original} → {proposed}")
+        self.config.colors.reset(name)
+        self._message(f"{name}: back to {self._proposal(name)} (was keeping {original})")
 
     def action_keep(self) -> None:
         name = self.current
@@ -1220,14 +961,21 @@ class ColorsScreen(StepScreen):
             return
         original = self.profile.colors.originals.get(name, "")
         ratio = contrast(self.profile, original)[0]
-        # Recorded as an override to itself, so "the user decided to keep this"
-        # and "nobody has looked at this yet" stay distinguishable.
         self.config.colors.set(name, original)
         measured = f"{ratio:.2f}:1" if ratio is not None else "?"
-        self._message(
-            f"Kept at {measured}. `latexally check` will report it, and the "
-            "build will not conform on this point."
-        )
+        floor = floor_for(self.profile, name)
+        if ratio is not None and ratio < floor:
+            self._message(
+                f"Rejected — {name} stays {original} at {measured}, below the "
+                f"{floor}:1 floor. `latexally check` will report it, and the "
+                "build will not conform on this point."
+            )
+        else:
+            self._message(
+                f"Rejected — {name} stays {original} at {measured}. It clears "
+                f"the {floor}:1 floor, so this costs conformance nothing; it "
+                "only leaves the colour outside the shared palette."
+            )
 
     @on(Input.Submitted, "#hex")
     def _set(self) -> None:
@@ -1245,16 +993,11 @@ class ColorsScreen(StepScreen):
         self.config.colors.set(name, normalised)
         self.query_one("#hex", Input).value = ""
         self.query_one("#hex-preview", Static).update("")
-        # Back to the table: while the field holds focus every letter key is
-        # text, so u and k would type rather than act.
         self.query_one("#colors", DataTable).focus()
         ratio = contrast(self.profile, normalised)[0]
         floor = floor_for(self.profile, name)
         message = f"{name} → {normalised}"
         if ratio is not None and ratio < floor:
-            # Accepted, but never silently: the whole point of this step is that
-            # what comes out of it conforms, and a chosen value that does not
-            # would otherwise look identical to one that does.
             message += (
                 f". That is below the {floor}:1 floor. It will be used as "
                 "given; `latexally check` will report it."
@@ -1266,13 +1009,6 @@ class ColorsScreen(StepScreen):
         self.reload()
 
 
-# ---------------------------------------------------------------------- #
-# 5. alt text
-# ---------------------------------------------------------------------- #
-
-#: What each mode does, shown in the box at the bottom as it is selected. Keyed
-#: by the radio's own name, so a mode cannot be offered without an explanation
-#: or explained without being offered.
 ALT_DETAIL = {
     "caption": (
         "Adds \\caption{<<TODO:figure-id>>} to every figure and table that has "
@@ -1301,9 +1037,6 @@ class AltScreen(StepScreen):
     heading = "What should happen to undescribed figures?"
 
     def body(self) -> Iterator[Widget]:
-        # `scans`, not `injects`: the shipped default is the old "worklog" tier,
-        # which no longer has a screen of its own but does mean "look at
-        # figures", so it opens here as on rather than silently as off.
         alt = self.config.alt
         with Horizontal(classes="row"):
             yield Static("Alt    ↑ ↓", classes="gutter")
@@ -1338,21 +1071,10 @@ class AltScreen(StepScreen):
         mode = pressed.name if pressed else ("on" if self.config.alt.scans else "off")
         label = {"caption": "caption", "on": "on", "off": "off"}[mode]
         self.describe(label, ALT_DETAIL[mode])
-        # No build gate. An unfilled marker used to be a hard LaTeX error, on
-        # the argument that a placeholder reaching a PDF is a silent false
-        # claim of conformance. The marker is still reported by `check` and
-        # still named in the build log -- and under `caption` it is printed on
-        # the page -- so it is not silent, and a build that refuses is a build
-        # nobody can look at. `strict: true` in run.yaml puts the gate back.
         self.config.alt = AltChoice(
             mode={"caption": "caption", "on": "placeholders", "off": "off"}[mode],
             strict=False,
         )
-
-
-# ---------------------------------------------------------------------- #
-# 6. output
-# ---------------------------------------------------------------------- #
 
 
 class OutputScreen(StepScreen):
@@ -1367,9 +1089,6 @@ class OutputScreen(StepScreen):
     def container(self) -> Widget:
         return VerticalScroll(id="body")
 
-    #: The consequential choice on this screen, so it is where the cursor
-    #: starts -- otherwise focus landed on the scrolling container and the
-    #: arrows scrolled the screen instead of choosing.
     AUTO_FOCUS = "#write-mode"
 
     def body(self) -> Iterator[Widget]:
@@ -1397,9 +1116,6 @@ class OutputScreen(StepScreen):
                 ),
                 id="write-mode",
             )
-        # Said once, below both modes it applies to. It used to live inside the
-        # in-place label, which had no room for it and no way to also cover
-        # edit -- the mode where it matters far more.
         yield Static(
             "edit needs a clean git worktree — it is the only mode that "
             "rewrites course material, and git is what makes that undoable.",
@@ -1450,24 +1166,13 @@ class OutputScreen(StepScreen):
         self.set_next(not problems, "Fix the paths above.")
 
 
-# ---------------------------------------------------------------------- #
-# review
-# ---------------------------------------------------------------------- #
-
-
 class ReviewScreen(StepScreen):
-    """Everything this run will do, before anything is written.
-
-    The last chance to see the exact preamble and every file touched. Nothing
-    has been written up to this point, and the button below says which of the
-    two very different things is about to happen.
-    """
+    """Everything this run will do, before anything is written."""
 
     heading = "Review"
-    #: Enter writes from here, so the footer must not keep calling it "Next".
     BINDINGS = [
-        Binding("enter", "advance", "Build", priority=True),
-        Binding("n", "next", "Build", show=False),
+        Binding("enter", "advance", "Continue", priority=True),
+        Binding("n", "next", "Continue", show=False),
     ]
 
     def container(self) -> Widget:
@@ -1475,13 +1180,7 @@ class ReviewScreen(StepScreen):
 
     @staticmethod
     def section(title: str) -> Iterator[Widget]:
-        """A ruled heading. This screen is six unrelated answers in a column.
-
-        Bold text alone did not separate them: the preamble is thirty lines of
-        LaTeX and the document table has its own header row, so "Colours" read
-        as one more line of whatever was above it. A rule is the cheapest thing
-        that says "different question".
-        """
+        """A ruled heading. This screen is six unrelated answers in a column."""
         yield Rule(classes="divider")
         yield Static(title, classes="section")
 
@@ -1511,9 +1210,6 @@ class ReviewScreen(StepScreen):
         yield from self.section("Output")
         yield Static("", id="output")
 
-        # Last, and deliberately: thirty lines of LaTeX that almost nobody
-        # reads twice. Above the document table it pushed the one thing people
-        # do check -- which documents will be built -- below the fold.
         yield from self.section("Injected into each driver")
         yield Static("", id="preamble", classes="detail")
 
@@ -1522,9 +1218,6 @@ class ReviewScreen(StepScreen):
 
         config, profile = self.config, self.profile
         count = len(config.assignments)
-        # Three modes, three sentences. The one that rewrites course material
-        # must not read like the one that only drops a PDF next to it, and the
-        # last screen before anything is written is where that has to be said.
         if config.output.edits_sources:
             verdict = (
                 f"Build {count} assignment(s), write each PDF into the corpus, "
@@ -1551,9 +1244,6 @@ class ReviewScreen(StepScreen):
                         f"Standards: {len(config.standards.enabled())} of "
                         f"{len(STANDARD_TOGGLES)} applied",
                         f"Colours:   {config.colors.describe(profile)}",
-                        # Alt text is not repeated here: it has a section of
-                        # its own below, which says the same thing and then
-                        # shows the markup it puts in the file.
                         f"Output:    {describe_output(config)}",
                     )
                 )
@@ -1576,14 +1266,7 @@ class ReviewScreen(StepScreen):
         self.set_next(bool(count), "Nothing is selected; go back to Scope.")
 
     def _alt_text(self, config) -> None:
-        r"""Say what reaches the .tex, in the characters that reach it.
-
-        The alt-text step warns that placeholders are written; it does not show
-        what they look like. This is the last screen before they are, and a
-        marker in somebody's course file is exactly the kind of thing that
-        should not be a surprise -- the previous generation of this tooling
-        shipped one into a PDF as real /Alt.
-        """
+        """Say what reaches the .tex, in the characters that reach it."""
         from ..apply import PLACEHOLDER
 
         self.say("#alt", config.alt.describe())
@@ -1648,33 +1331,26 @@ def _number(value: int | None) -> str:
 
 
 def _slug(path: str, variant: str) -> str:
-    """The jobname ``build`` will use -- from ``build`` itself, not a copy.
-
-    This was a duplicate of ``base_slug``, and a duplicate of a naming rule is a
-    preview that quietly stops matching what gets written.
-    """
+    """The jobname ``build`` will use -- from ``build`` itself, not a copy."""
     from ..build import accessible_slug, base_slug
 
     return accessible_slug(base_slug(path, variant))
 
 
-# ---------------------------------------------------------------------- #
-# build
-# ---------------------------------------------------------------------- #
-
-
 class BuildScreen(Screen):
-    """The run itself, with a row per document and the live LaTeX log.
+    """The run itself, with a row per document and the live LaTeX log."""
 
-    ``build_run`` is blocking, so it runs in a thread and posts back through
-    ``call_from_thread``. Its ``on_start``/``on_finish`` hooks already exist for
-    exactly this -- the engine has never had to know what a terminal is.
-    """
+    BINDINGS = [
+        Binding("b", "start", "Build"),
+        Binding("enter", "finish", "Exit", priority=True),
+    ]
 
-    BINDINGS = [Binding("q", "app.quit", "Quit")]
+    _build_started: bool = False
+    _build_queue: list[tuple[str, str, str]] = []
+    _build_done: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static("Building…", id="build-status", classes="heading")
+        yield Static("", id="build-status", classes="heading")
         yield DataTable(id="progress")
         yield Static("Latest log", classes="label")
         yield RichLog(id="log", max_lines=2000)
@@ -1685,19 +1361,60 @@ class BuildScreen(Screen):
         table = self.query_one("#progress", DataTable)
         table.add_column("assignment")
         table.add_column("document")
-        # Explicit, because a DataTable sizes a column to whatever was in it
-        # when the rows were added -- here "queued", which then crops
-        # "building…" and "FAILED" down to six characters.
         table.add_column("state", width=10)
         for name in ("pages", "bookmarks", "figures"):
             table.add_column(name, width=9)
         table.add_column("pixel diff", width=11)
-        for key, assignment, variant in self._queue():
+        self._build_queue = self._queue()
+        queue = self._build_queue
+        for key, assignment, variant in queue:
             table.add_row(assignment, variant, "queued", "", "", "", "", key=key)
         self._log_path: Path | None = None
         self._log_at = 0
         self.set_interval(0.4, self._tail)
+
+        auto = bool(queue) and self.app.config.output.edits_sources
+        self.query_one("#build-status", Static).update(
+            "Nothing to build: no assignment resolved from this scope."
+            if not queue
+            else "Building…"
+            if auto
+            else f"Ready — {len(queue)} document(s) queued. Press b to build."
+        )
+        self.query_one("#build-hint", Static).update(
+            ""
+            if auto
+            else "Nothing has been written yet."
+            if queue
+            else "Go back and choose a scope that names an assignment."
+        )
+        self.refresh_bindings()
+        if auto:
+            self.call_after_refresh(self.action_start)
+
+    def action_start(self) -> None:
+        """Begin the build. Ignored once it is already running."""
+        if self._build_started or not self._build_queue:
+            return
+        self._build_started = True
+        self.app.config = replace(self.app.config, write=True)
+        self.app.should_run = True
+        self.refresh_bindings()
+        self.query_one("#build-status", Static).update("Building…")
+        self.query_one("#build-hint", Static).update("")
         self.build()
+
+    def action_finish(self) -> None:
+        """Leave, once there is nothing still compiling."""
+        if self._build_done:
+            self.app.exit()
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action == "start":
+            return None if self._build_started or not self._build_queue else True
+        if action == "finish":
+            return True if self._build_done else None
+        return super().check_action(action, parameters)
 
     def _queue(self) -> list[tuple[str, str, str]]:
         from ..discover import iter_selected
@@ -1714,7 +1431,6 @@ class BuildScreen(Screen):
                 rows.append((f"{assignment.path}|{variant}", assignment.path, variant))
         return rows
 
-    # -- the worker ----------------------------------------------------- #
 
     @work(thread=True, exclusive=True)
     def build(self) -> None:
@@ -1748,9 +1464,6 @@ class BuildScreen(Screen):
                 if value is not None:
                     table.update_cell(key, column, value)
         except CellDoesNotExist:
-            # A document the queue did not predict. Narrow on purpose: a bare
-            # `except` here would swallow any bug in the progress table during
-            # a build, which is exactly when nobody is watching the code.
             pass
 
     def _started(self, assignment, variant: str) -> None:
@@ -1758,11 +1471,6 @@ class BuildScreen(Screen):
         self._row(key, None, None, "building…")
         jobs = self.app.config.jobs
         if jobs > 1:
-            # With N documents in flight there is no "the" log to follow, and
-            # following whichever one started last would interleave three
-            # unrelated pdflatex runs into one pane. The per-row status column
-            # still tracks each document, and `run.log` carries every log,
-            # banner-separated, after the run.
             self._log_path = None
             self.query_one("#build-status", Static).update(
                 Content(f"Building, {jobs} documents at a time…")
@@ -1786,20 +1494,13 @@ class BuildScreen(Screen):
             _number(report.pages),
             _number(report.bookmarks),
             _number(report.figures),
-            # A fraction on the report, a percentage on the screen -- and the
-            # reason it could not be measured when there is no number at all.
             f"{100 * report.pixel_diff:.2f}%"
             if report.pixel_diff is not None
             else (report.diff_note or "—"),
         )
 
     def _tail(self) -> None:
-        """Follow the LaTeX log of whatever is compiling right now.
-
-        No engine change: pdflatex already writes it there. The file is moved
-        into its own directory only after the run, so the live one is the copy
-        next to the PDF.
-        """
+        """Follow the LaTeX log of whatever is compiling right now."""
         path = self._log_path
         if path is None or not path.is_file():
             return
@@ -1813,7 +1514,6 @@ class BuildScreen(Screen):
         if fresh:
             self.query_one("#log", RichLog).write(fresh.rstrip("\n"))
 
-    # -- completion ----------------------------------------------------- #
 
     def _failed(self, message: str) -> None:
         self.app.reports = []
@@ -1826,10 +1526,6 @@ class BuildScreen(Screen):
         self.app.reports = reports
         self.app.descriptions = descriptions
         failures = [report for report in reports if not report.ok]
-        # Three outcomes, said as three: a clean build, a PDF with something in
-        # its log worth reading, and nothing at all. The middle one used to be
-        # drawn as the last one, which sent people hunting for output that was
-        # already on disk.
         flagged = [report for report in reports if report.built and not report.ok]
         missing = [report for report in reports if not report.built]
         parts = [f"{len(reports) - len(failures)} of {len(reports)} built clean"]
@@ -1889,42 +1585,26 @@ class BuildScreen(Screen):
         self._offer_exit()
 
     def _offer_exit(self) -> None:
+        self._build_done = True
+        self.refresh_bindings()
         saved = self.app.config.output.root / "build-log.txt"
+        where = f"written to {show_path(saved)}\n" if saved.is_file() else ""
         self.query_one("#build-hint", Static).update(
-            Content(
-                f"written to {show_path(saved)}    q to close"
-                if saved.is_file()
-                else "q to close"
-            )
+            Content(f"{where}Done — press Enter to exit.")
         )
 
 
-# ---------------------------------------------------------------------- #
-# revert
-# ---------------------------------------------------------------------- #
-
-
 class RevertScreen(Screen):
-    """Undo a run, after showing exactly what that means.
-
-    Reachable with ``r`` from anywhere, and deliberately not a step: reverting
-    is not part of converting, and putting it in the wizard would make it
-    something you walk past on the way to a build.
-
-    It opens on the plan, never on the act. The three groups are listed by name
-    and by count, and ``y`` is the only key that writes -- because the thing
-    being undone is somebody's course material and "I pressed enter out of
-    habit" must not be able to reach it.
-    """
+    """Undo a run, after showing exactly what that means."""
 
     BINDINGS = [
         Binding("backslash", "close", "Back", key_display="\\"),
-        Binding("y", "confirm", "Revert"),
-        Binding("q", "app.quit", "Quit"),
+        Binding("y", "confirm", "Yes, revert"),
+        Binding("enter", "refuse", "", show=False, priority=True),
     ]
 
     def compose(self) -> ComposeResult:
-        yield Static("Revert", classes="heading")
+        yield Static("Revert", id="revert-heading", classes="heading")
         yield Static(
             "Puts your .tex back with git and deletes what this tool wrote. "
             "Files it does not recognise are left alone.",
@@ -1932,30 +1612,71 @@ class RevertScreen(Screen):
         )
         with VerticalScroll(id="body"):
             yield Static("", id="revert-plan")
+        spinner = LoadingIndicator(id="revert-progress")
+        spinner.display = False
+        yield spinner
         yield Static("", id="revert-note", classes="reason")
         yield Footer()
+
+    _reverting: bool = False
 
     def on_mount(self) -> None:
         self._plan = None
         self._load()
 
+    def _heading(self, text: str) -> None:
+        self.query_one("#revert-heading", Static).update(Content(text))
+
+    def action_refuse(self) -> None:
+        """Enter, which means Next everywhere else and must not mean this."""
+        if self._reverting:
+            return
+        if self._plan is None or self._plan.empty:
+            self.say("Nothing to revert.")
+            return
+        self.say(
+            "Enter does not revert — this rewrites your course material. "
+            "Press y to go ahead, or \\ to go back."
+        )
+
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action == "confirm":
-            # Greyed rather than dropped, so the footer still answers "why can
-            # I not press y" while the plan is loading or empty.
-            return True if self._plan is not None and not self._plan.empty else None
+            if self._reverting or self._plan is None or self._plan.empty:
+                return None
+            return True
+        if action == "revert":
+            return False
         return True
 
     def _load(self) -> None:
+        """Read the plan off the UI thread."""
+        self._heading("Revert — reading the plan…")
+        self.query_one("#revert-progress", LoadingIndicator).display = True
+        self.refresh_bindings()
+        self._plan_revert()
+
+    @work(thread=True, exclusive=True, group="revert-plan")
+    def _plan_revert(self) -> None:
         from ..revert import plan_revert
 
         try:
-            self._plan = plan_revert(self.app.config, self.app.profile)
+            plan = plan_revert(self.app.config, self.app.profile)
         except LatexAllyError as exc:
-            self.query_one("#revert-plan", Static).update(Content(str(exc)))
-            self.refresh_bindings()
+            self.app.call_from_thread(self._planned, None, str(exc))
             return
-        self.query_one("#revert-plan", Static).update(self._describe(self._plan))
+        self.app.call_from_thread(self._planned, plan, "")
+
+    def _planned(self, plan, error: str) -> None:
+        self._plan = plan
+        if not self._reverting:
+            self.query_one("#revert-progress", LoadingIndicator).display = False
+        pane = self.query_one("#revert-plan", Static)
+        if error:
+            self._heading("Revert")
+            pane.update(Content(error))
+        else:
+            self._heading("Revert" if plan.empty else "Confirm revert (y)")
+            pane.update(self._describe(plan))
         self.refresh_bindings()
 
     def _describe(self, plan) -> Content:
@@ -1988,30 +1709,49 @@ class RevertScreen(Screen):
         self.app.pop_screen()
 
     def action_confirm(self) -> None:
+        """Start the revert. The work happens off the UI thread."""
+        if self._reverting or self._plan is None or self._plan.empty:
+            return
+        self._reverting = True
+        self.refresh_bindings()
+        self.query_one("#revert-progress", LoadingIndicator).display = True
+        self.say(
+            f"Reverting {len(self._plan.restore)} restored, "
+            f"{len(self._plan.remove)} deleted, "
+            f"{len(self._plan.outputs)} output path(s)…"
+        )
+        self._run_revert()
+
+    @work(thread=True, exclusive=True)
+    def _run_revert(self) -> None:
         from ..revert import do_revert
 
-        if self._plan is None or self._plan.empty:
-            return
+        plan = self._plan
         try:
-            do_revert(self._plan)
+            do_revert(plan)
         except LatexAllyError as exc:
-            self.say(str(exc))
+            self.app.call_from_thread(self._reverted, plan, str(exc))
             return
-        self.say(
-            f"Reverted: {len(self._plan.restore)} restored, "
-            f"{len(self._plan.remove)} deleted. esc to go back."
-        )
+        self.app.call_from_thread(self._reverted, plan, "")
+
+    def _reverted(self, plan, error: str) -> None:
+        self._reverting = False
+        self.query_one("#revert-progress", LoadingIndicator).display = False
+        if error:
+            self.say(error)
+        else:
+            self.say(
+                f"Reverted: {len(plan.restore)} restored, "
+                f"{len(plan.remove)} deleted. \\ to go back."
+            )
         self._load()
+        self.refresh_bindings()
 
     def say(self, text: str) -> None:
         note = self.query_one("#revert-note", Static)
         note.update(Content(text))
         note.display = bool(text)
 
-
-# ---------------------------------------------------------------------- #
-# the app
-# ---------------------------------------------------------------------- #
 
 STEPS: tuple[type[StepScreen], ...] = (
     ModeScreen,
@@ -2102,6 +1842,10 @@ class LatexAllyApp(App):
     RichLog { height: 1fr; background: transparent; border: none; }
     LoadingIndicator { height: 1; background: transparent; }
     Input { border: none; background: transparent; padding: 0 1; }
+    /* The keypress blink. Reverse video rather than a colour, for the same
+       reason the table cursor is: it shows up on whatever palette the terminal
+       has, including the ones where $ally-green is unreadable. */
+    Footer.-keyed { text-style: reverse; }
     """
 
     def __init__(
@@ -2113,32 +1857,14 @@ class LatexAllyApp(App):
         corpus_root: Path | None = None,
     ) -> None:
         super().__init__()
-        # ANSI only, so the app inherits the terminal's own palette and
-        # background instead of painting a dark window over it.
         self.theme = "ansi-light"
         self.profile = profile
         self.config = config or RunConfig(profile=profile.name)
-        # Same anchoring the CLI does, so the runner and the flags agree about
-        # where a defaulted output root points.
         self.config.output.anchor(profile)
-        #: The corpus-relative directory the runner was started from, or None
-        #: when that is outside the corpus. Same answer `latexally scan` uses,
-        #: from the same function, so the runner and the commands cannot
-        #: disagree about what "here" means.
         self.here_scope = scope_from_cwd(profile)
-        #: "local" -- convert what `here_scope` names -- or "choose". Answered
-        #: on the first step, and it decides whether the scope picker is part
-        #: of this run at all.
         self.scope_mode = "local" if self.here_scope is not None else "choose"
-        #: What -c said, re-applied whenever the picker swaps the profile so a
-        #: named corpus root is not quietly dropped by changing course.
         self._corpus_root = corpus_root
-        #: Installed profiles, read once. The picker's rows and `use_profile`'s
-        #: guard come from the same list, so it cannot offer what it refuses.
         self.profile_names = builtin_profile_names()
-        #: A step with one possible answer is not a question (rule 3): the
-        #: course is asked only when the command line left it open AND there is
-        #: more than one to choose between.
         self.ask_profile = ask_profile and len(self.profile_names) > 1
         self.active_steps = (ProfileScreen, *STEPS) if self.ask_profile else STEPS
         self.should_run = False
@@ -2149,19 +1875,21 @@ class LatexAllyApp(App):
     def on_mount(self) -> None:
         self.push_screen(self.active_steps[0]())
 
-    #: Every run walks all of them. `local` mode does not skip the scope step:
-    #: it pre-answers it, and the screen still has to show what that answer
-    #: covers so any of it can be unticked. Set per-instance in `__init__`,
-    #: because whether the course is asked depends on what is installed.
+    async def on_event(self, event: events.Event) -> None:
+        """Blink the footer on every key, so a key that changes nothing on the"""
+        if isinstance(event, events.Key):
+            self._blink()
+        await super().on_event(event)
+
+    def _blink(self) -> None:
+        footers = self.screen.query(Footer)
+        footers.add_class("-keyed")
+        self.set_timer(0.12, lambda: footers.remove_class("-keyed"))
+
     active_steps: tuple[type[StepScreen], ...] = STEPS
 
     def use_profile(self, name: str) -> None:
-        """Switch course, and re-derive everything that was read off the old one.
-
-        `here_scope` and the anchored output root are both functions of the
-        corpus, so leaving them behind would point step two at the previous
-        course's directories -- the failure this method exists to prevent.
-        """
+        """Switch course, and re-derive everything that was read off the old one."""
         if name == self.profile.name:
             return
         if name not in self.profile_names:
@@ -2188,16 +1916,17 @@ class LatexAllyApp(App):
             self.push_screen(steps[index]())
 
     def start_build(self) -> None:
-        self.config = replace(self.config, write=True)
-        self.should_run = True
+        """Show the queue. Does NOT set `write`, and does not build."""
         self.push_screen(BuildScreen())
 
-    def action_revert(self) -> None:
-        """Undo a run. Available from every step, including after the build.
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        """Hide `r` while the revert screen is the one showing."""
+        if action == "revert" and isinstance(self.screen, RevertScreen):
+            return False
+        return super().check_action(action, parameters)
 
-        Not a wizard step: it is the opposite of one. Pushed rather than
-        switched to, so escape puts the user back exactly where they were.
-        """
+    def action_revert(self) -> None:
+        """Undo a run. Available from every step, including after the build."""
         if isinstance(self.screen, RevertScreen):
             return
         self.push_screen(RevertScreen())

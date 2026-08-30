@@ -1,14 +1,4 @@
-"""How a run describes itself: paths, swatches, contrast, tables.
-
-Lifted out of the old ``Wizard`` class when the runner moved to Textual. None
-of it draws or reads anything -- every function here is ``(profile, config) ->
-text`` -- so the same wording serves the review screen, the step screens and
-anything else that has to say what a run is about to do.
-
-The wording is load-bearing and was arrived at the hard way: "kept as the
-course original" rather than a blank cell, an actual block of ink next to every
-hex code, and a path shown relative to the working directory when it can be.
-"""
+"""How a run describes itself: paths, swatches, contrast, tables."""
 
 from __future__ import annotations
 
@@ -40,19 +30,7 @@ __all__ = [
 
 
 def show_path(path: Path) -> str:
-    """A path as short as it can be without becoming ambiguous.
-
-    Paths are absolute internally, because a relative ``-output-directory``
-    resolves against the subprocess's directory rather than the user's. Printing
-    them raw puts a wrapped 80-character absolute path in every table.
-
-    Three candidate spellings, shortest wins: relative to the working
-    directory, relative to home as ``~/…``, or absolute. The home form earns
-    its place now that the output root is anchored to the corpus rather than to
-    wherever the command was run -- an absolute path to somebody's course
-    repository is long, and on the runner's Output screen it pushed the
-    artifact names off the side of the terminal.
-    """
+    """A path as short as it can be without becoming ambiguous."""
     absolute = path.absolute()
     candidates = [str(absolute)]
     try:
@@ -64,11 +42,6 @@ def show_path(path: Path) -> str:
     except (ValueError, RuntimeError):
         pass
     return min(candidates, key=len)
-
-
-# ---------------------------------------------------------------------- #
-# one-line descriptions of current state
-# ---------------------------------------------------------------------- #
 
 
 def describe_variants(config: RunConfig) -> str:
@@ -90,12 +63,7 @@ def describe_output(config: RunConfig) -> str:
 
 
 def available_variants(profile: Profile, config: RunConfig) -> dict[str, int]:
-    """How many selected assignments actually have each variant.
-
-    Shown because the answer is course-specific and often surprising:
-    homeworks have solutions and a blank version, discussions add an
-    answers-only build, and a few assignments have only one file.
-    """
+    """How many selected assignments actually have each variant."""
     from ..discover import iter_selected
 
     counts: dict[str, int] = {}
@@ -108,18 +76,8 @@ def available_variants(profile: Profile, config: RunConfig) -> dict[str, int]:
     return counts
 
 
-# ---------------------------------------------------------------------- #
-# colour
-# ---------------------------------------------------------------------- #
-
-
 def swatch(value: str | None) -> str:
-    """A filled block in the colour itself, so the hex is not the only cue.
-
-    A hex code is unreadable as a colour to most people and to all of us in a
-    hurry. Both Rich and Textual paint the background from the same markup, so
-    the block shows the actual ink.
-    """
+    """A filled block in the colour itself, so the hex is not the only cue."""
     if not value:
         return "  "
     try:
@@ -155,22 +113,7 @@ def floor_for(profile: Profile, name: str) -> float:
 
 
 def proposal_for(profile: Profile, name: str, mode: str = "conforming") -> str | None:
-    """What this run would change ``name`` to, or ``None`` for "nothing".
-
-    Two different questions behind one name, because the screen asks the same
-    one either way -- "what will this become, and do you agree?".
-
-    Under ``palette`` the answer is a lookup, and that is the point: one token
-    set, bound to the course's names AND to the xcolor names the drawings use,
-    so the page stops holding two blues that no per-name derivation could ever
-    bring together.
-
-    Under ``conforming`` it is the smallest change that clears the floor, and
-    deliberately not a lookup: a fixed palette is what once answered a course
-    blue of #3399E6 with #0645AD -- 8.53:1 where 4.5:1 was asked for, and
-    reported as harder to read than the colour it replaced. That mode survives
-    for a document whose figures must keep the exact hues they were drawn in.
-    """
+    """What this run would change ``name`` to, or ``None`` for "nothing"."""
     from ..check.contrast import minimum_conforming, palette_value
 
     if mode == "house":
@@ -178,7 +121,6 @@ def proposal_for(profile: Profile, name: str, mode: str = "conforming") -> str |
     if mode == "palette":
         proposed = palette_value(name)
         original = profile.colors.originals.get(name)
-        # A name already sitting on its token is not a change to confirm.
         if proposed and original and proposed.upper() == original.upper():
             return None
         return proposed
@@ -209,15 +151,13 @@ def color_note(profile: Profile, config: RunConfig, name: str) -> str:
     current = config.colors.replacements(profile).get(name)
     settled = " *" if name in config.colors.overrides else ""
     measured = f"{ratio:.2f}:1" if ratio is not None else "?"
-    if current and current != original:
+    if current and current.upper() != original.upper():
         return f"{original} {measured} → {current}{settled}"
-    return f"{original} {measured} → kept as the course original{settled}"
+    return f"{original} {measured} → rejected, kept as the course had it{settled}"
 
 
-#: Column headings for :func:`color_rows`, shared by the Rich table on the
-#: review screen and the DataTable the colour step navigates.
 COLOR_COLUMNS: tuple[str, ...] = (
-    "colour", "course original", "", "contrast", "→", "proposed", "", "contrast",
+    "colour", "course original", "", "contrast", "→", "becomes", "", "contrast",
 )
 
 
@@ -229,16 +169,20 @@ def color_rows(profile: Profile, config: RunConfig) -> list[list[Text]]:
         original = profile.colors.originals.get(name)
         new = effective.get(name)
         customised = name in config.colors.overrides
+        rejected = bool(new and original and new.upper() == original.upper())
+        changing = bool(new) and not rejected
         rows.append(
             [
                 Text.from_markup(name + (" [cyan]*[/]" if customised else "")),
                 Text.from_markup(original or "[dim]unknown[/]"),
                 Text.from_markup(swatch(original)),
                 Text.from_markup(contrast(profile, original)[1]),
-                Text("→" if new else ""),
-                Text.from_markup(new or "[dim]kept[/]"),
-                Text.from_markup(swatch(new)),
-                Text.from_markup(contrast(profile, new)[1]),
+                Text("→" if changing else ""),
+                Text.from_markup(
+                    new if changing else ("[cyan]rejected[/]" if rejected else "[dim]unchanged[/]")
+                ),
+                Text.from_markup(swatch(new) if changing else ""),
+                Text.from_markup(contrast(profile, new)[1] if changing else ""),
             ]
         )
     return rows
@@ -255,11 +199,6 @@ def colors_table(profile: Profile, config: RunConfig) -> Table:
     for row in color_rows(profile, config):
         table.add_row(*row)
     return table
-
-
-# ---------------------------------------------------------------------- #
-# output
-# ---------------------------------------------------------------------- #
 
 
 def output_table(config: RunConfig) -> Table:
@@ -285,15 +224,7 @@ def output_table(config: RunConfig) -> Table:
 
 
 def under(path: Path, root: Path) -> str:
-    """An artifact path spelled relative to the output root that contains it.
-
-    The Output screen's own hint says "a relative one hangs off the root", and
-    every default sits directly under it, so the useful thing to show is the
-    part that differs -- `pdf`, `descriptions` -- not the absolute path with
-    the root repeated on every one of six rows. Once the root became an
-    absolute corpus path, repeating it pushed the artifact names off the side
-    of the terminal entirely.
-    """
+    """An artifact path spelled relative to the output root that contains it."""
     try:
         return str(path.absolute().relative_to(Path(root).absolute()))
     except ValueError:
