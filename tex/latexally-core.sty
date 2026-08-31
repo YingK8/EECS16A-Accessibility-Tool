@@ -474,6 +474,61 @@
     \colorlet { green }  { allyGreen }
     \colorlet { purple } { allyPurple }
     \colorlet { orange } { allyOrange }
+    \accessinkhooks
+  }
+
+%% 9b. Drawing colours
+
+%% Text and drawings do not sit next to the same thing. Body text sits on the
+%% page, so the palette above is tuned to 4.5:1 against white. A plotted line
+%% sits beside BLACK axes, and WCAG 1.4.11 asks 3:1 of it against every adjacent
+%% colour -- the page AND that ink. A colour tuned only to the page fails the
+%% other side: allyGreen is 7.24:1 on white but 2.90:1 on black, and a document
+%% that darkens it again -- `green!70!black', which questionBank/sec/1 really
+%% draws with -- lands at 1.90:1, indistinguishable from the axes.
+%%
+%% Same hues, moved in OKLCH lightness to the point that maximises the WORST of
+%% three measurements: against the page, against black ink, and against black
+%% ink after a `!70!black' mix. Each clears 3:1 on all three. Derived with
+%% coloraide; tests/test_contrast.py re-derives them and fails on a hand edit.
+\definecolor { allyInkBlue }    { HTML } { 4E84FF } % 3.47 page / 6.06 ink / 3.35 mixed
+\definecolor { allyInkRed }     { HTML } { FF4233 } % 3.45 / 6.08 / 3.32
+\definecolor { allyInkGreen }   { HTML } { 00A300 } % 3.36 / 6.24 / 3.41
+\definecolor { allyInkOrange }  { HTML } { DA6C00 } % 3.42 / 6.14 / 3.38
+\definecolor { allyInkPurple }  { HTML } { F54C6A } % 3.44 / 6.10 / 3.35
+\definecolor { allyInkMagenta } { HTML } { F500F5 } % 3.40 / 6.18 / 3.33
+\definecolor { allyInkTeal }    { HTML } { 339B9A } % 3.35 / 6.26 / 3.44
+
+%% Three names are deliberately NOT bound, because a legible version of them is
+%% not the same colour any more:
+%%
+%%   yellow  its legible form is #8F8F00, whose nearest CSS name is `olive'.
+%%           Yellow needs its lightness to be yellow; darkening it to clear the
+%%           page turns it green-brown, so it is left alone and reported.
+%%   cyan    its legible form is 1.9 dE2000 from teal's -- one colour, two
+%%           names -- and teal is the word this corpus draws with.
+%%   gray    achromatic and used for grid lines, where being faint is the point.
+\NewDocumentCommand \accessinkpalette { }
+  {
+    \colorlet { blue }    { allyInkBlue }
+    \colorlet { red }     { allyInkRed }
+    \colorlet { green }   { allyInkGreen }
+    \colorlet { orange }  { allyInkOrange }
+    \colorlet { purple }  { allyInkPurple }
+    \colorlet { magenta } { allyInkMagenta }
+    \colorlet { teal }    { allyInkTeal }
+  }
+
+%% `begin', not `before': the hook then runs inside the environment's group, so
+%% the drawing palette lasts exactly as long as the drawing and the prose around
+%% it keeps the text palette. circuitikz and pgfpicture are listed because a
+%% document can open either without a tikzpicture around it; a pgfplots `axis'
+%% always sits inside one.
+\NewDocumentCommand \accessinkhooks { }
+  {
+    \AddToHook { env/tikzpicture/begin } { \accessinkpalette }
+    \AddToHook { env/circuitikz/begin }  { \accessinkpalette }
+    \AddToHook { env/pgfpicture/begin }  { \accessinkpalette }
   }
 
 \NewDocumentCommand \accessrecolor { m m }

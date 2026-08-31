@@ -24,6 +24,9 @@ __all__ = [
     "rgb_to_hex",
     "PALETTE",
     "PALETTE_BINDINGS",
+    "PALETTE_INK",
+    "INK_BINDINGS",
+    "ink_value",
     "palette_value",
 ]
 
@@ -65,6 +68,44 @@ PALETTE_BINDINGS: dict[str, str] = {
     "purple": "allyPurple",
     "orange": "allyOrange",
 }
+
+
+#: The drawing palette, mirroring ``\definecolor{allyInk*}`` in the .sty.
+#:
+#: Text sits on the page; a plotted line sits beside black axes, and WCAG 1.4.11
+#: asks 3:1 against *every* adjacent colour. These are the same hues as PALETTE,
+#: moved in OKLCH lightness to the point that maximises the worst of three
+#: measurements -- against the page, against black ink, and against black ink
+#: after a ``!70!black`` mix, which is how this corpus actually draws.
+PALETTE_INK: dict[str, str] = {
+    "allyInkBlue": "#4E84FF",
+    "allyInkRed": "#FF4233",
+    "allyInkGreen": "#00A300",
+    "allyInkOrange": "#DA6C00",
+    "allyInkPurple": "#F54C6A",
+    "allyInkMagenta": "#F500F5",
+    "allyInkTeal": "#339B9A",
+}
+
+#: Which name a drawing rebinds to which ink token. Three names are missing on
+#: purpose: `yellow`, whose legible form reads as olive rather than yellow;
+#: `cyan`, whose legible form is 1.9 dE2000 from teal's; and `gray`, which is
+#: achromatic and draws the grid lines that are meant to be faint.
+INK_BINDINGS: dict[str, str] = {
+    "blue": "allyInkBlue",
+    "red": "allyInkRed",
+    "green": "allyInkGreen",
+    "orange": "allyInkOrange",
+    "purple": "allyInkPurple",
+    "magenta": "allyInkMagenta",
+    "teal": "allyInkTeal",
+}
+
+
+def ink_value(name: str) -> str | None:
+    """The hex ``name`` draws in under the palette, or ``None`` if unbound."""
+    token = INK_BINDINGS.get(name)
+    return PALETTE_INK.get(token) if token else None
 
 
 def palette_value(name: str) -> str | None:

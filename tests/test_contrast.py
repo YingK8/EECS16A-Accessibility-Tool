@@ -267,3 +267,123 @@ def test_the_only_installed_profile_is_used_without_being_named(tmp_path, monkey
 
     assert profile.name == "eecs16a"
     assert profile.colors.originals, "the default profile must carry its palette"
+
+
+# ---------------------------------------------------------------------- #
+# the drawing palette
+# ---------------------------------------------------------------------- #
+
+XCOLOR_BASE = {
+    "blue": "#0000FF",
+    "red": "#FF0000",
+    "green": "#00FF00",
+    "orange": "#FF8000",
+    "purple": "#BF0040",
+    "magenta": "#FF00FF",
+    "teal": "#008080",
+}
+
+
+def _coloraide():
+    return pytest.importorskip("coloraide", reason="the ink palette is derived with it")
+
+
+def _mixed(color, pct: int = 70):
+    """xcolor's ``name!pct!black``: the sRGB components, scaled."""
+    from coloraide import Color
+
+    srgb = Color(color).convert("srgb")
+    return Color("srgb", [channel * pct / 100 for channel in srgb[:-1]])
+
+
+def test_every_drawing_colour_is_legible_on_both_sides():
+    r"""A plotted line has two neighbours, and the text palette only serves one.
+
+    allyGreen is 7.24:1 on the page and 2.90:1 on black axes; after the
+    ``green!70!black`` that questionBank/sec/1 really draws with, 1.90:1 -- which
+    is why the discussion plot came out looking black. WCAG 1.4.11 wants 3:1
+    against every adjacent colour, so the ink palette is measured against three:
+    the page, the ink, and the ink after that mix.
+    """
+    _coloraide()
+    from coloraide import Color
+
+    from latexally.check.contrast import INK_BINDINGS, ink_value
+
+    for name in INK_BINDINGS:
+        ink = ink_value(name)
+        page = Color(ink).contrast("white", method="wcag21")
+        black = Color(ink).contrast("black", method="wcag21")
+        mixed = _mixed(ink).contrast("black", method="wcag21")
+        assert page >= 3.0, f"{name} is {page:.2f}:1 against the page"
+        assert black >= 3.0, f"{name} is {black:.2f}:1 against black ink"
+        assert mixed >= 3.0, f"{name}!70!black is {mixed:.2f}:1 against black ink"
+
+
+def test_the_drawing_palette_is_the_most_legible_form_of_each_hue():
+    """Re-derived, not trusted: hold the OKLCH hue and chroma, move lightness."""
+    _coloraide()
+    from coloraide import Color
+
+    from latexally.check.contrast import ink_value
+
+    for name, original in XCOLOR_BASE.items():
+        base = Color(original).convert("oklch")
+        best, score = None, -1.0
+        for step in range(5, 100):
+            candidate = base.clone().set("l", step / 100).convert("srgb").fit()
+            worst = min(
+                candidate.contrast("white", method="wcag21"),
+                candidate.contrast("black", method="wcag21"),
+                _mixed(candidate).contrast("black", method="wcag21"),
+            )
+            if worst > score:
+                best, score = candidate, worst
+        assert best.to_string(hex=True).upper() == ink_value(name), (
+            f"{name} should draw in {best.to_string(hex=True)}, not {ink_value(name)}"
+        )
+
+
+def test_the_drawing_colours_stay_telling_apart():
+    """Seven lines on one axis have to be seven colours, not five and a pair."""
+    _coloraide()
+    from itertools import combinations
+
+    from coloraide import Color
+
+    from latexally.check.contrast import INK_BINDINGS, ink_value
+
+    for one, other in combinations(INK_BINDINGS, 2):
+        distance = Color(ink_value(one)).delta_e(ink_value(other), method="2000")
+        assert distance >= 10, f"{one} and {other} are {distance:.1f} dE2000 apart"
+
+
+def test_yellow_is_left_alone_because_a_legible_yellow_is_not_yellow():
+    r"""The nuance the other hues do not have.
+
+    Green darkened is still green -- its nearest CSS name goes from `lime` to
+    `forestgreen`. Yellow darkened enough to clear the page is #8F8F00, whose
+    nearest CSS name is `olive`: it is not a darker yellow, it is a different
+    colour. So the palette does not bind it, and `check` reports it instead.
+    """
+    _coloraide()
+    from coloraide import Color
+    from coloraide.css.color_names import name2val_map
+
+    from latexally.check.contrast import INK_BINDINGS
+
+    assert "yellow" not in INK_BINDINGS
+    named = {
+        name: Color("srgb", [channel / 255 for channel in value[:3]])
+        for name, value in name2val_map.items()
+    }
+
+    def reads_as(color):
+        return min(named, key=lambda name: Color(color).delta_e(named[name], method="2000"))
+
+    legible_yellow = (
+        Color("#FFFF00").convert("oklch").set("l", 0.62).convert("srgb").fit()
+    )
+    assert legible_yellow.contrast("white", method="wcag21") >= 3.0
+    assert reads_as(legible_yellow) == "olive"
+    assert reads_as("#00A300") == "forestgreen", "green survives the same treatment"

@@ -408,6 +408,32 @@ def test_the_palette_is_what_the_style_file_actually_defines():
     assert not any("EE0000" in line for line in defined), "the old red is still defined"
 
 
+def test_the_drawing_palette_is_what_the_style_file_defines():
+    """Same grep, for the ink tokens: the .sty is where the values take effect."""
+    from latexally.check.contrast import INK_BINDINGS, PALETTE_INK
+
+    style = (Path(__file__).resolve().parents[1] / "tex" / "latexally-core.sty").read_text()
+    defined = [line for line in style.splitlines() if line.startswith("\\definecolor")]
+    for name, value in PALETTE_INK.items():
+        assert any(name in line and value.lstrip("#") in line for line in defined), (
+            f"{name} is not defined as {value}"
+        )
+
+    body = style.split("\\NewDocumentCommand \\accessinkpalette")[1].split("\\NewDocument")[0]
+    for name, token in INK_BINDINGS.items():
+        assert f"{{ {name} }}" in body, f"{name} is not rebound for drawings"
+        assert token in body, f"{name} does not reach {token}"
+    for name in ("yellow", "cyan", "gray"):
+        assert f"{{ {name} }}" not in body, f"{name} is bound; it is meant to be left"
+
+    # The hooks are what make it local to a picture -- `begin`, so the colours
+    # last exactly as long as the environment's group and the prose keeps the
+    # text palette.
+    hooks = style.split("\\NewDocumentCommand \\accessinkhooks")[1].split("\\NewDocument")[0]
+    for environment in ("tikzpicture", "circuitikz", "pgfpicture"):
+        assert f"env/{environment}/begin" in hooks, f"{environment} is not hooked"
+
+
 def test_one_blue_reaches_both_text_and_drawings():
     """The mismatch this replaced, as an assertion about names.
 
@@ -469,3 +495,49 @@ def test_text_layer_does_not_change_layout(tmp_path_factory):
     """
     on, off = _text_layer_pair(tmp_path_factory)
     assert strongly_differing_fraction(on, off) == 0.0
+
+
+def test_a_drawing_gets_the_ink_palette_and_the_prose_does_not(tmp_path: Path):
+    r"""The bug this palette exists for, read back out of a PDF.
+
+    fa26/dis/01A draws with ``green!70!black``. Under the text palette that
+    resolved to #004700 -- 1.90:1 against the black axes beside it, which is
+    what "the green looks black" was. The prose still wants the text palette, so
+    the two have to come out of one document as two different greens.
+    """
+    pdf = _compile(
+        tmp_path,
+        "ink",
+        "\\DocumentMetadata{lang=en-US,pdfversion=1.7,tagging=on}\n"
+        "\\documentclass{article}\n"
+        "\\usepackage{tikz}\n"
+        "\\usepackage{latexally-core}\n"
+        "\\accesssetup{palette}\n"
+        "\\begin{document}\n"
+        "Prose in {\\color{green}green}.\n"
+        "\\begin{tikzpicture}\n"
+        "  \\draw[green!70!black, thick] (0,0) -- (2,1);\n"
+        "  \\draw[teal, thick] (0,1) -- (2,2);\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n",
+    )
+    import pymupdf
+
+    page = pymupdf.open(pdf)[0]
+    strokes = {
+        "#%02X%02X%02X" % tuple(round(channel * 255) for channel in drawing["color"])
+        for drawing in page.get_drawings()
+        if drawing.get("color")
+    }
+    text = {
+        f"#{span['color']:06X}"
+        for block in page.get_text("dict")["blocks"]
+        for line in block.get("lines", [])
+        for span in line["spans"]
+        if span["color"]
+    }
+
+    assert text == {"#006600"}, "prose should still take the text palette"
+    assert "#339B9A" in strokes, "teal should draw in the ink palette"
+    assert "#007200" in strokes, "green!70!black should be the ink green, mixed"
+    assert "#004700" not in strokes, "the near-black green is what this replaced"

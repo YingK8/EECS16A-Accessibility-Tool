@@ -765,7 +765,9 @@ class ColorsScreen(StepScreen):
                 f"{colors.min_contrast_normal}:1 on {colors.background} "
                 "(WCAG 1.4.3 AA). * marks a row you changed. "
                 "↑ ↓ to a row, then k to keep the course original, u to undo "
-                "that, e to type your own hex."
+                "that, e to type your own hex. The dim rows are what a picture "
+                "draws in: a line sits beside black axes, so those are measured "
+                "against the page AND the ink, 3:1 on both (WCAG 1.4.11)."
             )
         return (
             f"Floor is {colors.min_contrast_normal}:1 on {colors.background} "

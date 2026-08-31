@@ -48,6 +48,11 @@ dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
     "pytest-asyncio>=0.23",
+    # Colour science for the drawing palette: OKLCH, WCAG contrast, dE2000 and
+    # the CSS colour names. A test derives those values rather than trusting
+    # them, so the library is needed to run the suite, not to run the tool --
+    # the palette ships as seven literals in the .sty.
+    "coloraide>=4.0",
 ]
 
 [project.scripts]
