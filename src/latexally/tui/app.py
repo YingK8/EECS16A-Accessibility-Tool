@@ -1193,6 +1193,9 @@ class ReviewScreen(StepScreen):
 
         yield from self.section("What gets built")
         yield Static("", id="documents")
+        scanning = LoadingIndicator(id="documents-progress")
+        scanning.display = False
+        yield scanning
         yield Static(
             "'.tex used' counts every file the driver reaches, including "
             "questions \\input from the shared bank — which is where most "
@@ -1260,10 +1263,25 @@ class ReviewScreen(StepScreen):
             Content("\n".join(config.assignments) or "nothing selected")
         )
         self._alt_text(config)
-        self.query_one("#documents", Static).update(self._documents())
+        # `source_files_for` follows every \input a driver reaches, across the
+        # whole shared question bank, for every selected assignment. On a scope
+        # of any size that is seconds, and it used to run right here -- so the
+        # last screen before the build drew itself and then stopped dead.
+        self.query_one("#documents", Static).update(Content("reading the sources…"))
+        self.query_one("#documents-progress", LoadingIndicator).display = True
+        self._scan_documents()
         self.query_one("#colors", Static).update(colors_table(profile, config))
         self.query_one("#output", Static).update(output_table(config))
         self.set_next(bool(count), "Nothing is selected; go back to Scope.")
+
+    @work(thread=True, exclusive=True, group="review-documents")
+    def _scan_documents(self) -> None:
+        table = self._documents()
+        self.app.call_from_thread(self._documents_ready, table)
+
+    def _documents_ready(self, table) -> None:
+        self.query_one("#documents-progress", LoadingIndicator).display = False
+        self.query_one("#documents", Static).update(table)
 
     def _alt_text(self, config) -> None:
         """Say what reaches the .tex, in the characters that reach it."""
@@ -1351,6 +1369,9 @@ class BuildScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Static("", id="build-status", classes="heading")
+        spinner = LoadingIndicator(id="build-progress")
+        spinner.display = False
+        yield spinner
         yield DataTable(id="progress")
         yield Static("Latest log", classes="label")
         yield RichLog(id="log", max_lines=2000)
@@ -1402,6 +1423,10 @@ class BuildScreen(Screen):
         self.refresh_bindings()
         self.query_one("#build-status", Static).update("Building…")
         self.query_one("#build-hint", Static).update("")
+        # Three LaTeX passes per document, and the log pane stays empty until
+        # the first one writes something. Without this the screen says
+        # "Building…" and then holds still for a minute.
+        self.query_one("#build-progress", LoadingIndicator).display = True
         self.build()
 
     def action_finish(self) -> None:
@@ -1586,6 +1611,7 @@ class BuildScreen(Screen):
 
     def _offer_exit(self) -> None:
         self._build_done = True
+        self.query_one("#build-progress", LoadingIndicator).display = False
         self.refresh_bindings()
         saved = self.app.config.output.root / "build-log.txt"
         where = f"written to {show_path(saved)}\n" if saved.is_file() else ""
