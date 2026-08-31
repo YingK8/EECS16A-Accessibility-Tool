@@ -2215,3 +2215,56 @@ async def test_switching_to_a_course_that_is_not_installed_is_refused(
         await settle(pilot)
         with pytest.raises(LatexAllyError):
             app.use_profile("no-such-course")
+
+
+async def test_a_dirty_worktree_is_waited_out_not_a_dead_end(
+    profile: Profile, monkeypatch, tmp_path: Path
+):
+    """`--edit` refuses on a dirty corpus, and that refusal used to end the run:
+    `b` was spent, Enter exited, and the only way back was to walk the seven
+    screens again. It watches instead, and starts itself when git goes quiet."""
+    import latexally.build as build
+
+    calls: list[str] = []
+
+    def fake_build_run(config, prof, *, on_start=None, on_finish=None):
+        calls.append("run")
+        if len(calls) == 1:
+            raise LatexAllyError("the corpus has 1 uncommitted change(s):\n    M x.tex")
+        return []
+
+    monkeypatch.setattr(build, "build_run", fake_build_run)
+    monkeypatch.setattr(build, "describe_run", lambda config, prof: {})
+
+    clean = {"yet": False}
+
+    def fake_guard(root, ignore=None):
+        if not clean["yet"]:
+            raise LatexAllyError("the corpus has 1 uncommitted change(s)")
+
+    monkeypatch.setattr(build, "require_clean_worktree", fake_guard)
+
+    config = RunConfig().with_assignments(["sem/hw/1"])
+    config.output.root = tmp_path / "out"
+    app = LatexAllyApp(profile, config)
+    async with app.run_test(size=SIZE) as pilot:
+        await walk_to(pilot, ReviewScreen)
+        await advance(pilot)
+        screen = app.screen
+        await pilot.press("b")
+        for _ in range(20):
+            await pilot.pause()
+            if calls:
+                break
+        assert "uncommitted change" in visible(app)
+        # `b` is live again, and Enter is not offered: the run is not over.
+        assert screen.check_action("start", ()) is True
+        assert screen.check_action("finish", ()) is None
+
+        clean["yet"] = True
+        screen._check_worktree()
+        for _ in range(40):
+            await pilot.pause()
+            if len(calls) == 2:
+                break
+        assert len(calls) == 2, "the build did not restart itself"

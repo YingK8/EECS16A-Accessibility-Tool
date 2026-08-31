@@ -1366,6 +1366,7 @@ class BuildScreen(Screen):
     _build_started: bool = False
     _build_queue: list[tuple[str, str, str]] = []
     _build_done: bool = False
+    _waiting = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="build-status", classes="heading")
@@ -1543,7 +1544,42 @@ class BuildScreen(Screen):
     def _failed(self, message: str) -> None:
         self.app.reports = []
         self.query_one("#build-status", Static).update(Content(f"Failed: {message}"))
+        if "uncommitted change" in message:
+            # Not a failed build: a precondition, and one the user is probably
+            # fixing in another window this second. Making them quit the runner
+            # and walk all seven screens again to be asked a second time is the
+            # kind of dead end this screen exists to avoid, so it watches the
+            # worktree and starts itself when it comes back clean.
+            self._build_started = False
+            self.query_one("#build-progress", LoadingIndicator).display = False
+            self.query_one("#build-hint", Static).update(
+                Content("Commit or stash them and this starts itself — or press b.")
+            )
+            self.refresh_bindings()
+            self._waiting = self.set_interval(2, self._check_worktree)
+            return
         self._offer_exit()
+
+    @work(thread=True, exclusive=True, group="worktree")
+    def _check_worktree(self) -> None:
+        """Is the corpus clean yet? A `git status`, so not on the message pump."""
+        from ..build import require_clean_worktree
+
+        try:
+            require_clean_worktree(
+                self.app.profile.corpus.root.resolve(),
+                ignore=self.app.config.output.root,
+            )
+        except LatexAllyError:
+            return
+        self.app.call_from_thread(self._worktree_clean)
+
+    def _worktree_clean(self) -> None:
+        if self._build_started or self._waiting is None:
+            return
+        self._waiting.stop()
+        self._waiting = None
+        self.action_start()
 
     def _done(self, reports, descriptions) -> None:
         from ..cli import _report_table
