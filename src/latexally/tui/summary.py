@@ -141,12 +141,30 @@ def proposal_for(profile: Profile, name: str, mode: str = "conforming") -> str |
 def color_names(profile: Profile, config: RunConfig) -> list[str]:
     """Every colour this run touches, profile order then any additions."""
     names = list(profile.colors.originals)
+    if config.colors.mode == "palette":
+        # The palette also binds xcolor's own words, which is what the drawings
+        # use -- and a course need not have declared them. Listing only the
+        # declared ones showed a run that remapped `green` without saying so.
+        from ..check.contrast import PALETTE_BINDINGS
+
+        names += [name for name in PALETTE_BINDINGS if name not in names]
     names += [name for name in config.colors.overrides if name not in names]
     return names
 
 
+def original_for(profile: Profile, name: str) -> str:
+    """What the name means before this run: the course's value, or xcolor's."""
+    from ..check.contrast import resolve_named, rgb_to_hex
+
+    declared = profile.colors.originals.get(name)
+    if declared:
+        return declared
+    base = resolve_named(name)
+    return rgb_to_hex(base) if base else ""
+
+
 def color_note(profile: Profile, config: RunConfig, name: str) -> str:
-    original = profile.colors.originals.get(name, "")
+    original = original_for(profile, name)
     ratio = contrast(profile, original)[0]
     current = config.colors.replacements(profile).get(name)
     settled = " *" if name in config.colors.overrides else ""
@@ -166,11 +184,15 @@ def color_rows(profile: Profile, config: RunConfig) -> list[list[Text]]:
     effective = config.colors.replacements(profile)
     rows: list[list[Text]] = []
     for name in color_names(profile, config):
-        original = profile.colors.originals.get(name)
+        original = original_for(profile, name)
         new = effective.get(name)
         customised = name in config.colors.overrides
-        rejected = bool(new and original and new.upper() == original.upper())
-        changing = bool(new) and not rejected
+        # Same value out as in means one of two different things, and the table
+        # used to call both "rejected": a colour somebody looked at and chose to
+        # keep, and one the palette binds to the value it already had.
+        unchanged = bool(new and original and new.upper() == original.upper())
+        rejected = unchanged and customised
+        changing = bool(new) and not unchanged
         rows.append(
             [
                 Text.from_markup(name + (" [cyan]*[/]" if customised else "")),

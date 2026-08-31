@@ -29,7 +29,7 @@ from typing import Iterable
 
 import yaml
 
-from .check.contrast import minimum_conforming, palette_value
+from .check.contrast import PALETTE_BINDINGS, minimum_conforming, palette_value
 from .config import Profile
 from .errors import ConfigError
 
@@ -283,9 +283,14 @@ class ColorChoice:
             # described a different run from the one that would happen -- and
             # the colour table, which reads this, showed a corpus of unchanged
             # colours next to a build that changed all of them.
+            # Every name `\accesspalette` binds, not only the ones the profile
+            # declares. `green`, `purple` and `orange` are bound in the .sty and
+            # are nowhere in ee66.yaml, so a corpus whose plots draw in
+            # `green!70!black` had its green remapped by a run that never
+            # mentioned green -- not on the colour screen, not in run.yaml.
             applied = {
                 name: value
-                for name in profile.colors.originals
+                for name in {**PALETTE_BINDINGS, **profile.colors.originals}
                 if (value := palette_value(name))
             }
             return {**applied, **self.overrides}

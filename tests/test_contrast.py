@@ -112,9 +112,20 @@ def test_palette_mode_applies_everything_without_being_asked():
     """
     assert ColorChoice().mode == "palette"
     assert ColorChoice().replacements(_profile()) == {
+        # the profile's own names
         "solutionColor": "#0000FF",
         "redish": "#CC0000",
         "blueish": "#6A0DAD",
+        # and xcolor's, which `\accesspalette` binds too and this profile never
+        # declares. A corpus drawing in `green!70!black` had its green remapped
+        # by a run that never mentioned green.
+        "red": "#CC0000",
+        "blue": "#0000FF",
+        "green": "#006600",
+        "purple": "#6A0DAD",
+        "orange": "#B35A00",
+        "solansColor": "#0000FF",
+        "answerColor": "#0000FF",
     }
 
 
