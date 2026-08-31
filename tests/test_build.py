@@ -1272,3 +1272,36 @@ def test_a_stale_copy_beside_the_driver_is_swept(tmp_path: Path):
 
     assert not stale.exists()
     assert (corpus / "latexally-core.sty").is_file()
+
+
+def test_a_second_edit_run_reconverts_instead_of_stacking():
+    r"""`edit` writes its preamble into the corpus, and the next run reads that
+    back: converting it again gave a second `\DocumentMetadata`, which is a hard
+    LaTeX error -- hit only on the second run, after the first was committed."""
+    from latexally.build import _reconverted
+    from latexally.texlex import TexSource
+
+    converted = (
+        "\\DocumentMetadata{lang=en-US,tagging=on}\n"
+        "\\AddToHook{file/ee16.sty/before}{\\csname latexallykepteestyproof\\endcsname}\n"
+        "\\documentclass[11pt]{article}\n"
+        "\\usepackage{../../../ee66}\n"
+        "\\makeatletter\\def\\input@path{{../../../}}\\makeatother\n"
+        "\\usepackage{latexally-ee16}\n"
+        "\\accessquestiontags\n"
+        "\\begin{document}\\end{document}\n"
+    )
+    assert _reconverted(TexSource(converted)).text == (
+        "\\documentclass[11pt]{article}\n"
+        "\\usepackage{../../../ee66}\n"
+        "\\begin{document}\\end{document}\n"
+    )
+
+
+def test_a_course_written_documentmetadata_is_not_touched():
+    """The one injected line a course could plausibly have written itself."""
+    from latexally.build import _reconverted
+    from latexally.texlex import TexSource
+
+    theirs = "\\DocumentMetadata{pdfversion=2.0}\n\\documentclass{article}\n"
+    assert _reconverted(TexSource(theirs)).text == theirs

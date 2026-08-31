@@ -377,6 +377,44 @@ BASELINE_SHIM = (
 )
 
 
+#: Every line this tool injects, and nothing else. `\DocumentMetadata` is the one
+#: line a course could plausibly have written itself, so it is only ever removed
+#: from a file that carries one of the others as well.
+_INJECTED = (
+    re.compile(r"\\AddToHook\{file/[^}]*\}\{[^\n]*latexallykept"),
+    re.compile(r"\\usepackage(?:\[[^\]]*\])?\{latexally-"),
+    re.compile(r"\\access(?:questiontags|setup|recolor)\b"),
+    re.compile(r"\\makeatletter\\def\\input@path\{\{(?:\.\./)+\}\}\\makeatother"),
+    re.compile(r"\\ifdefined\\pdfgentounicode\\pdfgentounicode=1\\fi"),
+)
+_METADATA = re.compile(r"\\DocumentMetadata\s*\{")
+
+
+def _reconverted(source: TexSource) -> TexSource:
+    r"""The driver as it was before any previous run of this tool converted it.
+
+    ``edit`` writes its preamble into the corpus, and the next run reads that
+    back as its input. Converting it again put a second ``\DocumentMetadata`` at
+    the top, which is a hard LaTeX error -- so the second `--edit` of an
+    assignment failed, and failed *after* the first had been committed, which is
+    the worst moment to discover it. Re-running is the normal way to pick up a
+    changed toggle, so it re-converts from the original instead: our own lines
+    come out, and the same run puts back whatever this run's options ask for.
+
+    Only lines this tool writes are removed, matched against the vocabulary it
+    writes them in -- ``latexally-*``, ``\access*``, its own ``\input@path``.
+    """
+    if not any(pattern.search(source.text) for pattern in _INJECTED):
+        return source
+    kept = [
+        line
+        for line in source.text.splitlines(keepends=True)
+        if not any(pattern.match(line.strip()) for pattern in _INJECTED)
+        and not _METADATA.match(line.strip())
+    ]
+    return TexSource("".join(kept), path=source.path, encoding=source.encoding)
+
+
 def inject(source: TexSource, lines: list[str]) -> str:
     """Return the driver text with the conversion lines added.
 
@@ -631,7 +669,7 @@ def materialise(
     source_dir = (root / assignment.path).resolve()
     lines = preamble_for(config, profile) if lines is None else lines
 
-    source = TexSource.from_path(source_dir / driver_name)
+    source = _reconverted(TexSource.from_path(source_dir / driver_name))
     if config.output.edits_sources:
         lines = _with_root_package_path(lines, assignment, source.text)
     converted = inject(source, lines)
