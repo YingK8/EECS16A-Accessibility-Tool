@@ -133,8 +133,8 @@ def _missing_inputs(path: Path, profile: Profile, name: str) -> list[Finding]:
         if stand_in is None:
             message = (
                 f"\\input target {target!r} does not exist anywhere in the "
-                "corpus; any build that reaches this file stops here with "
-                "'Emergency stop' and produces no PDF"
+                "corpus. Any build that reaches this file stops here with "
+                "'Emergency stop' and writes no PDF"
             )
             hint = (
                 "write the question, or delete the \\input. Nothing in the "
@@ -143,7 +143,7 @@ def _missing_inputs(path: Path, profile: Profile, name: str) -> list[Finding]:
             severity = Severity.ERROR
         elif stand_in.ambiguous:
             message = (
-                f"\\input target {target!r} does not exist; the build will "
+                f"\\input target {target!r} does not exist. The build will "
                 f"stand in {stand_in.used.name} from "
                 f"{stand_in.used.parent.parent.parent.name}, but the "
                 f"{len(stand_in.candidates)} banks that have it DISAGREE — it "
@@ -153,7 +153,7 @@ def _missing_inputs(path: Path, profile: Profile, name: str) -> list[Finding]:
             severity = Severity.ERROR
         else:
             message = (
-                f"\\input target {target!r} does not exist; the build will "
+                f"\\input target {target!r} does not exist. The build will "
                 f"stand in the copy from {stand_in.used.parent.parent.parent.name}"
             )
             hint = stand_in.fix
@@ -203,8 +203,8 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
             standard="PDF/UA-1",
             hint=(
                 "add \\DocumentMetadata{...} as the FIRST line, before "
-                "\\documentclass; without it the accessibility layer is inert and "
-                "the PDF is untagged while still compiling cleanly"
+                "\\documentclass. Without it the accessibility layer does "
+                "nothing. The document still compiles, and the PDF has no tags"
             ),
         )
 
@@ -235,7 +235,7 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
             "epsf image inclusion produces no Figure element and no alt text",
             match.start(),
             standard="PDF/UA-1, Matterhorn 13-004",
-            hint="convert \\epsffile to \\includegraphics so the graphic can be described",
+            hint="convert \\epsffile to \\includegraphics so you can describe the graphic",
         )
 
     for match in source.finditer(_LONGTABLE):
@@ -257,9 +257,9 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
             match.start(),
             standard="PDF/UA-1, Matterhorn 10/31",
             hint=(
-                "bitmap-era fonts such as cmdunh10 carry no ToUnicode map, so every "
-                "glyph set in them is unextractable and unspeakable regardless of "
-                "tagging; switch to an NFSS font family"
+                "bitmap-era fonts such as cmdunh10 carry no ToUnicode map. No "
+                "tool can extract or speak a glyph set in them, tagged or not. "
+                "Switch to an NFSS font family"
             ),
             font=font,
         )
@@ -553,9 +553,11 @@ def _darken_hint(
     return (
         f"darken to {proposed} ({ratio:.2f}:1) -- the smallest change to this "
         f"colour that reaches {threshold}:1, hue and saturation unchanged. "
-        "A converted build already remaps this at begindocument via "
-        "\\accesspalette, so this finding is about the SOURCE: the file still "
-        "fails on its own, under a bare pdflatex, with no tool in the loop."
+        "A converted build already fixes this -- \\accesspalette rebinds the "
+        "name at begindocument, and snaps anything spelled another way (a mix, "
+        "a custom name) to the same colour by hue -- so this finding is about "
+        "the SOURCE: the file still fails on its own, under a bare pdflatex, "
+        "with no tool in the loop."
     )
 
 
@@ -661,18 +663,17 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 rule="ALLY-SRC-042",
                 severity=Severity.ERROR,
                 message=(
-                    "line break immediately after display math; under tagging "
+                    "line break immediately after display math. Under tagging "
                     "this fails with \"There's no line here to end\""
                 ),
                 file=name,
                 line=source.line_of(match.start()),
                 standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                 hint=(
-                    "give the break a line to end -- \\mbox{}\\\\ -- which "
-                    "compiles and keeps the spacing. Measured: DELETING the "
-                    "break instead removes a blank line and repaginated "
-                    "sp26/hw/3 (0.42% of pixels), while \\mbox{} left it at "
-                    "0.002%"
+                    "give the break a line to end: \\mbox{}\\\\ compiles and "
+                    "keeps the spacing. Measured: a deleted break removes a "
+                    "blank line. It repaginated sp26/hw/3, 0.42% of pixels. "
+                    "\\mbox{} left it at 0.002%"
                 ),
             )
         )
@@ -689,21 +690,23 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                     rule="ALLY-SRC-040",
                     severity=Severity.ERROR,
                     message=(
-                        f"enumitem list options use {detail}; under tagging the "
+                        f"enumitem list options use {detail}. Under tagging the "
                         "counter reads zero for every item, so the numbering is "
-                        "wrong -- and with a non-starred counter it is wrong "
-                        "with no error in the log"
+                        "wrong. With a non-starred counter it is wrong and the "
+                        "log shows no error"
                     ),
                     file=name,
                     line=source.line_of(match.start()),
                     standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                     hint=(
-                        "set the label before the list, not in its options. Not "
-                        "\\labelenumi, which names a depth: 483 of this corpus's "
-                        "667 sites are two enumerates deep or more, and every "
-                        "question file is \\input inside the driver's own list. "
-                        "latexally-core provides \\AllyEnumLabel, which asks "
-                        "LaTeX for the depth; `doctor --tagging --fix` applies it"
+                        "set the label before the list, not in its options. Do "
+                        "not use \\labelenumi, which names a depth: 483 of the "
+                        "667 sites in this corpus are two enumerates deep or "
+                        "more. The driver \\inputs every question file inside "
+                        "its own list. latexally-core supplies \\AllyEnumLabel, "
+                        "which "
+                        "asks LaTeX for the depth. `doctor --tagging --fix` "
+                        "applies it"
                     ),
                 )
             )
@@ -713,17 +716,18 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 rule="ALLY-SRC-041",
                 severity=Severity.ERROR,
                 message=(
-                    "array or tabular nested inside a matrix environment; the "
+                    "array or tabular nested inside a matrix environment. The "
                     "table tagging module fails on this with 'Misplaced \\crcr'"
                 ),
                 file=name,
                 line=source.line_of(match.start()),
                 standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                 hint=(
-                    "invert the nesting -- \\left[ ... \\right] around the "
-                    "array -- and keep the array. Measured: 257 of this corpus's "
-                    "357 sites have a | in the column spec, so they are augmented "
-                    "matrices and deleting the array deletes the divider. "
+                    "invert the nesting: put \\left[ ... \\right] around the "
+                    "array and keep the array. Measured: 257 of the 357 sites "
+                    "in this corpus have a | in the column spec. Each is an "
+                    "augmented matrix, so a deleted array also removes the "
+                    "divider. "
                     "`latexally doctor --tagging --fix` does this"
                 ),
             )
@@ -734,18 +738,21 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 rule="ALLY-SRC-043",
                 severity=Severity.ERROR,
                 message=(
-                    "inline math opened with \\( and closed with $; tagging fails "
-                    "with 'Argument of \\__math_grab_inline:w has an extra }'"
+                    "inline math opened with \\( and closed with $. Under "
+                    "tagging the build fails with 'Argument of "
+                    "\\__math_grab_inline:w has an extra }'"
                 ),
                 file=name,
                 line=source.line_of(match.start()),
                 standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                 hint=(
                     "if the text between the delimiters is a formula, close it "
-                    "with \\). Read it first: 28 of this corpus's 30 sites are a "
-                    "literal ( written as \\( -- '\\(1) put 4 resistors' -- "
-                    "where reclosing the math swallows the paragraph. Untagged "
-                    "pdfLaTeX accepts either, so no ordinary build reports it"
+                    "with \\). Read it first: 28 of the 30 sites in this corpus "
+                    "are a literal ( written as \\(, such as '\\(1) put 4 "
+                    "resistors'. "
+                    "There, a closed formula swallows the paragraph. Untagged "
+                    "pdfLaTeX accepts either form, so no ordinary build reports "
+                    "it"
                 ),
             )
         )
@@ -768,15 +775,15 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 Finding(
                     rule="ALLY-SRC-045",
                     severity=Severity.ERROR,
-                    message=f"blank line inside {where} math; {effect}",
+                    message=f"blank line inside {where} math. {effect}",
                     file=name,
                     line=source.line_of(match.start()),
                     standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                     hint=(
-                        "delete the blank line. It was never valid -- untagged "
+                        "delete the blank line. It was never valid: untagged "
                         "pdfLaTeX reports \"Missing $ inserted\", recovers and "
-                        "still writes a PDF, which is why this has gone unnoticed. "
-                        "TeX ignores blank lines in math, so removing it changes "
+                        "still writes a PDF. That is why nobody saw it. TeX "
+                        "ignores blank lines in math, so the deletion changes "
                         "nothing on the page"
                     ),
                 )
@@ -789,7 +796,7 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                     rule="ALLY-SRC-046",
                     severity=Severity.ERROR,
                     message=(
-                        f"inline math holding only spacing ({body.strip()!r}); it "
+                        f"inline math holds only spacing ({body.strip()!r}). It "
                         "still becomes a tagged Formula, and no alt text can "
                         "describe a line break"
                     ),
@@ -797,7 +804,7 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                     line=source.line_of(start),
                     standard="broken source (not a WCAG or PDF/UA rule)",
                     hint=(
-                        "take the spacing out of the maths -- the dollars add "
+                        "take the spacing out of the math. The dollars add "
                         "nothing. Measured: the page is byte-identical either way"
                     ),
                 )
@@ -808,16 +815,16 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                     rule="ALLY-SRC-045",
                     severity=Severity.ERROR,
                     message=(
-                        "blank line inside inline math; this raises \"Missing $ "
-                        "inserted\" twice, tagged or not, and the formula is "
-                        "silently broken in two"
+                        "blank line inside inline math. This raises \"Missing $ "
+                        "inserted\" twice, tagged or not, and silently breaks "
+                        "the formula in two"
                     ),
                     file=name,
                     line=source.line_of(start),
                     standard="broken source (not a WCAG or PDF/UA rule)",
                     hint=(
-                        "delete the blank line. TeX ignores blank lines in maths, "
-                        "so removing it changes nothing on the page"
+                        "delete the blank line. TeX ignores blank lines in math, "
+                        "so the deletion changes nothing on the page"
                     ),
                 )
             )
@@ -827,17 +834,17 @@ def _tagging_incompatibilities(source: TexSource, name: str) -> list[Finding]:
                 rule="ALLY-SRC-044",
                 severity=Severity.ERROR,
                 message=(
-                    "forced line break immediately after a question macro; with "
-                    "question H2 tags on the heading has already ended the "
-                    "paragraph and this fails with \"There's no line here to end\""
+                    "forced line break immediately after a question macro. With "
+                    "question H2 tags on, the heading already ended the "
+                    "paragraph. This fails with \"There's no line here to end\""
                 ),
                 file=name,
                 line=source.line_of(match.start()),
                 standard="latex-lab limitation (not a WCAG or PDF/UA rule)",
                 hint=(
-                    "delete the \\newline -- the heading supplies the break "
-                    "itself; turning question tags off also clears it, at the "
-                    "cost of the H2 that makes questions navigable"
+                    "delete the \\newline. The heading supplies the break "
+                    "itself. You can also turn question tags off, but then you "
+                    "lose the H2 that makes questions navigable"
                 ),
             )
         )
@@ -861,7 +868,7 @@ _LOG_PATTERNS: tuple[tuple[str, str, str, str, str], ...] = (
         r"There are still open structures on the stack",
         Severity.ERROR,
         "structure stack left open at end of document",
-        "a \\tagstructbegin without its matching end; the tag tree is corrupt",
+        "a \\tagstructbegin without its matching end. The tag tree is corrupt",
     ),
     (
         "ALLY-LOG-004",
@@ -882,7 +889,7 @@ _LOG_PATTERNS: tuple[tuple[str, str, str, str, str], ...] = (
         r"LaTeX-lab package '([^']+)' not found",
         Severity.ERROR,
         "a requested testphase module is not installed",
-        "the build continued and produced an UNTAGGED PDF; run latexally doctor",
+        "the build continued and wrote an UNTAGGED PDF. Run latexally doctor",
     ),
     #: ALLY-LOG-007 is NOT here. It used to be, matching
     #: `WARNING: mathml missing for hash`, and it was wrong on every clean
@@ -931,8 +938,8 @@ def check_log(log_path: Path) -> list[Finding]:
                 file=str(log_path),
                 standard="PDF/UA-1",
                 hint=(
-                    "this is the cheapest and most important check there is -- the "
-                    "document compiled cleanly and produced an untagged PDF"
+                    "this is the cheapest and most important check there is. The "
+                    "document compiled cleanly and wrote an untagged PDF"
                 ),
             )
         )
@@ -989,9 +996,10 @@ def _mathml_findings(text: str, log_path: Path) -> list[Finding]:
             file=str(log_path),
             standard="WCAG 1.1.1; Matterhorn 17",
             hint=(
-                "the speech in /Alt still reaches a reader; what is missing is "
-                "the MathML attachment a reader may prefer. Check the math "
-                "conversion stage ran -- `<jobname>-mathml.html` beside the PDF"
+                "the speech in /Alt still reaches a reader. The document has "
+                "no MathML attachment, which some readers prefer. Make sure the "
+                "math conversion stage ran and wrote `<jobname>-mathml.html` "
+                "beside the PDF"
             ),
             data={"found": found, "attached": attached},
         )
@@ -1054,8 +1062,9 @@ def _bookmark_navigation(structure, name: str) -> list[Finding]:
                 file=name,
                 standard="WCAG 2.1 AA SC 2.4.5 (technique PDF2)",
                 hint=(
-                    "an outline entry needs an anchor at the heading; "
-                    "\\bookmark[dest=...] only references one, \\pdfbookmark creates it"
+                    "an outline entry needs an anchor at the heading. "
+                    "\\bookmark[dest=...] only references one. \\pdfbookmark "
+                    "creates it"
                 ),
             )
         )
@@ -1089,8 +1098,8 @@ def _bookmark_navigation(structure, name: str) -> list[Finding]:
                     file=name,
                     standard="WCAG 2.1 AA SC 2.4.5",
                     hint=(
-                        "the destinations were created somewhere other than at the "
-                        "headings -- check that each heading places its own anchor"
+                        "something created the destinations away from the "
+                        "headings. Make sure each heading places its own anchor"
                     ),
                 )
             )
@@ -1155,9 +1164,10 @@ def _typeset_internals(pdf_path: Path, name: str) -> list[Finding]:
                     line=number,
                     standard="broken output (not a WCAG or PDF/UA rule)",
                     hint=(
-                        "a package redefined a command in a way LaTeX's command "
-                        "hooks then broke; the text is drawn on the page and read "
-                        "aloud. See the ulem note in latexally-core.sty"
+                        "a package redefined a command, and then the LaTeX "
+                        "command hooks broke it. The text stays on the page and "
+                        "a reader "
+                        "speaks it. latexally-core reinstates \\emph for ulem"
                     ),
                     data={"context": " ".join(text[start : match.end() + 40].split())},
                 )
@@ -1253,7 +1263,7 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
                     f"Figure /Alt is a file name: {figure.alt[:60]!r}",
                     file=name,
                     standard="PDF/UA-1, Matterhorn 13-004",
-                    hint="latex-lab uses the file name as its default alt; describe the image",
+                    hint="latex-lab uses the file name as its default alt. Describe the image",
                 )
             )
         if figure.actual_text:
@@ -1289,8 +1299,10 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
                     file=name,
                     standard="WCAG 2.1 A SC 1.1.1, PDF/UA-1",
                     hint=(
-                        "this is latex-lab's default template; a reader announces it "
-                        "character by character while veraPDF reports the file clean"
+                        "this is the default template of latex-lab. A reader "
+                        "announces it character by character, but veraPDF "
+                        "reports the file "
+                        "clean"
                     ),
                 )
             )
@@ -1361,9 +1373,9 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
                 file=name,
                 standard="WCAG 2.1 AA SC 2.4.5 (technique PDF2)",
                 hint=(
-                    "tagging never writes /Outlines -- load the bookmark package; "
-                    "PDF/UA does not require an outline but WCAG expects one for "
-                    "multi-page documents"
+                    "tagging never writes /Outlines, so load the bookmark "
+                    "package. PDF/UA does not require an outline, but WCAG "
+                    "expects one for multi-page documents"
                 ),
             )
         )
@@ -1402,10 +1414,10 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
                     standard="WCAG 1.1.1",
                     hint=(
                         "the artifact mechanism hides this from readers that walk "
-                        "the tag tree, but a reader that extracts text by position "
-                        "-- macOS Preview among them -- announces it anyway, and "
-                        "tagpdf's artifact API cannot carry /ActualText to stop it; "
-                        "describe the figure instead of marking it decorative"
+                        "the tag tree. A reader that extracts text by position, "
+                        "such as macOS Preview, announces it anyway. The tagpdf "
+                        "artifact API cannot carry /ActualText to stop it. "
+                        "Describe the figure. Do not mark it decorative"
                     ),
                     data={"text": region.text[:100]},
                 )
@@ -1429,8 +1441,8 @@ def check_pdf_structure(pdf_path: Path, *, require_bookmarks: bool = True) -> li
                         line=page + 1,
                         standard="PDF/UA-1",
                         hint=(
-                            "the alt-only region opened after its content was already "
-                            "typeset; open the Figure before the body, not after"
+                            "the alt-only region opened after LaTeX typeset its "
+                            "content. Open the Figure before the body, not after"
                         ),
                         data={"text": region.text[:100]},
                     )

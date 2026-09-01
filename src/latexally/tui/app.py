@@ -760,19 +760,20 @@ class ColorsScreen(StepScreen):
         colors = self.profile.colors
         if self.config.colors.mode == "palette":
             return (
-                "Every colour below is already remapped — this screen is here to "
-                f"reject one, not to approve them. Floor is "
+                "The palette already remapped every colour below. This screen "
+                "is here to reject one, not to approve them. The floor is "
                 f"{colors.min_contrast_normal}:1 on {colors.background} "
                 "(WCAG 1.4.3 AA). * marks a row you changed. "
-                "↑ ↓ to a row, then k to keep the course original, u to undo "
-                "that, e to type your own hex. The dim rows are what a picture "
-                "draws in: a line sits beside black axes, so those are measured "
-                "against the page AND the ink, 3:1 on both (WCAG 1.4.11)."
+                "Use ↑ ↓ to select a row. Then press k to keep the course "
+                "original, u to undo that, or e to type your own hex. One "
+                "colour per hue serves prose and drawings alike. Each clears "
+                "the floor on the page. Each also clears 3:1 against the black "
+                "axes beside a line (WCAG 1.4.11)."
             )
         return (
-            f"Floor is {colors.min_contrast_normal}:1 on {colors.background} "
+            f"The floor is {colors.min_contrast_normal}:1 on {colors.background} "
             "(WCAG 1.4.3 AA). * marks a colour you set by hand. "
-            "↑ ↓ to a row, then u, k, or e to type your own hex."
+            "Use ↑ ↓ to select a row. Then press u, k, or e to type your own hex."
         )
 
     def body(self) -> Iterator[Widget]:

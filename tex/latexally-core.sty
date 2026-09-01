@@ -38,34 +38,34 @@
 \msg_new:nnnn { latexally } { alt-empty }
   { Empty~alt~text~for~a~#1. }
   {
-    A~Figure~structure~element~with~an~empty~/Alt~is~a~PDF/UA-1~failure~
+    An~empty~/Alt~on~a~Figure~element~is~a~PDF/UA-1~failure~
     (Matterhorn~13-004),~not~an~exemption.~If~this~graphic~is~decorative,~use~
-    the~Decorative~environment~instead,~which~marks~it~as~an~artifact.
+    the~Decorative~environment.~It~marks~the~graphic~as~an~artifact.
   }
 
 \msg_new:nnnn { latexally } { alt-placeholder }
   { Unfilled~alt-text~placeholder:~'#1'. }
   {
-    A~placeholder~would~ship~into~the~PDF~as~real~/Alt~text.~A~screen~reader~
-    would~announce~it~verbatim,~and~-- worse -- the~document~would~PASS~a~naive~
-    "every~Figure~has~/Alt"~check~and~veraPDF,~producing~a~silent~false~
-    conformance~claim.~Fill~in~the~description~before~building.
+    A~placeholder~goes~into~the~PDF~as~real~/Alt~text.~A~screen~reader~
+    announces~it~word~for~word.~Worse,~the~document~then~PASSES~a~naive~
+    "every~Figure~has~/Alt"~check~and~veraPDF.~That~is~a~silent~false~
+    conformance~claim.~Write~the~description~before~you~build.
   }
 
 \msg_new:nnnn { latexally } { alt-is-filename }
   { Alt~text~looks~like~a~file~name:~'#1'. }
   {
-    Announcing~"vehicle~setup~dot~pdf"~tells~a~student~nothing.~Describe~what~
-    the~graphic~shows.~Note~that~latex-lab~uses~the~file~name~as~its~DEFAULT~
-    alt~text,~so~this~check~also~catches~figures~you~forgot~to~describe.
+    A~reader~that~says~"vehicle~setup~dot~pdf"~tells~a~student~nothing.~
+    Describe~what~the~graphic~shows.~latex-lab~uses~the~file~name~as~its~
+    DEFAULT~alt~text,~so~this~check~also~finds~figures~with~no~description.
   }
 
 \msg_new:nnnn { latexally } { alt-has-markup }
   { Alt~text~contains~LaTeX~markup:~'#1'. }
   {
-    /Alt~is~a~plain~PDF~string,~expanded~once~and~hex-encoded.~A~screen~reader~
-    announces~$\frac{1}{2}$~as~"dollar~backslash~f-r-a-c~one~two~dollar".~
-    Write~plain~words:~"one~half".
+    /Alt~is~a~plain~PDF~string.~LaTeX~expands~it~once~and~hex-encodes~it.~A~
+    screen~reader~announces~$\frac{1}{2}$~as~"dollar~backslash~f-r-a-c~one~
+    two~dollar".~Write~plain~words:~"one~half".
   }
 
 \msg_new:nnnn { latexally } { described-broken }
@@ -73,15 +73,15 @@
   {
     A~marked-content~sequence~cannot~cross~a~page~boundary,~so~a~Described~body~
     must~fit~on~one~page.~Split~the~region,~or~use~the~starred~form~
-    \string\begin{Described*}~and~verify~the~resulting~tag~tree.
+    \string\begin{Described*}.~Then~examine~the~tag~tree.
   }
 
 \msg_new:nnnn { latexally } { no-bookmarks }
-  { No~bookmark~mechanism~is~available;~this~PDF~will~have~no~outline. }
+  { No~bookmark~mechanism~is~available.~This~PDF~will~have~no~outline. }
   {
     Tagging~never~writes~/Outlines,~so~bookmarks~need~hyperref~or~the~bookmark~
-    package.~Neither~is~loaded,~so~every~heading~registered~by~this~package~has~
-    been~silently~discarded.~WCAG~2.1~AA~expects~an~outline~for~multi-page~
+    package.~This~document~loads~neither,~so~this~package~discarded~every~
+    heading~it~registered.~WCAG~2.1~AA~expects~an~outline~for~multi-page~
     documents~(SC~2.4.5,~technique~PDF2).~Add~\string\usepackage{bookmark}~to~
     the~preamble.
   }
@@ -89,17 +89,17 @@
 \msg_new:nnnn { latexally } { bookmarks-not-clickable }
   { Bookmarks~have~no~destinations~and~will~not~navigate. }
   {
-    An~outline~entry~needs~an~ANCHOR~at~the~heading,~and~only~hyperref~provides~
-    one~(\string\pdfbookmark).~With~the~bookmark~package~alone~the~entries~are~
-    written~but~point~nowhere,~so~clicking~one~does~nothing.~Load~hyperref.
+    An~outline~entry~needs~an~ANCHOR~at~the~heading,~and~only~hyperref~gives~
+    one~(\string\pdfbookmark).~With~the~bookmark~package~alone,~the~entries~
+    point~nowhere.~A~click~on~one~does~nothing.~Load~hyperref.
   }
 
 \msg_new:nnnn { latexally } { heading-level }
-  { Heading~level~#1~follows~level~#2,~skipping~a~level. }
+  { Heading~level~#1~comes~after~level~#2~and~skips~a~level. }
   {
-    Skipped~heading~levels~are~a~machine-testable~PDF/UA~failure~
-    (Matterhorn~14-003)~and~break~outline~navigation.~Insert~the~missing~level~
-    or~renumber.
+    A~skipped~heading~level~is~a~machine-testable~PDF/UA~failure~
+    (Matterhorn~14-003)~and~breaks~outline~navigation.~Insert~the~missing~
+    level,~or~renumber.
   }
 
 %% 2. Alt-text validation
@@ -153,7 +153,6 @@
 
 \box_new:N \l__access_described_box
 
-%% The text layer
 \bool_new:N \g__access_textlayer_bool
 
 \cs_new_protected:Npn \__access_text_layer:n #1
@@ -439,19 +438,30 @@
 
 %% 9. Colour
 
-\definecolor { allyBlue }   { HTML } { 0000FF } % 8.59:1  hue 240, pure
-\definecolor { allyRed }    { HTML } { CC0000 } % 5.89:1  hue 0
-\definecolor { allyGreen }  { HTML } { 006600 } % 7.24:1  hue 120
-\definecolor { allyPurple } { HTML } { 6A0DAD } % 9.24:1  hue 275
-\definecolor { allyOrange } { HTML } { B35A00 } % 4.80:1  hue 30
+\definecolor { allyBlue }   { HTML } { 1754FF } % 5.60 page / 3.75 ink, hue 227
+\definecolor { allyRed }    { HTML } { D20000 } % 5.61 page / 3.74 ink, hue 0
+\definecolor { allyGreen }  { HTML } { 007900 } % 5.62 page / 3.73 ink, hue 120
+\definecolor { allyPurple } { HTML } { B800B8 } % 5.63 page / 3.73 ink, hue 300
+\definecolor { allyOrange } { HTML } { A55000 } % 5.60 page / 3.75 ink, hue 29
 
 \colorlet { allySolution } { allyBlue }
 \colorlet { allyAnswer }   { allyBlue }
 \colorlet { allyWarning }  { allyRed }
 \colorlet { allyAccent }   { allyPurple }
 
+\NewDocumentCommand \accessinheritlinkcolor { }
+  {
+    \cs_if_exist:NT \hypersetup
+      {
+        \keys_if_exist:nnTF { hyp } { colorlink }
+          { \hypersetup { colorlink = false } }
+          { \hypersetup { linkcolor = . } }
+      }
+  }
+
 \NewDocumentCommand \accessconformingcolors { }
   {
+    \accessinheritlinkcolor
     \__access_recolor:nn { solutionColor } { allySolution }
     \__access_recolor:nn { solansColor }   { allySolution }
     \__access_recolor:nn { answerColor }   { allyAnswer }
@@ -464,6 +474,7 @@
 
 \NewDocumentCommand \accesspalette { }
   {
+    \accessinheritlinkcolor
     \__access_recolor:nn { solutionColor } { allyBlue }
     \__access_recolor:nn { solansColor }   { allyBlue }
     \__access_recolor:nn { answerColor }   { allyBlue }
@@ -474,61 +485,138 @@
     \colorlet { green }  { allyGreen }
     \colorlet { purple } { allyPurple }
     \colorlet { orange } { allyOrange }
-    \accessinkhooks
+    \accesssnapcolors
   }
 
-%% 9b. Drawing colours
+%% 9b. One colour per hue, whatever the source spelled it
 
-%% Text and drawings do not sit next to the same thing. Body text sits on the
-%% page, so the palette above is tuned to 4.5:1 against white. A plotted line
-%% sits beside BLACK axes, and WCAG 1.4.11 asks 3:1 of it against every adjacent
-%% colour -- the page AND that ink. A colour tuned only to the page fails the
-%% other side: allyGreen is 7.24:1 on white but 2.90:1 on black, and a document
-%% that darkens it again -- `green!70!black', which questionBank/sec/1 really
-%% draws with -- lands at 1.90:1, indistinguishable from the axes.
-%%
-%% Same hues, moved in OKLCH lightness to the point that maximises the WORST of
-%% three measurements: against the page, against black ink, and against black
-%% ink after a `!70!black' mix. Each clears 3:1 on all three. Derived with
-%% coloraide; tests/test_contrast.py re-derives them and fails on a hand edit.
-\definecolor { allyInkBlue }    { HTML } { 4E84FF } % 3.47 page / 6.06 ink / 3.35 mixed
-\definecolor { allyInkRed }     { HTML } { FF4233 } % 3.45 / 6.08 / 3.32
-\definecolor { allyInkGreen }   { HTML } { 00A300 } % 3.36 / 6.24 / 3.41
-\definecolor { allyInkOrange }  { HTML } { DA6C00 } % 3.42 / 6.14 / 3.38
-\definecolor { allyInkPurple }  { HTML } { F54C6A } % 3.44 / 6.10 / 3.35
-\definecolor { allyInkMagenta } { HTML } { F500F5 } % 3.40 / 6.18 / 3.33
-\definecolor { allyInkTeal }    { HTML } { 339B9A } % 3.35 / 6.26 / 3.44
-
-%% Three names are deliberately NOT bound, because a legible version of them is
-%% not the same colour any more:
-%%
-%%   yellow  its legible form is #8F8F00, whose nearest CSS name is `olive'.
-%%           Yellow needs its lightness to be yellow; darkening it to clear the
-%%           page turns it green-brown, so it is left alone and reported.
-%%   cyan    its legible form is 1.9 dE2000 from teal's -- one colour, two
-%%           names -- and teal is the word this corpus draws with.
-%%   gray    achromatic and used for grid lines, where being faint is the point.
-\NewDocumentCommand \accessinkpalette { }
+\clist_const:Nn \c__access_snap_skip_clist
   {
-    \colorlet { blue }    { allyInkBlue }
-    \colorlet { red }     { allyInkRed }
-    \colorlet { green }   { allyInkGreen }
-    \colorlet { orange }  { allyInkOrange }
-    \colorlet { purple }  { allyInkPurple }
-    \colorlet { magenta } { allyInkMagenta }
-    \colorlet { teal }    { allyInkTeal }
+    . , mapped~color , pgfshadetemp , pgf@tempcolor ,
+    tikz@axis@top , tikz@axis@middle , tikz@axis@bottom ,
+    tikz@ball , tikz@radial@inner , tikz@radial@outer
   }
 
-%% `begin', not `before': the hook then runs inside the environment's group, so
-%% the drawing palette lasts exactly as long as the drawing and the prose around
-%% it keeps the text palette. circuitikz and pgfpicture are listed because a
-%% document can open either without a tikzpicture around it; a pgfplots `axis'
-%% always sits inside one.
-\NewDocumentCommand \accessinkhooks { }
+\bool_new:N \g__access_snap_bool
+\tl_new:N \l__access_snap_spec_tl
+\tl_new:N \l__access_snap_rgb_tl
+\tl_new:N \l__access_snap_bin_tl
+\fp_new:N \l__access_snap_hue_fp
+
+\cs_new_protected:Npn \__access_snap_bin:nn #1#2
   {
-    \AddToHook { env/tikzpicture/begin } { \accessinkpalette }
-    \AddToHook { env/circuitikz/begin }  { \accessinkpalette }
-    \AddToHook { env/pgfpicture/begin }  { \accessinkpalette }
+    \tl_clear:N \l__access_snap_bin_tl
+    \str_if_eq:nnF {#1} { named }
+      {
+        \convertcolorspec {#1} {#2} { rgb } \l__access_snap_rgb_tl
+        \exp_after:wN \__access_snap_bin:w \l__access_snap_rgb_tl \q_stop
+      }
+  }
+
+\cs_new_protected:Npn \__access_snap_bin:w #1 , #2 , #3 \q_stop
+  {
+    \fp_compare:nNnT { max(#1,#2,#3) - min(#1,#2,#3) } > { 0.10 }
+      {
+        %% HSV hue, the three-case form, so no atan and no model conversion
+        %% beyond the rgb one xcolor already did.
+        \fp_set:Nn \l__access_snap_hue_fp
+          {
+            60 * (
+              ( #1 >= #2 ) && ( #1 >= #3 )
+                ? ( ( #2 - #3 ) / ( max(#1,#2,#3) - min(#1,#2,#3) ) + 6 )
+                : ( #2 >= #3
+                      ? ( ( #3 - #1 ) / ( max(#1,#2,#3) - min(#1,#2,#3) ) + 2 )
+                      : ( ( #1 - #2 ) / ( max(#1,#2,#3) - min(#1,#2,#3) ) + 4 )
+                  )
+            )
+          }
+        \fp_compare:nNnF \l__access_snap_hue_fp < { 360 }
+          { \fp_sub:Nn \l__access_snap_hue_fp { 360 } }
+        \tl_set:Nx \l__access_snap_bin_tl
+          {
+            \fp_compare:nNnTF \l__access_snap_hue_fp < { 20 } { red }
+              {
+                \fp_compare:nNnTF \l__access_snap_hue_fp < { 70 } { orange }
+                  {
+                    \fp_compare:nNnTF \l__access_snap_hue_fp < { 165 } { green }
+                      {
+                        \fp_compare:nNnTF \l__access_snap_hue_fp < { 265 } { blue }
+                          {
+                            \fp_compare:nNnTF \l__access_snap_hue_fp < { 345 }
+                              { purple } { red }
+                          }
+                      }
+                  }
+              }
+          }
+      }
+  }
+
+\cs_new_protected:Npn \__access_snap:n #1
+  {
+    \clist_if_in:NnF \c__access_snap_skip_clist {#1}
+      {
+        \extractcolorspec {#1} \l__access_snap_spec_tl
+        \exp_after:wN \__access_snap_bin:nn \l__access_snap_spec_tl
+        \tl_if_empty:NF \l__access_snap_bin_tl
+          { \exp_args:NnV \colorlet {#1} \l__access_snap_bin_tl }
+      }
+  }
+
+\cs_new_protected:Npn \__access_orig_undeclared:nn #1#2 { }
+\cs_new_protected:Npn \__access_orig_declared: { }
+\cs_new_protected:Npn \__access_orig_colorlet:nn #1#2 { }
+
+\cs_new_protected:Npn \__access_snap_undeclared:nn #1#2
+  {
+    \__access_snap_bin:nn {#1} {#2}
+    \tl_if_empty:NTF \l__access_snap_bin_tl
+      { \__access_orig_undeclared:nn {#1} {#2} }
+      {
+        \exp_args:NV \extractcolorspec \l__access_snap_bin_tl \l__access_snap_spec_tl
+        \exp_after:wN \__access_orig_undeclared:nn \l__access_snap_spec_tl
+      }
+  }
+
+\cs_new_protected:Npn \__access_snap_declared:
+  { \exp_args:NV \__access_snap_declared:n \XC@@tmp }
+
+\cs_new_protected:Npn \__access_snap_declared:n #1
+  {
+    \clist_if_in:NnF \c__access_snap_skip_clist {#1}
+      {
+        \extractcolorspec {#1} \l__access_snap_spec_tl
+        \exp_after:wN \__access_snap_bin:nn \l__access_snap_spec_tl
+        \tl_if_empty:NF \l__access_snap_bin_tl
+          { \tl_set_eq:NN \XC@@tmp \l__access_snap_bin_tl }
+      }
+    \__access_orig_declared:
+  }
+
+\cs_new_protected:Npn \__access_snap_colorlet:nn #1#2
+  { \__access_orig_colorlet:nn {#1} {#2} \__access_snap:n {#1} }
+
+\NewDocumentCommand \accesssnapcolors { }
+  {
+    \bool_if:NF \g__access_snap_bool
+      {
+        \bool_gset_true:N \g__access_snap_bool
+        \cs_if_exist:NT \pgfutil@colorlet
+          {
+            \cs_set_eq:NN \__access_orig_colorlet:nn \pgfutil@colorlet
+            \cs_set_eq:NN \pgfutil@colorlet \__access_snap_colorlet:nn
+          }
+        \cs_if_exist:NT \XC@undeclaredcolor
+          {
+            \cs_set_eq:NN \__access_orig_undeclared:nn \XC@undeclaredcolor
+            \cs_set_eq:NN \XC@undeclaredcolor \__access_snap_undeclared:nn
+          }
+        \cs_if_exist:NT \XC@declaredc@lor
+          {
+            \cs_set_eq:NN \__access_orig_declared: \XC@declaredc@lor
+            \cs_set_eq:NN \XC@declaredc@lor \__access_snap_declared:
+          }
+      }
   }
 
 \NewDocumentCommand \accessrecolor { m m }

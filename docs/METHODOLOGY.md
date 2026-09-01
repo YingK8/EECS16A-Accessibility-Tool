@@ -1151,6 +1151,11 @@ edits at all across roughly 2,000 figure-bearing files. Measured on
 `conforming` survives as the narrower mode, for a document whose figures must
 keep the exact hues they were drawn in.
 
+> Superseded by §13. The values above were the text palette; a second, lighter
+> set for drawings followed it, and §13.5 collapses both into one. The reasoning
+> stands — it is what makes clear why one value per hue was not possible until
+> mixes were snapped.
+
 ### 12.4 What this does not fix
 
 A figure that encodes meaning in hue alone — `fill=red` against `fill=green`
@@ -1163,3 +1168,129 @@ editing the drawings, and that is the next piece of work, not this one.
 document that only conforms with a tool in the loop still fails under a bare
 `pdflatex`. The hint now says so, so the finding reads as a statement about the
 source rather than a contradiction of the build.
+
+## 13. One colour per hue, whatever the source spelled it
+
+### 13.1 What §12 could not reach
+
+Binding a name reaches a drawing only when the drawing spells its colour as that
+name. Counted across the corpus, it mostly does not. Blue arrives 27 ways:
+
+| spelling | uses | why it escaped |
+|---|---|---|
+| `blue` | 10,673 | bound, and the only one that was |
+| `cyan` | 304 | never bound. §12 read its legible form as teal's |
+| `steelblue31119180` | 294 | declared by a matplotlib pgfplots export |
+| `blue!40!black` | 178 | a mix, so there is no name to bind |
+| `lightblue` | 162 | a course `\definecolor` |
+| `cyan!70!blue` | 119 | a mix of two names, one of them unbound |
+| `blue!20`, `blue!20!white`, `blue!10`, `blue!15` | 275 | washes |
+| `mydarkblue`, `skyblue`, `blue!50!black`, … | ~100 | the tail |
+
+Green arrives 14 ways, three of them mixes written from the other end —
+`black!45!green` (243), `black!60!green` (144), `black!30!green` (20) — which
+sort nowhere near `green` in any text search.
+
+A mix is worse than a miss. `blue!40!black` resolves *through* the rebound
+`blue`, so §12's binding is itself what made it land on a different blue than the
+plain `blue` line beside it. The report that started this work — "the graph blues
+are inconsistent" — was a report about the fix.
+
+### 13.2 Snapping, and where it hooks
+
+So the palette stops asking for a colour's name and asks for its hue instead.
+The hook reads every colour back as rgb when the document selects it. If the
+colour has any chroma, the hook rebinds it to the **name** of its hue bin. A
+name, not a value, so it takes whatever that name holds. Snapping the mixes is also what let
+the two palettes collapse into one (§13.5).
+
+    chroma < 0.10    left alone: black, white, gray!40, black!80, darkgray176
+    hue [345,20) red   [20,70) orange   [70,165) green
+        [165,265) blue         [265,345) purple
+
+Three hooks, because a colour reaches the page three ways:
+
+| hook | catches |
+|---|---|
+| `\pgfutil@colorlet` | every drawing colour: stroke, fill, text, marks, pgfplots |
+| `\XC@undeclaredcolor` | prose expressions — `\textcolor{red!60}`, `\columncolor{blue!20}`, `\color[rgb]{…}` |
+| `\XC@declaredc@lor` | prose plain names — `\color{steelblue31119180}`, `\color{cyan}` |
+
+The drawing hook is deliberately **not** pgf's own `\applycolormixins`. pgf calls
+that from `\pgfsetstrokecolor` and friends, but tikz sends a bare colour word or
+a mix — `\draw[cyan]`, `\fill[blue!40!black]`, which is how this corpus writes
+nearly all of them — through its `.unknown` key to `\tikz@compat@color@set`
+(`tikz.code.tex:1690`), which sets the colour with a plain `\pgfutil@colorlet`
+and never calls the mixin hook at all. Measured on a compiled page: with
+`\applycolormixins` hooked, `\draw[steelblue31119180]` still came out #1F77B4.
+`\pgfutil@colorlet` is what all of those paths do have in common.
+
+A flag stops a second installation. A second one would save our own patched
+version as the original, and the next colour would recurse until TeX ran out of
+stack.
+
+### 13.3 Five tokens, and the one that moved
+
+Seven drawing tokens become five: `cyan` and `teal` land on blue, `magenta` and
+`violet` on purple, `yellow` and `gold` on orange.
+
+The purple token is magenta's legible form, not purple's. The most legible form
+of xcolor `purple` is #F54C6A, which measures at **hue 349**: inside the red bin,
+and 6.1 dE2000 from the red token. A bin whose own token snaps into a different
+bin is not a bin. Every token now sits inside its own, so a second pass changes
+nothing. `tests/test_contrast.py` asserts it.
+
+Measured end to end, in `tests/test_style_fidelity.py`: nine blue lines and three
+blue fills, spelled nine different ways, come out of the PDF as one colour, with
+black, `gray!40` and `darkgray176` untouched beside them.
+
+### 13.4 What this costs, and what it still does not fix
+
+A wash snaps to full strength. `blue!20` is ~1.2:1 on white, so a wash that
+carries meaning fails 1.4.11 while it stays pale. The tokens clear 3.7:1 against
+black ink, so labels and axes inside a filled region stay legible once it is
+solid. The cost is a pale fill bounded by a same-hue stroke, which
+becomes one colour and loses its boundary — `fa26` has four tint uses in total,
+and `\columncolor` is colortbl rather than pgf, so it does not reach the hook.
+
+Collapsing cyan into blue removes a distinction from any figure that told two
+series apart by hue alone. That figure was already a 1.4.1 failure, for the
+reason §12.4 gives: darker is not distinguishable, and neither is bluer.
+
+A shading and a colormap are gradients, and five flat colours destroy what they
+are for. The hook skips the names pgf routes them through: `mapped color`,
+`pgfshadetemp`, `tikz@axis@middle` and the rest. `fa26` has no `\shade` and no
+`colormap`, so this is insurance rather than a measurement.
+
+### 13.5 Two palettes become one
+
+Snapping the mixes had a consequence §12 could not have: it made the second
+palette unnecessary.
+
+The first build after §13.2 still showed two blues on `fa26/dis/01A`: 190 text
+spans and 63 table rules at #0000FF, 54 plotted strokes at #4E84FF — and that was
+the palette working as designed. §12 had split it deliberately: text sits on the
+page and wants 4.5:1 against it, a plotted line sits beside black axes and WCAG
+1.4.11 wants 3:1 against those, and no single value cleared both **once a
+document re-darkened it with `green!70!black`**. That mix is what forced the two
+sets apart. §13 snaps mixes, so it is gone.
+
+Re-derived against the two floors that remain — hold the primary's OKLCH hue and
+chroma, move lightness to maximise `min(page/4.5, ink/3.0)`:
+
+| token | hex | on the page | on black ink |
+|---|---|---|---|
+| `allyBlue` | #1754FF | 5.60:1 | 3.75:1 |
+| `allyRed` | #D20000 | 5.61:1 | 3.74:1 |
+| `allyGreen` | #007900 | 5.62:1 | 3.73:1 |
+| `allyPurple` | #B800B8 | 5.63:1 | 3.73:1 |
+| `allyOrange` | #A55000 | 5.60:1 | 3.75:1 |
+
+Every one clears AA for text and 1.4.11 for a line, with the same ~25% margin
+over each. `\accessinkpalette`, `\accessinkhooks` and the `env/tikzpicture/begin`
+hooks are gone. There is no second palette to install, so a picture needs no
+hook, and the colour it inherits from the prose around it is already right.
+
+The values carry the cost: blue on the page was 8.59:1 and is now 5.60:1.
+Rebuilt, `fa26/dis/01A` reads one blue: 190 text spans and 117 strokes, all
+#1754FF. Red reads #D20000, green #007900, and the black rules do not move.

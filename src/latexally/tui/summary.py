@@ -210,38 +210,6 @@ def color_rows(profile: Profile, config: RunConfig) -> list[list[Text]]:
     return rows
 
 
-def ink_rows(config: RunConfig) -> list[list[Text]]:
-    """What each name draws as inside a picture, when the palette is on.
-
-    A separate set of rows because they answer a different question. Text sits
-    on the page; a plotted line sits beside black axes, and the ink colours are
-    the ones that clear 3:1 against both -- so the contrast shown here is the
-    pair, not the single ratio the text rows carry.
-    """
-    from ..check.contrast import INK_BINDINGS, contrast_ratio, ink_value
-
-    if config.colors.mode != "palette":
-        return []
-    rows: list[list[Text]] = []
-    for name in INK_BINDINGS:
-        ink = ink_value(name)
-        page = contrast_ratio(hex_to_rgb(ink), (1.0, 1.0, 1.0))
-        against = contrast_ratio(hex_to_rgb(ink), (0.0, 0.0, 0.0))
-        rows.append(
-            [
-                Text.from_markup(f"[dim]{name} in drawings[/]"),
-                Text.from_markup(f"[dim]{original_for_xcolor(name)}[/]"),
-                Text.from_markup(swatch(original_for_xcolor(name))),
-                Text.from_markup("[dim]—[/]"),
-                Text("→"),
-                Text.from_markup(ink),
-                Text.from_markup(swatch(ink)),
-                Text.from_markup(f"{page:5.2f}:1 / {against:4.2f}:1"),
-            ]
-        )
-    return rows
-
-
 def original_for_xcolor(name: str) -> str:
     """xcolor's own value for a base name, as ``#RRGGBB``."""
     from ..check.contrast import resolve_named, rgb_to_hex
@@ -258,7 +226,7 @@ def colors_table(profile: Profile, config: RunConfig) -> Table:
             no_wrap=index in (0, 1, 5),
             justify="right" if heading == "contrast" else "left",
         )
-    for row in color_rows(profile, config) + ink_rows(config):
+    for row in color_rows(profile, config):
         table.add_row(*row)
     return table
 

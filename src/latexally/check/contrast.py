@@ -24,14 +24,20 @@ __all__ = [
     "rgb_to_hex",
     "PALETTE",
     "PALETTE_BINDINGS",
-    "PALETTE_INK",
-    "INK_BINDINGS",
-    "ink_value",
+    "SNAP_BINS",
+    "ACHROMATIC_CHROMA",
+    "snap_bin",
     "palette_value",
 ]
 
-#: The unified palette. Hue-anchored to the primaries and secondaries, each as
-#: dark as it can be while staying a recognisable member of its hue family.
+#: The palette: one colour per hue, for text and for drawings alike.
+#:
+#: Each is its primary's hue and chroma in OKLCH, at the lightness that
+#: maximises ``min(page/4.5, ink/3.0)`` -- the same relative margin over the AA
+#: floor for text on the page and over 1.4.11's floor against black axes. There
+#: used to be a second, lighter set for drawings, because no colour could clear
+#: both floors once a document re-darkened it with ``green!70!black``. Snapping
+#: (``SNAP_BINS``) removes the mix, so one value per hue does it now.
 #:
 #: This is a MIRROR of ``\definecolor{ally*}`` in ``tex/latexally-core.sty``,
 #: which is where the values actually take effect -- nothing here is emitted
@@ -39,11 +45,11 @@ __all__ = [
 #: become before they agree to it. ``tests/test_style_fidelity.py`` asserts the
 #: two agree, because a mirror nobody checks is just a second source of truth.
 PALETTE: dict[str, str] = {
-    "allyBlue": "#0000FF",    # 8.59:1 on white, hue 240, pure
-    "allyRed": "#CC0000",     # 5.89:1, hue 0.   Pure #FF0000 is 4.00:1 and fails AA.
-    "allyGreen": "#006600",   # 7.24:1, hue 120. Pure #00FF00 is 1.37:1.
-    "allyPurple": "#6A0DAD",  # 9.24:1, hue 275
-    "allyOrange": "#B35A00",  # 4.80:1, hue 30. The tightest of the five.
+    "allyBlue": "#1754FF",    # 5.60:1 page / 3.75:1 black ink, hue 227
+    "allyRed": "#D20000",     # 5.61 / 3.74, hue 0.   Pure #FF0000 is 4.00:1 and fails AA.
+    "allyGreen": "#007900",   # 5.62 / 3.73, hue 120. Pure #00FF00 is 1.37:1.
+    "allyPurple": "#B800B8",  # 5.63 / 3.73, hue 300
+    "allyOrange": "#A55000",  # 5.60 / 3.75, hue 29
 }
 
 #: Which colour name binds to which token, mirroring ``\accesspalette``.
@@ -69,43 +75,42 @@ PALETTE_BINDINGS: dict[str, str] = {
     "orange": "allyOrange",
 }
 
+#: Below this, a colour is achromatic and left alone: black, white, ``gray!40``,
+#: ``black!80``, the ``darkgray176`` a matplotlib export declares. Faintness is
+#: the point of a grid line.
+ACHROMATIC_CHROMA = 0.10
 
-#: The drawing palette, mirroring ``\definecolor{allyInk*}`` in the .sty.
+#: Hue -> the bin's colour NAME, mirroring ``\__access_snap_bin:w`` in the .sty.
 #:
-#: Text sits on the page; a plotted line sits beside black axes, and WCAG 1.4.11
-#: asks 3:1 against *every* adjacent colour. These are the same hues as PALETTE,
-#: moved in OKLCH lightness to the point that maximises the worst of three
-#: measurements -- against the page, against black ink, and against black ink
-#: after a ``!70!black`` mix, which is how this corpus actually draws.
-PALETTE_INK: dict[str, str] = {
-    "allyInkBlue": "#4E84FF",
-    "allyInkRed": "#FF4233",
-    "allyInkGreen": "#00A300",
-    "allyInkOrange": "#DA6C00",
-    "allyInkPurple": "#F54C6A",
-    "allyInkMagenta": "#F500F5",
-    "allyInkTeal": "#339B9A",
-}
-
-#: Which name a drawing rebinds to which ink token. Three names are missing on
-#: purpose: `yellow`, whose legible form reads as olive rather than yellow;
-#: `cyan`, whose legible form is 1.9 dE2000 from teal's; and `gray`, which is
-#: achromatic and draws the grid lines that are meant to be faint.
-INK_BINDINGS: dict[str, str] = {
-    "blue": "allyInkBlue",
-    "red": "allyInkRed",
-    "green": "allyInkGreen",
-    "orange": "allyInkOrange",
-    "purple": "allyInkPurple",
-    "magenta": "allyInkMagenta",
-    "teal": "allyInkTeal",
-}
+#: Rebinding a name reaches a drawing only when the drawing spells its colour as
+#: that name, and this corpus mostly does not: blue arrives 27 ways
+#: (``blue!40!black``, ``cyan!70!blue``, ``steelblue31119180``, ``lightblue``)
+#: and green 14, three of them mixes off black. So the palette also snaps by
+#: hue, at the point a colour is selected, and it snaps to the NAME, which picks
+#: up whatever that name is bound to.
+#:
+#: Each entry is the upper bound of a bin; hues at or above the last one wrap
+#: round to red.
+SNAP_BINS: tuple[tuple[float, str], ...] = (
+    (20, "red"),
+    (70, "orange"),
+    (165, "green"),
+    (265, "blue"),
+    (345, "purple"),
+)
 
 
-def ink_value(name: str) -> str | None:
-    """The hex ``name`` draws in under the palette, or ``None`` if unbound."""
-    token = INK_BINDINGS.get(name)
-    return PALETTE_INK.get(token) if token else None
+def snap_bin(rgb: tuple[float, float, float]) -> str | None:
+    """The colour name ``rgb`` snaps to, or ``None`` if it is left alone."""
+    high, low = max(rgb), min(rgb)
+    if high - low <= ACHROMATIC_CHROMA:
+        return None
+    hue = colorsys.rgb_to_hsv(*rgb)[0] * 360
+    for edge, name in SNAP_BINS:
+        if hue < edge:
+            return name
+    return "red"
+
 
 
 def palette_value(name: str) -> str | None:

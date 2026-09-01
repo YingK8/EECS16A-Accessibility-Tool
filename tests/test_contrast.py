@@ -113,19 +113,19 @@ def test_palette_mode_applies_everything_without_being_asked():
     assert ColorChoice().mode == "palette"
     assert ColorChoice().replacements(_profile()) == {
         # the profile's own names
-        "solutionColor": "#0000FF",
-        "redish": "#CC0000",
-        "blueish": "#6A0DAD",
+        "solutionColor": "#1754FF",
+        "redish": "#D20000",
+        "blueish": "#B800B8",
         # and xcolor's, which `\accesspalette` binds too and this profile never
         # declares. A corpus drawing in `green!70!black` had its green remapped
         # by a run that never mentioned green.
-        "red": "#CC0000",
-        "blue": "#0000FF",
-        "green": "#006600",
-        "purple": "#6A0DAD",
-        "orange": "#B35A00",
-        "solansColor": "#0000FF",
-        "answerColor": "#0000FF",
+        "red": "#D20000",
+        "blue": "#1754FF",
+        "green": "#007900",
+        "purple": "#B800B8",
+        "orange": "#A55000",
+        "solansColor": "#1754FF",
+        "answerColor": "#1754FF",
     }
 
 
@@ -148,7 +148,7 @@ def test_rejecting_a_colour_is_recorded_as_an_override_to_its_own_original():
     chosen.set("blueish", "#B31AB3")  # the course's own value
     assert chosen.replacements(_profile())["blueish"] == "#B31AB3"
     # Still applied everywhere it was not rejected.
-    assert chosen.replacements(_profile())["redish"] == "#CC0000"
+    assert chosen.replacements(_profile())["redish"] == "#D20000"
 
 
 def test_palette_mode_still_derives_nothing_per_name():
@@ -270,109 +270,124 @@ def test_the_only_installed_profile_is_used_without_being_named(tmp_path, monkey
 
 
 # ---------------------------------------------------------------------- #
-# the drawing palette
+# one palette, for text and for drawings
 # ---------------------------------------------------------------------- #
 
+#: The hue each token is derived from. `purple` is derived from MAGENTA on
+#: purpose: it is the token for the 265-345 bin, and the most legible form of
+#: xcolor's own `purple` (#BF0040) measures at hue 349 -- inside the red bin,
+#: next to the red token. Hue 300 is the representative that stays clear.
 XCOLOR_BASE = {
-    "blue": "#0000FF",
+    "blue": "#1754FF",
     "red": "#FF0000",
     "green": "#00FF00",
     "orange": "#FF8000",
-    "purple": "#BF0040",
-    "magenta": "#FF00FF",
-    "teal": "#008080",
+    "purple": "#FF00FF",
 }
+
+#: WCAG 1.4.3 AA for text on the page, and 1.4.11 for a line beside black axes.
+PAGE_FLOOR = 4.5
+INK_FLOOR = 3.0
 
 
 def _coloraide():
-    return pytest.importorskip("coloraide", reason="the ink palette is derived with it")
+    return pytest.importorskip("coloraide", reason="the palette is derived with it")
 
 
-def _mixed(color, pct: int = 70):
-    """xcolor's ``name!pct!black``: the sRGB components, scaled."""
-    from coloraide import Color
+def test_every_colour_is_legible_on_the_page_and_beside_black_ink():
+    r"""One colour has to serve two neighbours, because one page holds both.
 
-    srgb = Color(color).convert("srgb")
-    return Color("srgb", [channel * pct / 100 for channel in srgb[:-1]])
-
-
-def test_every_drawing_colour_is_legible_on_both_sides():
-    r"""A plotted line has two neighbours, and the text palette only serves one.
-
-    allyGreen is 7.24:1 on the page and 2.90:1 on black axes; after the
-    ``green!70!black`` that questionBank/sec/1 really draws with, 1.90:1 -- which
-    is why the discussion plot came out looking black. WCAG 1.4.11 wants 3:1
-    against every adjacent colour, so the ink palette is measured against three:
-    the page, the ink, and the ink after that mix.
+    fa26/dis/01A puts a table ruled in the solution colour on one page and a
+    plot drawn in blue on another, and a reader sees them as one document. The
+    palette used to answer that with two blues -- #0000FF for prose at 8.59:1,
+    #4E84FF for drawings at 3.46:1 -- because no single value could clear the
+    page floor and still clear 3:1 against black axes after a `!70!black` mix
+    darkened it. Snapping removes the mix, so one value does both now.
     """
     _coloraide()
     from coloraide import Color
 
-    from latexally.check.contrast import INK_BINDINGS, ink_value
+    from latexally.check.contrast import PALETTE_BINDINGS, palette_value
 
-    for name in INK_BINDINGS:
-        ink = ink_value(name)
-        page = Color(ink).contrast("white", method="wcag21")
-        black = Color(ink).contrast("black", method="wcag21")
-        mixed = _mixed(ink).contrast("black", method="wcag21")
-        assert page >= 3.0, f"{name} is {page:.2f}:1 against the page"
-        assert black >= 3.0, f"{name} is {black:.2f}:1 against black ink"
-        assert mixed >= 3.0, f"{name}!70!black is {mixed:.2f}:1 against black ink"
+    for name in ("blue", "red", "green", "orange", "purple"):
+        value = palette_value(name)
+        page = Color(value).contrast("white", method="wcag21")
+        ink = Color(value).contrast("black", method="wcag21")
+        assert page >= PAGE_FLOOR, f"{name} is {page:.2f}:1 against the page"
+        assert ink >= INK_FLOOR, f"{name} is {ink:.2f}:1 against black ink"
+    assert set(PALETTE_BINDINGS.values()) == {
+        "allyBlue",
+        "allyRed",
+        "allyGreen",
+        "allyOrange",
+        "allyPurple",
+    }, "five tokens, one per hue bin"
 
 
-def test_the_drawing_palette_is_the_most_legible_form_of_each_hue():
-    """Re-derived, not trusted: hold the OKLCH hue and chroma, move lightness."""
+def test_the_palette_is_the_most_balanced_form_of_each_hue():
+    """Re-derived, not trusted: hold the OKLCH hue and chroma, move lightness.
+
+    The objective is ``min(page/4.5, ink/3.0)`` -- the same relative margin over
+    each floor rather than the largest number on either one. Maximising page
+    contrast alone lands every colour back on the near-black values that fail
+    beside black axes; maximising ink contrast alone lands them on the pale ones
+    that fail as text.
+    """
     _coloraide()
     from coloraide import Color
 
-    from latexally.check.contrast import ink_value
+    from latexally.check.contrast import palette_value
 
     for name, original in XCOLOR_BASE.items():
         base = Color(original).convert("oklch")
         best, score = None, -1.0
-        for step in range(5, 100):
-            candidate = base.clone().set("l", step / 100).convert("srgb").fit()
-            worst = min(
-                candidate.contrast("white", method="wcag21"),
-                candidate.contrast("black", method="wcag21"),
-                _mixed(candidate).contrast("black", method="wcag21"),
+        for step in range(1, 1000):
+            candidate = base.clone().set("l", step / 1000).convert("srgb").fit()
+            margin = min(
+                candidate.contrast("white", method="wcag21") / PAGE_FLOOR,
+                candidate.contrast("black", method="wcag21") / INK_FLOOR,
             )
-            if worst > score:
-                best, score = candidate, worst
-        assert best.to_string(hex=True).upper() == ink_value(name), (
-            f"{name} should draw in {best.to_string(hex=True)}, not {ink_value(name)}"
+            if margin > score:
+                best, score = candidate, margin
+        assert best.to_string(hex=True).upper() == palette_value(name), (
+            f"{name} should be {best.to_string(hex=True)}, not {palette_value(name)}"
         )
+        assert score > 1.2, f"{name} clears its floors by only {score:.2f}x"
 
 
-def test_the_drawing_colours_stay_telling_apart():
-    """Seven lines on one axis have to be seven colours, not five and a pair."""
+def test_the_colours_stay_telling_apart():
+    """Five lines on one axis have to be five colours, not four and a pair."""
     _coloraide()
     from itertools import combinations
 
     from coloraide import Color
 
-    from latexally.check.contrast import INK_BINDINGS, ink_value
+    from latexally.check.contrast import PALETTE
 
-    for one, other in combinations(INK_BINDINGS, 2):
-        distance = Color(ink_value(one)).delta_e(ink_value(other), method="2000")
+    for one, other in combinations(PALETTE, 2):
+        distance = Color(PALETTE[one]).delta_e(PALETTE[other], method="2000")
         assert distance >= 10, f"{one} and {other} are {distance:.1f} dE2000 apart"
 
 
-def test_yellow_is_left_alone_because_a_legible_yellow_is_not_yellow():
-    r"""The nuance the other hues do not have.
+def test_yellow_is_binned_because_a_legible_yellow_is_not_yellow():
+    r"""Yellow is the hue that cannot be fixed by darkening, so it is binned.
 
     Green darkened is still green -- its nearest CSS name goes from `lime` to
     `forestgreen`. Yellow darkened enough to clear the page is #8F8F00, whose
-    nearest CSS name is `olive`: it is not a darker yellow, it is a different
-    colour. So the palette does not bind it, and `check` reports it instead.
+    nearest CSS name is `olive`: not a darker yellow, a different colour. The
+    old palette left it alone for that reason and reported it instead. With five
+    bins it lands on orange, the neighbouring hue that does survive darkening --
+    a decision, not an accident, so it is asserted here.
     """
     _coloraide()
     from coloraide import Color
     from coloraide.css.color_names import name2val_map
 
-    from latexally.check.contrast import INK_BINDINGS
+    from latexally.check.contrast import PALETTE_BINDINGS, snap_bin
 
-    assert "yellow" not in INK_BINDINGS
+    assert "yellow" not in PALETTE_BINDINGS
+    assert snap_bin((1.0, 1.0, 0.0)) == "orange"
+
     named = {
         name: Color("srgb", [channel / 255 for channel in value[:3]])
         for name, value in name2val_map.items()
@@ -386,4 +401,80 @@ def test_yellow_is_left_alone_because_a_legible_yellow_is_not_yellow():
     )
     assert legible_yellow.contrast("white", method="wcag21") >= 3.0
     assert reads_as(legible_yellow) == "olive"
-    assert reads_as("#00A300") == "forestgreen", "green survives the same treatment"
+    assert reads_as("#007900") == "green", "green survives the same treatment"
+
+
+# ---------------------------------------------------------------------- #
+# snapping: one colour per hue, however the source spelled it
+# ---------------------------------------------------------------------- #
+
+
+def _rgb(spec: str):
+    from latexally.check.contrast import parse_color
+
+    return parse_color("HTML", spec.lstrip("#"))
+
+
+def test_the_spellings_this_corpus_actually_uses_land_on_one_colour():
+    r"""The measurement this exists for.
+
+    Counted across questionBank, blue arrives 27 ways and green 14 -- and only
+    the bare word `blue` was ever reachable by rebinding a name. Every value
+    below is a real spelling from the corpus, resolved the way xcolor resolves
+    it: `blue!40!black` through the REBOUND blue, which is what made the two
+    disagree in the first place.
+    """
+    from latexally.check.contrast import snap_bin
+
+    blues = {
+        "#1754FF": "blue, already the token",
+        "#092266": "blue!40!black, through the rebound blue",
+        "#00FFFF": "cyan",
+        "#17DAFF": "cyan!70!blue",
+        "#1F77B4": "steelblue31119180, 98 matplotlib exports",
+        "#80CCFF": "lightblue",
+        "#0040FF": "mydarkblue",
+        "#56B4E9": "skyblue",
+        "#008080": "teal",
+        "#D1DDFF": "blue!20, a wash -- snapped to full, not kept pale",
+    }
+    for value, why in blues.items():
+        assert snap_bin(_rgb(value)) == "blue", f"{value} ({why}) is not blue"
+
+    greens = {"#007900": "green", "#004300": "black!45!green", "#228B22": "ForestGreen"}
+    for value, why in greens.items():
+        assert snap_bin(_rgb(value)) == "green", f"{value} ({why}) is not green"
+
+    assert snap_bin(_rgb("#9400D1")) == "purple", "mauve"
+    assert snap_bin(_rgb("#FFD700")) == "orange", "gold"
+    assert snap_bin(_rgb("#964B00")) == "orange", "brown"
+    assert snap_bin(_rgb("#FF8E85")) == "red", "red!60"
+
+
+def test_the_faint_and_the_achromatic_are_left_where_they_are():
+    """A grid line is meant to be faint, and black ink is meant to be black."""
+    from latexally.check.contrast import snap_bin
+
+    for value, why in {
+        "#000000": "black",
+        "#FFFFFF": "white",
+        "#CCCCCC": "gray!40",
+        "#333333": "black!80",
+        "#B0B0B0": "darkgray176, from the same matplotlib exports",
+    }.items():
+        assert snap_bin(_rgb(value)) is None, f"{value} ({why}) should be left alone"
+
+
+def test_snapping_a_snapped_colour_changes_nothing():
+    """Every token has to sit inside its own bin, or the hook oscillates.
+
+    This is what rules out a purple token derived from xcolor's own `purple`:
+    its most legible form measures at hue 349, so a second pass over a drawing
+    would move it to red.
+    """
+    from latexally.check.contrast import PALETTE, PALETTE_BINDINGS, snap_bin
+
+    for name, token in PALETTE_BINDINGS.items():
+        if name in ("blue", "red", "green", "orange", "purple"):
+            assert snap_bin(_rgb(PALETTE[token])) == name, f"{token} leaves its own bin"
+    assert snap_bin(_rgb("#F54C6A")) == "red", "the reason the purple token is magenta's"

@@ -19,6 +19,7 @@ Skipped when pdflatex or PyMuPDF is missing.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -317,14 +318,10 @@ def test_house_colors_option_restores_the_course_palette(tmp_path_factory):
     # both stricter than a pixel count and independent of its threshold.
     #
     # ANSWER text, not solution text, and that is the whole point of the
-    # rewrite. The palette binds allySolution to pure #0000FF -- which is what
-    # [housecolors] restores for solutions anyway, because every homework
-    # driver writes \sol in plain blue and plain blue already measures 8.59:1.
-    # So solution text is now IDENTICAL either way, and asserting on it would
-    # test nothing. The answer colour is where the two still part: the course
-    # defines it as rgb(0.2,0.2,0.9) = #3333E6 and the palette moves it onto
-    # the same blue as everything else.
-    assert _solution_colors(accessible) == {0x0000FF}, (
+    # rewrite. The course defines the answer colour as rgb(0.2,0.2,0.9) =
+    # #3333E6; the palette moves it onto the same blue as everything else,
+    # prose and drawings alike, while [housecolors] leaves it where it was.
+    assert _solution_colors(accessible) == {0x1754FF}, (
         "the palette's answer colour is no longer allyBlue"
     )
     assert _solution_colors(house) == {0x3333E6}, (
@@ -347,16 +344,17 @@ def _solution_colors(pdf: Path) -> set[int]:
     }
 
 
-#: The five palette tokens, and what each measures against a white page. Read
-#: from the .sty rather than restated, so the two cannot drift apart.
+#: The five palette tokens, and what each measures against a white page. One
+#: set now, for prose and for drawings alike: each is also >= 3:1 against the
+#: black axes a line sits beside, which is what the second, lighter set used to
+#: be for. They sit close together on purpose -- the derivation gives each the
+#: same relative margin over its two floors.
 PALETTE = {
-    "allyBlue": (0x0000FF, 8.59),
-    "allyRed": (0xCC0000, 5.89),
-    "allyGreen": (0x006600, 7.24),
-    "allyPurple": (0x6A0DAD, 9.24),
-    # The tightest of the five. It clears AA and has under 0.3 of headroom, so
-    # this assertion is the one that will catch a well-meant hue tweak.
-    "allyOrange": (0xB35A00, 4.80),
+    "allyBlue": (0x1754FF, 5.6),
+    "allyRed": (0xD20000, 5.61),
+    "allyGreen": (0x007900, 5.62),
+    "allyPurple": (0xB800B8, 5.63),
+    "allyOrange": (0xA55000, 5.6),
 }
 
 
@@ -370,14 +368,15 @@ def _ratio(packed: int) -> float:
 def test_every_palette_token_clears_the_floor():
     """The reason the palette exists, stated as numbers rather than as a belief.
 
-    Pure primaries were the brief and only one of them survives WCAG: #FF0000
-    measures 4.00:1 and fails AA for body text, #00FF00 measures 1.37:1 and
-    fails it comprehensively. Only #0000FF passes untouched, at 8.59:1. So the
+    Pure primaries were the brief and none of them survives both floors: #FF0000
+    measures 4.00:1 on the page and fails AA for body text, #00FF00 measures
+    1.37:1 and fails it comprehensively, and #0000FF clears the page at 8.59:1
+    but only 2.44:1 against the black axes a plotted line sits beside. So the
     hue is held exactly and the lightness is what moves.
     """
     assert _ratio(0xFF0000) < 4.5, "pure red should be the one that fails"
     assert _ratio(0x00FF00) < 4.5, "pure green should be the one that fails badly"
-    assert _ratio(0x0000FF) >= 4.5, "pure blue conforms; do not claim otherwise"
+    assert _ratio(0x0000FF) >= 4.5, "pure blue clears the page; it is the ink it fails"
 
     for name, (packed, expected) in PALETTE.items():
         measured = _ratio(packed)
@@ -408,30 +407,43 @@ def test_the_palette_is_what_the_style_file_actually_defines():
     assert not any("EE0000" in line for line in defined), "the old red is still defined"
 
 
-def test_the_drawing_palette_is_what_the_style_file_defines():
-    """Same grep, for the ink tokens: the .sty is where the values take effect."""
-    from latexally.check.contrast import INK_BINDINGS, PALETTE_INK
+def test_the_hue_bins_are_what_the_style_file_bins():
+    """The .sty does the snapping; Python only mirrors it for the runner.
+
+    Two implementations of one rule, so this is the drift test. The .sty writes
+    each bin as its upper bound, in order, which is the same shape SNAP_BINS has.
+    """
+    from latexally.check.contrast import ACHROMATIC_CHROMA, SNAP_BINS
 
     style = (Path(__file__).resolve().parents[1] / "tex" / "latexally-core.sty").read_text()
-    defined = [line for line in style.splitlines() if line.startswith("\\definecolor")]
-    for name, value in PALETTE_INK.items():
-        assert any(name in line and value.lstrip("#") in line for line in defined), (
-            f"{name} is not defined as {value}"
-        )
+    body = style.split("\\cs_new_protected:Npn \\__access_snap_bin:w")[1].split("\\cs_new")[0]
+    assert f"{{ {ACHROMATIC_CHROMA:.2f} }}" in body, "the achromatic floor drifted"
+    binned = re.findall(r"< \{ (\d+) \}\s*\{ ([a-z]+) \}", body)
+    assert [(float(edge), name) for edge, name in binned] == list(SNAP_BINS)
 
-    body = style.split("\\NewDocumentCommand \\accessinkpalette")[1].split("\\NewDocument")[0]
-    for name, token in INK_BINDINGS.items():
-        assert f"{{ {name} }}" in body, f"{name} is not rebound for drawings"
-        assert token in body, f"{name} does not reach {token}"
-    for name in ("yellow", "cyan", "gray"):
-        assert f"{{ {name} }}" not in body, f"{name} is bound; it is meant to be left"
 
-    # The hooks are what make it local to a picture -- `begin`, so the colours
-    # last exactly as long as the environment's group and the prose keeps the
-    # text palette.
-    hooks = style.split("\\NewDocumentCommand \\accessinkhooks")[1].split("\\NewDocument")[0]
-    for environment in ("tikzpicture", "circuitikz", "pgfpicture"):
-        assert f"env/{environment}/begin" in hooks, f"{environment} is not hooked"
+def test_the_snap_is_installed_on_every_path_a_colour_can_take():
+    r"""Three hooks, because a colour reaches the page three ways.
+
+    ``\pgfutil@colorlet`` is the drawing one, and it is deliberately not pgf's
+    ``\applycolormixins``: tikz sends a bare colour word or a mix through its
+    ``.unknown`` key to ``\tikz@compat@color@set``, which never calls the mixin
+    hook. The other two are xcolor's own -- expressions take the undeclared
+    path, plain names the declared fast path.
+    """
+    style = (Path(__file__).resolve().parents[1] / "tex" / "latexally-core.sty").read_text()
+    body = style.split("\\NewDocumentCommand \\accesssnapcolors")[1]
+    for hook in ("\\pgfutil@colorlet", "\\XC@undeclaredcolor", "\\XC@declaredc@lor"):
+        assert hook in body, f"{hook} is not patched; colours through it keep their hue"
+    assert "\\bool_if:NF \\g__access_snap_bool" in body, (
+        "installing twice would make the saved original the patched version"
+    )
+    palette = style.split("\\NewDocumentCommand \\accesspalette")[1].split("\\NewDocument")[0]
+    assert "\\accesssnapcolors" in palette, "the palette mode does not turn snapping on"
+    conforming = style.split("\\NewDocumentCommand \\accessconformingcolors")[1].split("\\NewDocument")[0]
+    assert "\\accesssnapcolors" not in conforming, (
+        "conforming mode exists for documents that must keep their own hues"
+    )
 
 
 def test_one_blue_reaches_both_text_and_drawings():
@@ -497,13 +509,16 @@ def test_text_layer_does_not_change_layout(tmp_path_factory):
     assert strongly_differing_fraction(on, off) == 0.0
 
 
-def test_a_drawing_gets_the_ink_palette_and_the_prose_does_not(tmp_path: Path):
+def test_a_drawing_and_the_prose_beside_it_come_out_one_colour(tmp_path: Path):
     r"""The bug this palette exists for, read back out of a PDF.
 
-    fa26/dis/01A draws with ``green!70!black``. Under the text palette that
+    fa26/dis/01A draws with ``green!70!black``. Under the old text palette that
     resolved to #004700 -- 1.90:1 against the black axes beside it, which is
-    what "the green looks black" was. The prose still wants the text palette, so
-    the two have to come out of one document as two different greens.
+    what "the green looks black" was. The answer was a second, lighter palette
+    for drawings, and that produced the next report: the prose green and the
+    plotted green were visibly two greens on one page.
+
+    Now the mix snaps whole, to the same token the prose uses. One green.
     """
     pdf = _compile(
         tmp_path,
@@ -537,7 +552,134 @@ def test_a_drawing_gets_the_ink_palette_and_the_prose_does_not(tmp_path: Path):
         if span["color"]
     }
 
-    assert text == {"#006600"}, "prose should still take the text palette"
-    assert "#339B9A" in strokes, "teal should draw in the ink palette"
-    assert "#007200" in strokes, "green!70!black should be the ink green, mixed"
+    assert text == {"#007900"}, "prose takes the palette green"
+    assert strokes == {"#1754FF", "#007900"}, (
+        "teal snaps into the one blue and green!70!black into that same green"
+    )
     assert "#004700" not in strokes, "the near-black green is what this replaced"
+    assert "#00A300" not in strokes, "the separate drawing palette is gone"
+
+
+def test_every_spelling_of_a_hue_comes_out_of_the_pdf_as_one_colour(tmp_path: Path):
+    r"""The whole point, measured on a compiled page rather than on a rule.
+
+    These are real spellings from questionBank, in the proportions it uses them:
+    a bare word, a mix off black, a mix off another hue, a wash, and the
+    ``steelblue31119180`` a matplotlib pgfplots export declares in the preamble.
+    Rebinding names reached exactly one of them. Nine lines and four fills go in;
+    one blue has to come out.
+
+    The prose is here too, because it must join them: ``\textcolor{red!60}``
+    snaps to the same red a ``\draw[red]`` would take.
+    """
+    pdf = _compile(
+        tmp_path,
+        "snap",
+        "\\documentclass{article}\n"
+        "\\usepackage{tikz}\n"
+        "\\usepackage{latexally-core}\n"
+        "\\accesssetup{palette}\n"
+        "\\definecolor{steelblue31119180}{RGB}{31,119,180}\n"
+        "\\definecolor{lightblue}{rgb}{0.5,0.8,1}\n"
+        "\\definecolor{mydarkblue}{rgb}{0,0.25,1}\n"
+        "\\definecolor{darkgray176}{RGB}{176,176,176}\n"
+        "\\pagestyle{empty}\n"
+        "\\begin{document}\n"
+        "A mix in \\textcolor{red!60}{prose}.\n"
+        "\\begin{tikzpicture}\n"
+        "  \\draw[blue] (0,0) -- (1,0);\n"
+        "  \\draw[blue!40!black] (0,1) -- (1,1);\n"
+        "  \\draw[cyan] (0,2) -- (1,2);\n"
+        "  \\draw[cyan!70!blue] (0,3) -- (1,3);\n"
+        "  \\draw[steelblue31119180] (0,4) -- (1,4);\n"
+        "  \\draw[lightblue] (0,5) -- (1,5);\n"
+        "  \\draw[mydarkblue] (0,6) -- (1,6);\n"
+        "  \\draw[teal] (0,7) -- (1,7);\n"
+        "  \\draw[color=lightblue] (0,8) -- (1,8);\n"
+        "  \\fill[blue!20] (2,0) rectangle (2.5,0.5);\n"
+        "  \\fill[steelblue31119180] (2,1) rectangle (2.5,1.5);\n"
+        "  \\node[fill=cyan] at (3,2) {n};\n"
+        "  \\draw[black!45!green] (4,0) -- (5,0);\n"
+        "  \\draw[green!70!black] (4,1) -- (5,1);\n"
+        "  \\draw[green] (4,2) -- (5,2);\n"
+        "  \\draw[gray!40] (6,0) -- (7,0);\n"
+        "  \\draw[darkgray176] (6,1) -- (7,1);\n"
+        "  \\draw[black] (6,2) -- (7,2);\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n",
+    )
+    import pymupdf
+
+    page = pymupdf.open(pdf)[0]
+    drawn = {
+        "#%02X%02X%02X" % tuple(round(channel * 255) for channel in value)
+        for drawing in page.get_drawings()
+        for key in ("color", "fill")
+        if (value := drawing.get(key))
+    }
+    text = {
+        f"#{span['color']:06X}"
+        for block in page.get_text("dict")["blocks"]
+        for line in block.get("lines", [])
+        for span in line["spans"]
+        if span["color"]
+    }
+
+    assert drawn == {
+        "#1754FF",  # nine blue lines, three blue fills, however they were spelled
+        "#007900",  # green, black!45!green, green!70!black
+        "#000000",  # and the achromatic three, left where they were
+        "#B0B0B0",
+        "#CCCCCC",
+    }, "a hue reached the page as more than one colour"
+    assert text == {"#D20000"}, "prose snaps to the same red the drawings take"
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    ["", "\\DocumentMetadata{lang=en-US,pdfversion=1.7,tagging=on}\n"],
+    ids=["classic", "tagged"],
+)
+def test_a_reference_takes_the_colour_of_the_prose_it_sits_in(tmp_path: Path, metadata):
+    r"""``linkcolor`` overrides the prose, and questionBank sets it to black.
+
+    Every solution file in the corpus loads hyperref with ``colorlinks=true,
+    linkcolor=black``, so an ``\eqref`` inside the blue ``\sol`` came out black
+    -- a hole in the sentence that the colour is there to mark as the solution.
+
+    Both hyperref drivers, because they need different switches and only one of
+    them is the one this tool emits. ``linkcolor=.`` is enough for classic
+    hyperref and is silently ignored under ``tagging=on``, where the colour goes
+    through l3color rather than xcolor -- so the tagged case is the one that
+    would have shipped the bug.
+    """
+    pdf = _compile(
+        tmp_path,
+        "linkcolor",
+        metadata + "\\documentclass{article}\n"
+        "\\usepackage{amsmath,hyperref}\n"
+        "\\hypersetup{colorlinks=true,linkcolor=black,urlcolor=blue}\n"
+        "\\usepackage{latexally-core}\n"
+        "\\accesssetup{palette}\n"
+        "\\pagestyle{empty}\n"
+        "\\begin{document}\n"
+        "\\begin{equation}x = 1\\label{eq:one}\\end{equation}\n"
+        "{\\color{blue}Solution: from \\eqref{eq:one} we get $x$.}\n"
+        "\\par Body text, see \\eqref{eq:one}.\n"
+        "\\end{document}\n",
+    )
+    import pymupdf
+
+    lines = [
+        (
+            "".join(span["text"] for span in line["spans"]),
+            {f"#{span['color']:06X}" for span in line["spans"]},
+        )
+        for block in pymupdf.open(pdf)[0].get_text("dict")["blocks"]
+        for line in block.get("lines", [])
+    ]
+    solution = next(colors for text, colors in lines if text.startswith("Solution"))
+    body = next(colors for text, colors in lines if text.startswith("Body"))
+
+    assert solution == {"#1754FF"}, "the reference broke the blue of the solution"
+    assert body == {"#000000"}, "a reference in body prose should stay black"

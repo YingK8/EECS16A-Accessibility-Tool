@@ -8,8 +8,6 @@
 
 \RequirePackage{latexally-doc}
 
-%% Questions and parts
-
 \ProvideDocumentCommand \qns { m } { \question {#1} }
 \ProvideDocumentCommand \q   { m m } { \question [#1] {#2} }
 
@@ -21,17 +19,11 @@
     \questionpart
   }
 
-%% Solution / answer blocks
-
 \ProvideDocumentCommand \sol    { +m } { \begin{solution} #1 \end{solution} }
 \ProvideDocumentCommand \solans { +m } { \begin{solution} #1 \end{solution} }
 \ProvideDocumentCommand \ans    { +m } { \begin{answer}   #1 \end{answer} }
 
-%% Containers
-
 \ProvideDocumentEnvironment { qunlist } { } { \par } { \par }
-
-%% Legacy figure inclusion
 
 \ProvideDocumentCommand \fig { O{} m }
   { \described {#1} { \includegraphics{#2} } }
@@ -45,13 +37,9 @@
     \par
   }
 
-%% Fill-in blanks
-
 \ProvideDocumentCommand \fillin { O{4cm} } { \answerblank [#1] }
 \ProvideDocumentCommand \doublehrule { }
   { \begin{Decorative} \hrule \vskip 0.02in \hrule \end{Decorative} }
-
-%% Deprecated spellings of the description API
 
 \msg_new:nnn { latexally } { deprecated-name }
   { '#1'~is~deprecated;~use~'#2'~instead. }
@@ -86,8 +74,6 @@
 \ProvideDocumentCommand \FigureDescription { +m }
   { \__access_compat_warn:nn { \FigureDescription } { \LongDescription }
     \LongDescription [Figure~description] {#1} }
-
-%% Argument-less \title recovery
 
 \AddToHook { begindocument }
   {

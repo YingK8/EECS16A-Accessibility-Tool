@@ -520,8 +520,8 @@ async def test_the_proposal_is_the_palette_token(profile: Profile):
     async with app.run_test(size=SIZE) as pilot:
         await colors(pilot, REDISH)
         await press(pilot, "u")
-        assert app.config.colors.replacements(profile)["redish"] == "#CC0000"
-        assert "#CC0000" in visible(app)
+        assert app.config.colors.replacements(profile)["redish"] == "#D20000"
+        assert "#D20000" in visible(app)
 
 
 async def test_conforming_mode_still_proposes_the_smallest_change(profile: Profile):
@@ -564,7 +564,7 @@ async def test_a_colour_that_already_conforms_is_still_unified(profile: Profile)
         # Nothing pressed. The palette is applied on arrival, so the screen has
         # nothing to approve -- `u` is the undo, and there is no decision yet to
         # undo, so it is greyed out.
-        assert app.config.colors.replacements(profile)["blueish"] == "#6A0DAD"
+        assert app.config.colors.replacements(profile)["blueish"] == "#B800B8"
         assert app.screen.check_action("use", ()) is None
         assert app.screen.check_action("keep", ()) is True
 
@@ -623,7 +623,7 @@ async def test_undo_clears_a_decision_rather_than_recording_another(profile: Pro
         assert app.config.colors.overrides == {"redish": "#004400"}
         await press(pilot, "u")
         assert app.config.colors.overrides == {}
-        assert app.config.colors.replacements(profile)["redish"] == "#CC0000"
+        assert app.config.colors.replacements(profile)["redish"] == "#D20000"
 
 
 async def test_rejecting_is_the_only_decision_the_screen_asks_for(profile: Profile):
@@ -641,7 +641,7 @@ async def test_rejecting_is_the_only_decision_the_screen_asks_for(profile: Profi
         assert app.config.colors.overrides == {"redish": "#FF0000"}
         assert app.config.colors.replacements(profile)["redish"] == "#FF0000"
         # Rejecting one does not reject the rest.
-        assert app.config.colors.replacements(profile)["solutionColor"] == "#0000FF"
+        assert app.config.colors.replacements(profile)["solutionColor"] == "#1754FF"
         # And the row now offers the undo instead of another rejection.
         assert app.screen.check_action("keep", ()) is None
         assert app.screen.check_action("use", ()) is True
@@ -672,7 +672,7 @@ async def test_e_opens_the_colour_under_the_cursor_for_editing(profile: Profile)
         await colors(pilot, REDISH)
         await press(pilot, "e")
         field = app.screen.query_one("#hex", Input)
-        assert field.value == "#CC0000"
+        assert field.value == "#D20000"
         assert field.has_focus
 
 
