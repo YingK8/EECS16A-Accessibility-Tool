@@ -1305,3 +1305,97 @@ def test_a_course_written_documentmetadata_is_not_touched():
 
     theirs = "\\DocumentMetadata{pdfversion=2.0}\n\\documentclass{article}\n"
     assert _reconverted(TexSource(theirs)).text == theirs
+
+
+def test_stale_semester_package_is_repointed_at_this_semester(tmp_path: Path):
+    r"""The bug this pins: `fa26/dis/02A/sol02A.tex` said `\usepackage{../../fa24}`
+    -- cloned from an fa24 driver and never updated -- so the build failed with
+    "File `../../fa24.sty' not found" even though `fa26.sty`, the semester the
+    driver actually lives under, sits at that exact same depth.
+    """
+    from latexally.build import _fix_stale_semester_reference
+
+    corpus = tmp_path / "corpus"
+    (corpus / "fa26").mkdir(parents=True)
+    (corpus / "fa26" / "fa26.sty").write_text("")
+    source_dir = corpus / "fa26" / "dis" / "02A"
+    source_dir.mkdir(parents=True)
+
+    text = (
+        "\\usepackage{../../../ee66}\n"
+        "\\usepackage{../../fa24}\n"
+    )
+    fixed = _fix_stale_semester_reference(text, source_dir, corpus)
+
+    assert "\\usepackage{../../fa26}" in fixed
+    assert "fa24" not in fixed
+    assert "\\usepackage{../../../ee66}" in fixed  # untouched: not a semester ref
+
+
+def test_stale_semester_reference_fixed_one_directory_deeper(tmp_path: Path):
+    r"""`fa26/dis/SP24-DISCUSSIONS/1/dis1.tex` had the same bug one level
+    deeper, wrong on the dot-count as well as the name -- both must come from
+    the driver's real location, not from swapping the name in place.
+    """
+    from latexally.build import _fix_stale_semester_reference
+
+    corpus = tmp_path / "corpus"
+    (corpus / "fa26").mkdir(parents=True)
+    (corpus / "fa26" / "fa26.sty").write_text("")
+    source_dir = corpus / "fa26" / "dis" / "SP24-DISCUSSIONS" / "1"
+    source_dir.mkdir(parents=True)
+
+    fixed = _fix_stale_semester_reference("\\usepackage{../../fa24}\n", source_dir, corpus)
+
+    assert fixed == "\\usepackage{../../../fa26}\n"
+
+
+def test_a_reference_that_actually_resolves_is_left_alone(tmp_path: Path):
+    """An assignment genuinely pinned to an older semester's style on purpose
+    is not this bug, and must not be rewritten."""
+    from latexally.build import _fix_stale_semester_reference
+
+    corpus = tmp_path / "corpus"
+    (corpus / "fa26").mkdir(parents=True)
+    (corpus / "fa26" / "fa26.sty").write_text("")
+    (corpus / "fa24.sty").write_text("")  # exactly where ../../../fa24 points
+    source_dir = corpus / "fa26" / "dis" / "02A"
+    source_dir.mkdir(parents=True)
+
+    text = "\\usepackage{../../../fa24}\n"  # resolves: corpus/fa24.sty
+    assert _fix_stale_semester_reference(text, source_dir, corpus) == text
+
+
+def test_no_semester_style_file_here_means_nothing_to_fix(tmp_path: Path):
+    """No `<semester>.sty` at all -- not this corpus's convention, or this
+    assignment's semester folder does not have one -- so there is nothing to
+    confidently repoint a broken reference at."""
+    from latexally.build import _fix_stale_semester_reference
+
+    corpus = tmp_path / "corpus"
+    source_dir = corpus / "fa26" / "dis" / "02A"
+    source_dir.mkdir(parents=True)
+
+    text = "\\usepackage{../../fa24}\n"
+    assert _fix_stale_semester_reference(text, source_dir, corpus) == text
+
+
+def test_materialise_writes_the_corrected_reference_into_the_mirror(tmp_path: Path):
+    """End to end through `materialise`, where the fix actually has to run for
+    `edit` mode's `copy_back` to ever see it."""
+    corpus = tmp_path / "corpus"
+    (corpus / "fa26").mkdir(parents=True)
+    (corpus / "fa26" / "fa26.sty").write_text("")
+    folder = corpus / "fa26" / "dis" / "02A"
+    folder.mkdir(parents=True)
+    (folder / "sol02A.tex").write_text(
+        "\\usepackage{../../fa24}\n\\begin{document}x\\end{document}\n"
+    )
+
+    profile = Profile(name="test", corpus=CorpusScope(root=corpus, include=("**/*.tex",)))
+    assignment = Assignment(path="fa26/dis/02A", kind="discussion", driver="sol02A.tex")
+    config = RunConfig(output=Output(root=tmp_path / "out", write_mode="edit"), write=True)
+
+    prepared = materialise(assignment, config, profile, lines=[])
+
+    assert "\\usepackage{../../fa26}" in prepared.driver.read_text()

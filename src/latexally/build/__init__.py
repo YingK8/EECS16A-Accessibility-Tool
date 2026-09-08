@@ -415,6 +415,60 @@ def _reconverted(source: TexSource) -> TexSource:
     return TexSource("".join(kept), path=source.path, encoding=source.encoding)
 
 
+#: `\usepackage{<dots>fa24}` -- a relative path ending in a semester code, with
+#: no `.sty` (`\usepackage` appends it). Deliberately not `find_replacements`'
+#: job: that searches the whole corpus for a historical stand-in when nothing
+#: named this exists anywhere; this is the much narrower, higher-confidence
+#: case where the file one semester dot-count away, under THIS assignment's
+#: own semester folder, already exists and the reference just never got
+#: updated when the driver was cloned from an older one.
+_SEMESTER_PACKAGE = re.compile(
+    r"\\usepackage(?:\[[^\]]*\])?\{((?:\.\./)+)((?:fa|sp|su)\d{2})\}"
+)
+_SEMESTER_NAME = re.compile(r"\A(?:fa|sp|su)\d{2}\Z")
+
+
+def _fix_stale_semester_reference(text: str, source_dir: Path, corpus_root: Path) -> str:
+    r"""Repoint a `\usepackage{<dots>oldsem}` that should name this semester.
+
+    Cloning a driver from an old semester and updating everything except one
+    `\usepackage{../../fa24}` line is how ``fa26/dis/02A/sol02A.tex`` ended up
+    unable to find ``fa24.sty``: that path does not resolve, but ``fa26.sty``
+    -- the semester the driver actually lives under -- exists at the exact
+    same depth. ``fa26/dis/SP24-DISCUSSIONS/*`` had the same bug one directory
+    deeper, wrong on both the semester name and the dot-count. Found by
+    bisecting a real build's "File `../../fa24.sty' not found" against the
+    corpus, then confirmed identical across 40+ files sharing one setup commit.
+
+    Only touches a reference that is currently broken (nothing resolves at the
+    path as written) and only when the fix is unambiguous (this assignment's
+    own semester file exists at the corrected depth). A `\usepackage{../../fa24}`
+    that *does* resolve -- an assignment genuinely pinned to an older
+    semester's style on purpose -- is left exactly as written.
+    """
+    try:
+        semester = source_dir.resolve().relative_to(corpus_root.resolve()).parts[0]
+    except (ValueError, IndexError):
+        return text
+    if not _SEMESTER_NAME.match(semester):
+        return text
+    correct_root = corpus_root / semester
+    if not (correct_root / f"{semester}.sty").is_file():
+        return text
+
+    def _fix(match: re.Match) -> str:
+        dots, name = match.group(1), match.group(2)
+        if name == semester:
+            return match.group(0)  # already names this assignment's semester
+        current = source_dir / dots
+        if (current / f"{name}.sty").is_file():
+            return match.group(0)  # resolves as written; a deliberate pin
+        correct_dots = os.path.relpath(correct_root, source_dir).replace(os.sep, "/")
+        return f"\\usepackage{{{correct_dots}/{semester}}}"
+
+    return _SEMESTER_PACKAGE.sub(_fix, text)
+
+
 def inject(source: TexSource, lines: list[str]) -> str:
     """Return the driver text with the conversion lines added.
 
@@ -670,6 +724,9 @@ def materialise(
     lines = preamble_for(config, profile) if lines is None else lines
 
     source = _reconverted(TexSource.from_path(source_dir / driver_name))
+    fixed = _fix_stale_semester_reference(source.text, source_dir, root)
+    if fixed != source.text:
+        source = TexSource(fixed, path=source.path, encoding=source.encoding)
     if config.output.edits_sources:
         lines = _with_root_package_path(lines, assignment, source.text)
     converted = inject(source, lines)
@@ -1077,7 +1134,9 @@ def mirror_dependencies(
     return copied
 
 
-def require_clean_worktree(root: Path, ignore: Path | None = None) -> None:
+def require_clean_worktree(
+    root: Path, ignore: Path | None = None, allow_dirty: bool = False
+) -> None:
     """Refuse to edit a corpus in place unless git can undo it.
 
     In-place conversion rewrites real course material. The guard is not that git
@@ -1085,7 +1144,14 @@ def require_clean_worktree(root: Path, ignore: Path | None = None) -> None:
     ``git checkout`` away from gone, and the diff shows exactly what the tool
     did. With a dirty tree the tool's edits are tangled with someone's
     unfinished work and neither can be reviewed separately.
+
+    ``allow_dirty`` is the escape hatch for someone who has looked at that diff
+    themselves and wants to proceed anyway -- it skips the check entirely
+    rather than softening it, because a check that sometimes lies is worse than
+    one that is sometimes skipped.
     """
+    if allow_dirty:
+        return
     # `ignore` is the run's own output directory. It now lives inside the
     # corpus -- that is where the descriptions belong -- so without this the
     # guard trips on the tool's output on the second run and refuses to start.
@@ -1700,7 +1766,9 @@ def build_assignment(
     # tests/revert_e2e.py all do -- where nothing else has checked.
     if config.output.edits_sources and not worktree_checked:
         require_clean_worktree(
-            profile.corpus.root.resolve(), ignore=config.output.root
+            profile.corpus.root.resolve(),
+            ignore=config.output.root,
+            allow_dirty=config.allow_dirty,
         )
 
     # Approved descriptions become real /Alt HERE, in the mirror `materialise`
@@ -2285,7 +2353,9 @@ def build_run(
     # default and would have made the default unusable in a dirty checkout.
     if config.write and config.output.edits_sources:
         require_clean_worktree(
-            profile.corpus.root.resolve(), ignore=config.output.root
+            profile.corpus.root.resolve(),
+            ignore=config.output.root,
+            allow_dirty=config.allow_dirty,
         )
 
     reports: list[BuildReport] = []

@@ -24,7 +24,7 @@ from pathlib import Path
 from .catalog.worklog import Entry
 from .config import Profile
 from .errors import LatexAllyError
-from .scan import FigureRef, scan_file
+from .scan import FigureRef, is_artifact_listed, scan_file
 from .texlex import EditBuffer, TexSource
 
 __all__ = ["ApplyPlan", "plan_file", "apply_scope", "escape_description", "DescriptionRejected"]
@@ -136,6 +136,14 @@ def plan_file(
         # `caption` mode works with no worklog on disk at all.
         if captions and _add_caption(plan, reference, source.text):
             plan.captioned += 1
+        # Before the worklog, because a decorative graphic never gets an entry
+        # to look up: the worklog carries `alt_text` and nothing else, so there
+        # is nowhere in it to say "this one is an ornament". The profile is
+        # where that decision is recorded, and it is read straight from there.
+        if is_artifact_listed(reference, profile) and not reference.already_described:
+            _wrap_decorative(plan, reference)
+            plan.artifacts += 1
+            continue
         entry = entries.get(reference.id)
         if entry is None:
             if not captions:
@@ -282,8 +290,8 @@ def _wrap_placeholder(plan: ApplyPlan, reference: FigureRef) -> None:
 
 
 #: Float environments `\caption` is legal inside. A caption anywhere else is a
-#: LaTeX error ("\caption outside float"), so a figure that is not in one of
-#: these is left alone rather than given a caption that breaks the build.
+#: LaTeX error ("\caption outside float"), so a figure with none of these
+#: already around it gets one added -- see `_add_caption`.
 _FLOATS = ("figure", "figure*", "table", "table*")
 
 _CAPTION_CALL = re.compile(r"\\caption\*?\s*(?:\[[^\]]*\])?\s*\{")
@@ -315,14 +323,69 @@ def _enclosing_float(text: str, reference: FigureRef) -> tuple[int, int] | None:
     return None
 
 
+#: pgfplots computes a 3D `axis`'s box from its declared ranges through the
+#: view transform when `height` is unset, and in this corpus that computed box
+#: is far taller than what actually renders -- confirmed by bisection: loading
+#: both `algorithm` and `algpseudocode` (for pseudocode elsewhere in the same
+#: document) is what triggers it, and it reproduces on a plain `\begin{axis}`
+#: with no other figure content involved. An explicit `height` sidesteps the
+#: bad computation entirely, regardless of the value, so the default below is
+#: a reasonable starting point for a `width=\textwidth` axis, not a tuned
+#: constant -- a human is free to adjust it, the same as the caption text.
+_AXIS_HEIGHT_DEFAULT = "6cm"
+_AXIS_OPEN = re.compile(r"\\begin\{axis\}\s*\[")
+_AXIS_HEIGHT_KEY = re.compile(r"\bheight\s*=")
+
+
+def _matching_bracket(text: str, open_pos: int) -> int | None:
+    """Index of the ``]`` matching the ``[`` at ``open_pos``, or None."""
+    depth = 0
+    for index in range(open_pos, len(text)):
+        if text[index] == "[":
+            depth += 1
+        elif text[index] == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _ensure_axis_height(plan: ApplyPlan, reference: FigureRef) -> None:
+    r"""Give every ``\begin{axis}[...]`` in this figure an explicit height.
+
+    Only touches an axis that does not already set one -- an author's own
+    `height` is never overridden. Safe to call on any figure: a plot without
+    pgfplots' `axis` environment (a plain `tikzpicture`, `circuitikz`,
+    `includegraphics`) simply has nothing for ``_AXIS_OPEN`` to match.
+    """
+    text = plan.original
+    for match in _AXIS_OPEN.finditer(text, reference.start, reference.end):
+        open_bracket = match.end() - 1
+        close_bracket = _matching_bracket(text, open_bracket)
+        options = text[open_bracket:close_bracket] if close_bracket else ""
+        if _AXIS_HEIGHT_KEY.search(options):
+            continue
+        plan.buffer.insert(
+            match.end(),
+            f"height={_AXIS_HEIGHT_DEFAULT}, ",
+            reason="pgfplots axis height set explicitly so its caption sits close",
+            rule="APPLY-AXIS-HEIGHT",
+        )
+
+
 def _add_caption(plan: ApplyPlan, reference: FigureRef, text: str) -> bool:
-    r"""Give a float with no caption one for an author to fill in.
+    r"""Give a figure with no caption one for an author to fill in.
 
     Returns whether an edit was recorded. Unlike the alt-text marker, this one
     is *read on the page*: the point of choosing captions over a silent
     ``/Alt`` placeholder is that an unfilled marker is impossible to miss in
     the PDF -- the same guarantee strict mode used to buy with a build failure,
     bought instead with ink.
+
+    A figure with no enclosing float gets one -- ``\caption`` is a hard error
+    outside a float, so giving every undescribed figure a caption (the
+    ``caption`` mode's whole promise, see ``AltChoice``) means giving the ones
+    with nowhere to put it somewhere to put it.
     """
     # NOT `reference.caption`: the scan attributes any `\caption` within 400
     # characters *after* the graphic, so in a file of back-to-back figures the
@@ -331,11 +394,13 @@ def _add_caption(plan: ApplyPlan, reference: FigureRef, text: str) -> bool:
     # the bounded search below actually answers.
     span = _enclosing_float(text, reference)
     if span is None:
-        plan.skipped.append(
-            (reference.id, "not inside a figure or table; \\caption would not compile")
-        )
-        return False
+        return _float_and_caption(plan, reference)
     begin, end = span
+    # Independent of the caption check below on purpose: a figure captioned by
+    # an older run of this tool -- before `_ensure_axis_height` existed -- must
+    # still get its height fixed on a later run, not be skipped as "already
+    # done" because idempotency here is about the caption only.
+    _ensure_axis_height(plan, reference)
     if _CAPTION_CALL.search(text, begin, end):
         return False  # idempotent: a captioned float is left alone
     caption = f"\\caption{{{PLACEHOLDER.format(id=reference.id)}}}"
@@ -361,6 +426,42 @@ def _add_caption(plan: ApplyPlan, reference: FigureRef, text: str) -> bool:
             reason="figure caption marked for a human",
             rule="APPLY-CAPTION",
         )
+    return True
+
+
+def _float_and_caption(plan: ApplyPlan, reference: FigureRef) -> bool:
+    r"""Wrap a floatless figure in ``figure`` so a caption can legally sit on it.
+
+    Only for a figure that already stands on its own line. An inline
+    ``\includegraphics`` mid-sentence cannot be floated without breaking the
+    sentence around it -- the same distinction ``_wrap_described`` and
+    ``_wrap_placeholder`` already draw between their block and inline forms --
+    so that case is left with a caption unwritten and a reason logged, same as
+    before this existed.
+    """
+    if reference.is_raster or _continues_line(plan, reference):
+        plan.skipped.append(
+            (
+                reference.id,
+                "inline in running text; floating it would break the "
+                "sentence around it, so no caption was added",
+            )
+        )
+        return False
+    _ensure_axis_height(plan, reference)
+    caption = f"\\caption{{{PLACEHOLDER.format(id=reference.id)}}}"
+    indent = _indent_of(plan, reference)
+    # `\centering`, matching how every hand-written `\begin{figure}` in this
+    # corpus already sets one up -- an auto-wrapped one left-aligned would read
+    # as damage, not as a figure some author placed there deliberately.
+    plan.buffer.wrap(
+        reference.start,
+        reference.end,
+        f"\\begin{{figure}}[h!]\n{indent}\\centering\n{indent}",
+        f"\n{indent}{caption}\n{indent}\\end{{figure}}",
+        reason="figure floated and captioned so the caption compiles",
+        rule="APPLY-CAPTION-FLOAT",
+    )
     return True
 
 

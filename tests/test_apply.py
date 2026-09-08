@@ -197,3 +197,211 @@ def test_the_long_description_lands_at_the_figure_s_column(
 
     assert "    \\LongDescription{The node sits at the origin.}" in out
     assert "\n\\LongDescription" not in out, "must not land in column 0"
+
+
+def test_a_graphic_on_the_artifact_allowlist_is_wrapped_decorative(
+    profile: Profile, tmp_path: Path
+):
+    r"""A banner listed in the profile becomes an artifact, with no worklog entry.
+
+    The worklog carries `at` and `alt_text` and nothing else, so a disposition
+    computed by the scan does not survive being written to disk and read back.
+    Before this, `_wrap_decorative` was unreachable and the three banners in
+    `profiles/ee66.yaml` needed `\begin{Decorative}` typed around them by hand.
+    """
+    profile.figures.artifact_allowlist = ("figures/Berkeley_banner_1.jpg",)
+    path = tmp_path / "q.tex"
+    path.write_text("\\includegraphics{figures/Berkeley_banner_1.jpg}\n")
+
+    plan = plan_file(path, profile, {})
+
+    assert plan.artifacts == 1
+    assert plan.wrapped == 0
+    out = plan.buffer.apply(plan.original)
+    assert "\\begin{Decorative}" in out
+    assert "\\end{Decorative}" in out
+
+
+def test_an_unlisted_graphic_is_still_described(profile: Profile, tmp_path: Path):
+    """The allowlist is a list, not a heuristic: everything else gets described."""
+    profile.figures.artifact_allowlist = ("figures/Berkeley_banner_1.jpg",)
+    path = tmp_path / "q.tex"
+    path.write_text("\\includegraphics{figures/lefthalfpic.jpg}\n")
+
+    out = _apply(profile, path, description="The left half of the lecture-hall panorama.")
+
+    assert "\\begin{Decorative}" not in out
+    assert "The left half of the lecture-hall panorama." in out
+
+
+def test_wrapping_decorative_twice_changes_nothing(profile: Profile, tmp_path: Path):
+    """Re-running apply must not nest a second artifact inside the first."""
+    profile.figures.artifact_allowlist = ("figures/Berkeley_banner_1.jpg",)
+    path = tmp_path / "q.tex"
+    path.write_text("\\includegraphics{figures/Berkeley_banner_1.jpg}\n")
+
+    once = plan_file(path, profile, {}).buffer.apply(
+        plan_file(path, profile, {}).original
+    )
+    path.write_text(once)
+    again = plan_file(path, profile, {})
+
+    assert again.artifacts == 0
+    assert not again.changed
+
+
+def test_floatless_pgfplots_axis_gets_an_explicit_height(profile: Profile, tmp_path: Path):
+    r"""pgfplots' auto-computed height for an unset 3D `axis` is far taller
+    than what renders in this corpus (confirmed by bisecting a real build:
+    loading both `algorithm` and `algpseudocode` triggers it), so the caption
+    below ends up inches under the picture. An explicit `height` sidesteps the
+    bad computation regardless of its value.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[\n"
+        "      width=\\textwidth, view={60}{30},\n"
+        "  ]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert "\\begin{axis}[height=6cm, " in out
+    # the axis's own options survive untouched, right after the injected one
+    assert "width=\\textwidth, view={60}{30}," in out
+
+
+def test_a_previously_captioned_axis_still_gets_its_height_fixed(
+    profile: Profile, tmp_path: Path
+):
+    r"""The bug this pins: a figure captioned by an older run of this tool --
+    before `_ensure_axis_height` existed -- read as "already done" and was
+    skipped on every later run, silently missing the height fix forever.
+    `_ensure_axis_height` must run independently of the caption idempotency
+    check, not be gated behind "about to add a fresh caption".
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{figure}[h!]\n"
+        "\\centering\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[width=\\textwidth]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\caption{Already here.}\n"
+        "\\end{figure}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert plan.changed
+    assert "height=6cm" in out
+    assert out.count("\\caption{") == 1  # the existing caption, not duplicated
+
+
+def test_axis_with_its_own_height_is_left_alone(profile: Profile, tmp_path: Path):
+    """An author's own `height` is never second-guessed or duplicated."""
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[width=\\textwidth, height=4cm]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert out.count("height=") == 1
+    assert "height=4cm" in out
+
+
+def test_already_floated_pgfplots_axis_also_gets_a_height(
+    profile: Profile, tmp_path: Path
+):
+    """The gap reproduced on a figure someone had already wrapped by hand too --
+    fixed by `_ensure_axis_height` running from the other `_add_caption` branch.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{figure}[h!]\n"
+        "\\centering\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[width=\\textwidth]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{figure}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert "height=6cm" in out
+    assert out.count("\\begin{figure}") == 1  # not re-floated
+
+
+def test_floatless_figure_is_floated_so_its_caption_compiles(
+    profile: Profile, tmp_path: Path
+):
+    r"""`caption` mode's promise is every figure, not just the ones already
+    sitting in a `figure` environment.
+
+    `\caption` outside a float is a hard LaTeX error, so a `tikzpicture`
+    standing alone on its own line gets wrapped in one -- the only way to
+    honour that promise for it.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}\n"
+        "    \\node {1};\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert plan.captioned == 1
+    assert not plan.skipped
+    assert "\\begin{figure}[h!]" in out
+    assert "\\centering" in out
+    assert "\\end{figure}" in out
+    assert out.index("\\begin{tikzpicture}") < out.index("\\caption{<<TODO:")
+    # the drawing between the wrapper's two insertions is untouched
+    assert "\\begin{tikzpicture}\n    \\node {1};\n\\end{tikzpicture}" in out
+
+
+def test_inline_raster_is_left_alone_rather_than_floated(
+    profile: Profile, tmp_path: Path
+):
+    r"""Floating a graphic mid-sentence would break the sentence around it.
+
+    Same call `_wrap_described`/`_wrap_placeholder` already make between their
+    inline and block forms; a caption follows it rather than overriding it.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "See \\includegraphics{figures/diagram.png} above.\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+
+    assert plan.captioned == 0
+    assert plan.skipped and "inline" in plan.skipped[0][1]
+    assert plan.buffer.apply(plan.original) == plan.original
