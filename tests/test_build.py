@@ -1313,7 +1313,7 @@ def test_stale_semester_package_is_repointed_at_this_semester(tmp_path: Path):
     "File `../../fa24.sty' not found" even though `fa26.sty`, the semester the
     driver actually lives under, sits at that exact same depth.
     """
-    from latexally.build import _fix_stale_semester_reference
+    from latexally.build import _fix_stale_relative_package
 
     corpus = tmp_path / "corpus"
     (corpus / "fa26").mkdir(parents=True)
@@ -1325,11 +1325,31 @@ def test_stale_semester_package_is_repointed_at_this_semester(tmp_path: Path):
         "\\usepackage{../../../ee66}\n"
         "\\usepackage{../../fa24}\n"
     )
-    fixed = _fix_stale_semester_reference(text, source_dir, corpus)
+    fixed = _fix_stale_relative_package(text, source_dir, corpus)
 
     assert "\\usepackage{../../fa26}" in fixed
     assert "fa24" not in fixed
-    assert "\\usepackage{../../../ee66}" in fixed  # untouched: not a semester ref
+    assert "\\usepackage{../../../ee66}" in fixed  # untouched: no ee66.sty in this fixture at all
+
+
+def test_same_name_wrong_depth_is_repointed_without_touching_the_name(tmp_path: Path):
+    r"""`fa26/dis/SP24-DISCUSSIONS/1/dis1.tex` also said
+    `\usepackage{../../../ee66}` -- correct for the shallower directory this
+    content was archived from, wrong once `SP24-DISCUSSIONS/` sits between it
+    and the corpus root where `ee66.sty` lives. Not a semester name at all, so
+    only the same-name ancestor search finds this one, not the semester rule.
+    """
+    from latexally.build import _fix_stale_relative_package
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir(parents=True)
+    (corpus / "ee66.sty").write_text("")
+    source_dir = corpus / "fa26" / "dis" / "SP24-DISCUSSIONS" / "1"
+    source_dir.mkdir(parents=True)
+
+    fixed = _fix_stale_relative_package("\\usepackage{../../../ee66}\n", source_dir, corpus)
+
+    assert fixed == "\\usepackage{../../../../ee66}\n"
 
 
 def test_stale_semester_reference_fixed_one_directory_deeper(tmp_path: Path):
@@ -1337,7 +1357,7 @@ def test_stale_semester_reference_fixed_one_directory_deeper(tmp_path: Path):
     deeper, wrong on the dot-count as well as the name -- both must come from
     the driver's real location, not from swapping the name in place.
     """
-    from latexally.build import _fix_stale_semester_reference
+    from latexally.build import _fix_stale_relative_package
 
     corpus = tmp_path / "corpus"
     (corpus / "fa26").mkdir(parents=True)
@@ -1345,7 +1365,7 @@ def test_stale_semester_reference_fixed_one_directory_deeper(tmp_path: Path):
     source_dir = corpus / "fa26" / "dis" / "SP24-DISCUSSIONS" / "1"
     source_dir.mkdir(parents=True)
 
-    fixed = _fix_stale_semester_reference("\\usepackage{../../fa24}\n", source_dir, corpus)
+    fixed = _fix_stale_relative_package("\\usepackage{../../fa24}\n", source_dir, corpus)
 
     assert fixed == "\\usepackage{../../../fa26}\n"
 
@@ -1353,7 +1373,7 @@ def test_stale_semester_reference_fixed_one_directory_deeper(tmp_path: Path):
 def test_a_reference_that_actually_resolves_is_left_alone(tmp_path: Path):
     """An assignment genuinely pinned to an older semester's style on purpose
     is not this bug, and must not be rewritten."""
-    from latexally.build import _fix_stale_semester_reference
+    from latexally.build import _fix_stale_relative_package
 
     corpus = tmp_path / "corpus"
     (corpus / "fa26").mkdir(parents=True)
@@ -1363,21 +1383,21 @@ def test_a_reference_that_actually_resolves_is_left_alone(tmp_path: Path):
     source_dir.mkdir(parents=True)
 
     text = "\\usepackage{../../../fa24}\n"  # resolves: corpus/fa24.sty
-    assert _fix_stale_semester_reference(text, source_dir, corpus) == text
+    assert _fix_stale_relative_package(text, source_dir, corpus) == text
 
 
 def test_no_semester_style_file_here_means_nothing_to_fix(tmp_path: Path):
     """No `<semester>.sty` at all -- not this corpus's convention, or this
     assignment's semester folder does not have one -- so there is nothing to
     confidently repoint a broken reference at."""
-    from latexally.build import _fix_stale_semester_reference
+    from latexally.build import _fix_stale_relative_package
 
     corpus = tmp_path / "corpus"
     source_dir = corpus / "fa26" / "dis" / "02A"
     source_dir.mkdir(parents=True)
 
     text = "\\usepackage{../../fa24}\n"
-    assert _fix_stale_semester_reference(text, source_dir, corpus) == text
+    assert _fix_stale_relative_package(text, source_dir, corpus) == text
 
 
 def test_materialise_writes_the_corrected_reference_into_the_mirror(tmp_path: Path):

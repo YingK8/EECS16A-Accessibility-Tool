@@ -415,58 +415,79 @@ def _reconverted(source: TexSource) -> TexSource:
     return TexSource("".join(kept), path=source.path, encoding=source.encoding)
 
 
-#: `\usepackage{<dots>fa24}` -- a relative path ending in a semester code, with
-#: no `.sty` (`\usepackage` appends it). Deliberately not `find_replacements`'
-#: job: that searches the whole corpus for a historical stand-in when nothing
-#: named this exists anywhere; this is the much narrower, higher-confidence
-#: case where the file one semester dot-count away, under THIS assignment's
-#: own semester folder, already exists and the reference just never got
-#: updated when the driver was cloned from an older one.
-_SEMESTER_PACKAGE = re.compile(
-    r"\\usepackage(?:\[[^\]]*\])?\{((?:\.\./)+)((?:fa|sp|su)\d{2})\}"
+#: `\usepackage{<dots>name}` -- a relative path with no `.sty` (`\usepackage`
+#: appends it). Deliberately not `find_replacements`'s job: that searches the
+#: whole corpus for a historical stand-in when nothing named this exists
+#: anywhere; this is the narrower, higher-confidence case where a file of the
+#: same name -- or this assignment's own semester file -- already exists,
+#: just not at the dot-count the driver wrote.
+_RELATIVE_PACKAGE = re.compile(
+    r"\\usepackage(?:\[[^\]]*\])?\{((?:\.\./)+)([A-Za-z][\w-]*)\}"
 )
 _SEMESTER_NAME = re.compile(r"\A(?:fa|sp|su)\d{2}\Z")
 
 
-def _fix_stale_semester_reference(text: str, source_dir: Path, corpus_root: Path) -> str:
-    r"""Repoint a `\usepackage{<dots>oldsem}` that should name this semester.
+def _fix_stale_relative_package(text: str, source_dir: Path, corpus_root: Path) -> str:
+    r"""Repoint a `\usepackage{<dots>name}` whose dot-count no longer matches
+    where ``<name>.sty`` -- or this driver's own semester's ``.sty`` -- lives.
 
-    Cloning a driver from an old semester and updating everything except one
-    `\usepackage{../../fa24}` line is how ``fa26/dis/02A/sol02A.tex`` ended up
-    unable to find ``fa24.sty``: that path does not resolve, but ``fa26.sty``
-    -- the semester the driver actually lives under -- exists at the exact
-    same depth. ``fa26/dis/SP24-DISCUSSIONS/*`` had the same bug one directory
-    deeper, wrong on both the semester name and the dot-count. Found by
-    bisecting a real build's "File `../../fa24.sty' not found" against the
-    corpus, then confirmed identical across 40+ files sharing one setup commit.
+    Two ways a driver written for one location breaks when reused somewhere
+    else, both found in this corpus and both traced to the same setup commit:
+
+    same name, wrong depth
+        ``fa26/dis/SP24-DISCUSSIONS/1/dis1.tex`` says
+        ``\usepackage{../../../ee66}`` -- correct for the shallower directory
+        this content was archived *from*, wrong now that an extra
+        ``SP24-DISCUSSIONS/`` sits between it and the corpus root where
+        ``ee66.sty`` actually lives. Fixed by walking this driver's own
+        ancestor directories for a ``<name>.sty`` and correcting the
+        dot-count to match wherever it is found.
+    wrong name entirely
+        ``fa26/dis/02A/sol02A.tex`` says ``\usepackage{../../fa24}`` -- cloned
+        from an fa24 driver and never updated to fa26, the semester this
+        driver actually lives under. Only reached when the same-name search
+        above finds nothing, and only when the name looks like a semester
+        code (a strict ``fa|sp|su`` prefix), so ``ee66``, ``markup`` and
+        ``latexally-ee16`` are never second-guessed on shape alone -- `ee66`
+        alone would otherwise parse as a two-letter, two-digit "semester" too.
 
     Only touches a reference that is currently broken (nothing resolves at the
-    path as written) and only when the fix is unambiguous (this assignment's
-    own semester file exists at the corrected depth). A `\usepackage{../../fa24}`
-    that *does* resolve -- an assignment genuinely pinned to an older
-    semester's style on purpose -- is left exactly as written.
+    path as written) and only when the fix is unambiguous (a matching file
+    exists at exactly one corrected depth). A reference that already resolves
+    -- pinned to an older semester's style on purpose, or simply correct -- is
+    left exactly as written.
     """
+    source_dir = source_dir.resolve()
+    corpus_root = corpus_root.resolve()
     try:
-        semester = source_dir.resolve().relative_to(corpus_root.resolve()).parts[0]
+        semester = source_dir.relative_to(corpus_root).parts[0]
     except (ValueError, IndexError):
-        return text
-    if not _SEMESTER_NAME.match(semester):
-        return text
-    correct_root = corpus_root / semester
-    if not (correct_root / f"{semester}.sty").is_file():
-        return text
+        semester = None
+    if semester is not None and not _SEMESTER_NAME.match(semester):
+        semester = None
 
     def _fix(match: re.Match) -> str:
         dots, name = match.group(1), match.group(2)
-        if name == semester:
-            return match.group(0)  # already names this assignment's semester
-        current = source_dir / dots
-        if (current / f"{name}.sty").is_file():
-            return match.group(0)  # resolves as written; a deliberate pin
-        correct_dots = os.path.relpath(correct_root, source_dir).replace(os.sep, "/")
-        return f"\\usepackage{{{correct_dots}/{semester}}}"
+        if (source_dir / dots / f"{name}.sty").is_file():
+            return match.group(0)  # resolves as written
 
-    return _SEMESTER_PACKAGE.sub(_fix, text)
+        ancestor, depth = source_dir.parent, 1
+        while True:
+            if (ancestor / f"{name}.sty").is_file():
+                return f"\\usepackage{{{'../' * depth}{name}}}"
+            if ancestor == corpus_root or ancestor == ancestor.parent:
+                break
+            ancestor, depth = ancestor.parent, depth + 1
+
+        if semester and _SEMESTER_NAME.match(name) and name != semester:
+            correct_root = corpus_root / semester
+            if (correct_root / f"{semester}.sty").is_file():
+                dots = os.path.relpath(correct_root, source_dir).replace(os.sep, "/")
+                return f"\\usepackage{{{dots}/{semester}}}"
+
+        return match.group(0)  # nothing unambiguous to fix
+
+    return _RELATIVE_PACKAGE.sub(_fix, text)
 
 
 def inject(source: TexSource, lines: list[str]) -> str:
@@ -724,7 +745,7 @@ def materialise(
     lines = preamble_for(config, profile) if lines is None else lines
 
     source = _reconverted(TexSource.from_path(source_dir / driver_name))
-    fixed = _fix_stale_semester_reference(source.text, source_dir, root)
+    fixed = _fix_stale_relative_package(source.text, source_dir, root)
     if fixed != source.text:
         source = TexSource(fixed, path=source.path, encoding=source.encoding)
     if config.output.edits_sources:
