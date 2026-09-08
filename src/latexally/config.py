@@ -235,6 +235,20 @@ class CorpusScope:
                     hint="pass a path inside the corpus, or add it to corpus.scopes",
                 ) from exc
             return (f"{relative}/**/*.tex",)
+        if candidate.is_file():
+            # A single file, not a glob: whoever passed one wants that
+            # document, not "everything alongside it that also matches
+            # *.tex" -- `discover_assignments` already expands this to the
+            # assignment's own driver and its full \input closure, the same
+            # as it would for the directory the file lives in.
+            try:
+                relative = candidate.relative_to(self.root.resolve())
+            except ValueError as exc:
+                raise ConfigError(
+                    f"scope {scope!r} is outside the corpus root {self.root}",
+                    hint="pass a path inside the corpus, or add it to corpus.scopes",
+                ) from exc
+            return (relative.as_posix(),)
         if any(ch in scope for ch in "*?["):
             return (scope,)
         raise ConfigError(

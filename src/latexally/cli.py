@@ -425,9 +425,20 @@ def _files_to_check(profile: Profile, scope: str | None) -> set[Path]:
 @main.command()
 @click.argument("scope", required=False)
 @click.option("--write", is_flag=True, help="Actually modify files (default is a dry run).")
+@click.option(
+    "--captions",
+    is_flag=True,
+    help=(
+        "Also add a visible \\caption{} to every figure and table that has "
+        "none. Needs no worklog -- unlike descriptions, a caption is not read "
+        "from one."
+    ),
+)
 @click.option("--show-diff", is_flag=True, help="Print the unified diff for each file.")
 @pass_context
-def apply(ctx: Context, scope: str | None, write: bool, show_diff: bool) -> None:
+def apply(
+    ctx: Context, scope: str | None, write: bool, captions: bool, show_diff: bool
+) -> None:
     r"""Write descriptions into the .tex sources.
 
     Defaults to a dry run. A figure with no description written is skipped
@@ -446,7 +457,11 @@ def apply(ctx: Context, scope: str | None, write: bool, show_diff: bool) -> None
     from .discover import discover_assignments
 
     entries = load_entries(ctx.profile)
-    if not entries:
+    # A worklog is what `scan` produces and what a description gets read from;
+    # `--captions` reads nothing, so this command has no error to report until
+    # it has actually walked the scope and found nothing to do -- reached below
+    # via `plans` coming back empty, the same as any other no-op scope.
+    if not entries and not captions:
         click.echo("error: no worklogs found; run `latexally scan` first", err=True)
         sys.exit(EXIT_ERROR)
 
@@ -459,9 +474,11 @@ def apply(ctx: Context, scope: str | None, write: bool, show_diff: bool) -> None
         scope,
         entries,
         dry_run=not write,
+        captions=captions,
         files=sorted(set(files)) or None,
     )
     wrapped = sum(plan.wrapped for plan in plans)
+    captioned = sum(plan.captioned for plan in plans)
     artifacts = sum(plan.artifacts for plan in plans)
     skipped = [item for plan in plans for item in plan.skipped]
 
@@ -471,6 +488,7 @@ def apply(ctx: Context, scope: str | None, write: bool, show_diff: bool) -> None
                 "dry_run": not write,
                 "files_changed": sum(1 for plan in plans if plan.changed),
                 "figures_wrapped": wrapped,
+                "figures_captioned": captioned,
                 "artifacts_marked": artifacts,
                 "skipped": [{"id": fid, "reason": reason} for fid, reason in skipped],
                 "diffs": {str(plan.path): plan.diff() for plan in plans if show_diff and plan.changed},
@@ -481,7 +499,8 @@ def apply(ctx: Context, scope: str | None, write: bool, show_diff: bool) -> None
         mode = "would change" if not write else "changed"
         console.print(
             f"{mode} [bold]{sum(1 for plan in plans if plan.changed)}[/bold] files: "
-            f"{wrapped} figures described, {artifacts} marked decorative"
+            f"{wrapped} figures described, {captioned} captioned, "
+            f"{artifacts} marked decorative"
         )
         if skipped:
             console.print(f"[yellow]skipped {len(skipped)}[/yellow] (not yet approved):")
@@ -903,15 +922,23 @@ def _report_table(reports: list) -> Table:
 @click.option(
     "--in-place",
     is_flag=True,
-    help="Write the PDF beside the original instead of into the output directory. Refuses on a dirty git worktree.",
+    help="Write the PDF beside the original instead of into the output directory. Refuses on a dirty git worktree (see --allow-dirty).",
 )
 @click.option(
     "--edit",
     is_flag=True,
     help=(
         "Rewrite the corpus .tex in place, so the folder builds with a bare "
-        "pdflatex. Implies --in-place. Refuses on a dirty git worktree; undo "
-        "with `latexally revert`."
+        "pdflatex. Implies --in-place. Refuses on a dirty git worktree (see "
+        "--allow-dirty); undo with `latexally revert`."
+    ),
+)
+@click.option(
+    "--allow-dirty",
+    is_flag=True,
+    help=(
+        "Skip the clean-worktree check for --edit/--in-place. You lose the "
+        "safety net that makes `latexally revert` reliable."
     ),
 )
 @click.option(
@@ -947,7 +974,8 @@ def _report_table(reports: list) -> Table:
     is_flag=True,
     help=(
         "Add a visible \\caption{} to every figure and table that has none, "
-        "for an author to fill in. Floats only."
+        "for an author to fill in. Wraps a bare figure in \\begin{figure} "
+        "first if needed; one inline in running text is left alone."
     ),
 )
 @click.option(
@@ -968,6 +996,7 @@ def build(
     write: bool,
     in_place: bool,
     edit: bool,
+    allow_dirty: bool,
     jobs: int | None,
     question_tags: bool,
     house_colors: bool,
@@ -1006,6 +1035,8 @@ def build(
         config.output = replace(
             config.output, write_mode="edit" if edit else "in-place"
         )
+    if allow_dirty:
+        config.allow_dirty = True
     if jobs is not None:
         config.jobs = jobs
     if question_tags:

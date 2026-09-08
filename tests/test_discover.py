@@ -185,6 +185,20 @@ def test_the_corpus_root_is_not_an_assignment(profile: Profile, empty: str):
         list(iter_selected(profile, config))
 
 
+def test_a_bare_file_scope_still_finds_its_whole_assignment(profile: Profile, corpus: Path):
+    r"""The bug this pins: pointing a scope at one file inside an assignment
+    -- ``sem/hw/3/body.tex``, which \input `q_plot.tex` but has no driver of
+    its own -- raised "unknown scope", because `CorpusScope.patterns_for` only
+    recognised a named scope, a directory, or a glob. A single existing file
+    is none of those, so a person naming the exact file they were looking at
+    (in an editor, say) got refused outright rather than finding what that
+    file belongs to.
+    """
+    scope = "sem/hw/3/body.tex"
+    found = discover_assignments(profile, scope)
+    assert [a.path for a in found] == ["sem/hw/3"]
+
+
 # ---------------------------------------------------------------------- #
 # the include graph
 # ---------------------------------------------------------------------- #
