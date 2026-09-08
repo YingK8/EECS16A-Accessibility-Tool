@@ -1352,6 +1352,43 @@ def test_same_name_wrong_depth_is_repointed_without_touching_the_name(tmp_path: 
     assert fixed == "\\usepackage{../../../../ee66}\n"
 
 
+def test_input_at_the_wrong_depth_is_also_repointed(tmp_path: Path):
+    r"""`fa26/dis/SP24-DISCUSSIONS/1/body.tex` had the identical bug on
+    `\input{../../../questionBank/sec/1/q_vectors}`, not just on the driver's
+    own `\usepackage` lines -- the same archiving-one-level-deeper mistake,
+    on a multi-segment target this time.
+    """
+    from latexally.build import _fix_stale_relative_package
+
+    corpus = tmp_path / "corpus"
+    target = corpus / "questionBank" / "sec" / "1"
+    target.mkdir(parents=True)
+    (target / "q_vectors.tex").write_text("")
+    source_dir = corpus / "fa26" / "dis" / "SP24-DISCUSSIONS" / "1"
+    source_dir.mkdir(parents=True)
+
+    fixed = _fix_stale_relative_package(
+        "\\input{../../../questionBank/sec/1/q_vectors}\n", source_dir, corpus
+    )
+
+    assert fixed == "\\input{../../../../questionBank/sec/1/q_vectors}\n"
+
+
+def test_input_that_already_resolves_is_left_alone(tmp_path: Path):
+    """`\\input{../preambleFa24}` (one level up, correct as written) must not
+    be touched just because it has dots in it."""
+    from latexally.build import _fix_stale_relative_package
+
+    corpus = tmp_path / "corpus"
+    (corpus / "fa26" / "dis").mkdir(parents=True)
+    (corpus / "fa26" / "dis" / "preambleFa24.tex").write_text("")
+    source_dir = corpus / "fa26" / "dis" / "02A"
+    source_dir.mkdir(parents=True)
+
+    text = "\\input{../preambleFa24}\n"
+    assert _fix_stale_relative_package(text, source_dir, corpus) == text
+
+
 def test_stale_semester_reference_fixed_one_directory_deeper(tmp_path: Path):
     r"""`fa26/dis/SP24-DISCUSSIONS/1/dis1.tex` had the same bug one level
     deeper, wrong on the dot-count as well as the name -- both must come from

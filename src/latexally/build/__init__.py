@@ -415,33 +415,53 @@ def _reconverted(source: TexSource) -> TexSource:
     return TexSource("".join(kept), path=source.path, encoding=source.encoding)
 
 
-#: `\usepackage{<dots>name}` -- a relative path with no `.sty` (`\usepackage`
-#: appends it). Deliberately not `find_replacements`'s job: that searches the
-#: whole corpus for a historical stand-in when nothing named this exists
-#: anywhere; this is the narrower, higher-confidence case where a file of the
-#: same name -- or this assignment's own semester file -- already exists,
-#: just not at the dot-count the driver wrote.
+#: `\usepackage{<dots>name}` (no `.sty`; `\usepackage` appends it) and
+#: `\input{<dots>path}` (no `.tex`; `\input` appends it, and `path` itself may
+#: have more `/`s, e.g. `questionBank/sec/1/q_vectors`). Deliberately not
+#: `find_replacements`'s job: that searches the whole corpus for a historical
+#: stand-in when nothing named this exists anywhere; this is the narrower,
+#: higher-confidence case where a file of the same name -- or this driver's
+#: own semester file -- already exists, just not at the dot-count written.
 _RELATIVE_PACKAGE = re.compile(
     r"\\usepackage(?:\[[^\]]*\])?\{((?:\.\./)+)([A-Za-z][\w-]*)\}"
+)
+_RELATIVE_INPUT = re.compile(
+    r"\\input\{((?:\.\./)+)([A-Za-z0-9_./-]+?)(?:\.tex)?\}"
 )
 _SEMESTER_NAME = re.compile(r"\A(?:fa|sp|su)\d{2}\Z")
 
 
-def _fix_stale_relative_package(text: str, source_dir: Path, corpus_root: Path) -> str:
-    r"""Repoint a `\usepackage{<dots>name}` whose dot-count no longer matches
-    where ``<name>.sty`` -- or this driver's own semester's ``.sty`` -- lives.
+def _corrected_depth(source_dir: Path, corpus_root: Path, target: str) -> str | None:
+    """The `../`-string that reaches `<ancestor>/<target>` from `source_dir`,
+    walking `source_dir`'s own ancestors up to `corpus_root`, or None if no
+    ancestor has it.
+    """
+    ancestor, depth = source_dir.parent, 1
+    while True:
+        if (ancestor / target).is_file():
+            return "../" * depth
+        if ancestor == corpus_root or ancestor == ancestor.parent:
+            return None
+        ancestor, depth = ancestor.parent, depth + 1
 
-    Two ways a driver written for one location breaks when reused somewhere
-    else, both found in this corpus and both traced to the same setup commit:
+
+def _fix_stale_relative_package(text: str, source_dir: Path, corpus_root: Path) -> str:
+    r"""Repoint a `\usepackage{<dots>name}` or `\input{<dots>path}` whose
+    dot-count no longer matches where the file it names actually lives.
+
+    Three ways a driver written for one location breaks when reused
+    somewhere else, all found in this corpus and all traced to one setup
+    commit:
 
     same name, wrong depth
         ``fa26/dis/SP24-DISCUSSIONS/1/dis1.tex`` says
         ``\usepackage{../../../ee66}`` -- correct for the shallower directory
         this content was archived *from*, wrong now that an extra
         ``SP24-DISCUSSIONS/`` sits between it and the corpus root where
-        ``ee66.sty`` actually lives. Fixed by walking this driver's own
-        ancestor directories for a ``<name>.sty`` and correcting the
-        dot-count to match wherever it is found.
+        ``ee66.sty`` actually lives. Its ``body.tex`` has the identical bug on
+        ``\input{../../../questionBank/sec/1/q_vectors}``. Fixed by walking
+        this driver's own ancestor directories for the same target and
+        correcting the dot-count to wherever it is found.
     wrong name entirely
         ``fa26/dis/02A/sol02A.tex`` says ``\usepackage{../../fa24}`` -- cloned
         from an fa24 driver and never updated to fa26, the semester this
@@ -466,18 +486,14 @@ def _fix_stale_relative_package(text: str, source_dir: Path, corpus_root: Path) 
     if semester is not None and not _SEMESTER_NAME.match(semester):
         semester = None
 
-    def _fix(match: re.Match) -> str:
+    def _fix_package(match: re.Match) -> str:
         dots, name = match.group(1), match.group(2)
         if (source_dir / dots / f"{name}.sty").is_file():
             return match.group(0)  # resolves as written
 
-        ancestor, depth = source_dir.parent, 1
-        while True:
-            if (ancestor / f"{name}.sty").is_file():
-                return f"\\usepackage{{{'../' * depth}{name}}}"
-            if ancestor == corpus_root or ancestor == ancestor.parent:
-                break
-            ancestor, depth = ancestor.parent, depth + 1
+        found = _corrected_depth(source_dir, corpus_root, f"{name}.sty")
+        if found is not None:
+            return f"\\usepackage{{{found}{name}}}"
 
         if semester and _SEMESTER_NAME.match(name) and name != semester:
             correct_root = corpus_root / semester
@@ -487,7 +503,18 @@ def _fix_stale_relative_package(text: str, source_dir: Path, corpus_root: Path) 
 
         return match.group(0)  # nothing unambiguous to fix
 
-    return _RELATIVE_PACKAGE.sub(_fix, text)
+    def _fix_input(match: re.Match) -> str:
+        dots, target = match.group(1), match.group(2)
+        if (source_dir / dots / f"{target}.tex").is_file():
+            return match.group(0)  # resolves as written
+
+        found = _corrected_depth(source_dir, corpus_root, f"{target}.tex")
+        if found is not None:
+            return f"\\input{{{found}{target}}}"
+        return match.group(0)
+
+    text = _RELATIVE_PACKAGE.sub(_fix_package, text)
+    return _RELATIVE_INPUT.sub(_fix_input, text)
 
 
 def inject(source: TexSource, lines: list[str]) -> str:
