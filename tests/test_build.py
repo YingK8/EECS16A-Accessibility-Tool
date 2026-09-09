@@ -1456,3 +1456,86 @@ def test_materialise_writes_the_corrected_reference_into_the_mirror(tmp_path: Pa
     prepared = materialise(assignment, config, profile, lines=[])
 
     assert "\\usepackage{../../fa26}" in prepared.driver.read_text()
+
+
+def test_caption_inside_a_colored_wrapper_is_patched_to_match(tmp_path: Path):
+    r"""The bug this pins: a float does not inherit ambient `\color` at all --
+    confirmed with a minimal `pdflatex` reproduction, not just observed on the
+    corpus -- so `\caption{...}` inside `\ans{...\begin{figure}...\end{figure}}`
+    rendered in the document's default colour while "Answer:" and everything
+    else in `\ans` rendered in `solutionColor`. `\color{.}` (xcolor's "current
+    colour") does not fix it either -- also confirmed -- because it is already
+    wrong by the time it runs inside the float.
+    """
+    from latexally.build import _fix_uncolored_captions_in_wrappers
+
+    text = (
+        "\\newcommand{\\ans}[1]{{\\color{solutionColor} \\textbf{Answer: } #1}}\n"
+    )
+    fixed = _fix_uncolored_captions_in_wrappers(text)
+
+    assert "\\let\\allyoldcaption\\caption" in fixed
+    assert "\\renewcommand{\\caption}[1]{\\allyoldcaption{\\color{solutionColor}##1}}" in fixed
+    # the original body survives untouched, right after the patch
+    assert fixed.endswith("\\textbf{Answer: } #1}}\n")
+
+
+def test_every_colored_wrapper_gets_patched_under_its_own_name_and_colour(tmp_path: Path):
+    """Not hardcoded to `\\ans` -- `\\sol` and `\\solans` are the same shape
+    under different names and different colours, and this corpus defines all
+    three."""
+    from latexally.build import _fix_uncolored_captions_in_wrappers
+
+    text = (
+        "\\newcommand{\\sol}[1]{{\\color{blue} \\textbf{Solution: } #1}}\n"
+        "\\newcommand{\\ans}[1]{{\\color{solutionColor} \\textbf{Answer: } #1}}\n"
+        "\\newcommand{\\solans}[1]{{\\color{solansColor} \\textbf{Answer: } #1}}\n"
+    )
+    fixed = _fix_uncolored_captions_in_wrappers(text)
+
+    assert fixed.count("\\let\\allyoldcaption\\caption") == 3
+    assert "\\color{blue}##1" in fixed
+    assert "\\color{solutionColor}##1" in fixed
+    assert "\\color{solansColor}##1" in fixed
+
+
+def test_an_already_patched_wrapper_is_not_patched_twice(tmp_path: Path):
+    """Idempotent across runs, the same guarantee every other rewrite here
+    gives: applying it to its own output must change nothing further."""
+    from latexally.build import _fix_uncolored_captions_in_wrappers
+
+    text = "\\newcommand{\\ans}[1]{{\\color{solutionColor} \\textbf{Answer: } #1}}\n"
+    once = _fix_uncolored_captions_in_wrappers(text)
+    twice = _fix_uncolored_captions_in_wrappers(once)
+
+    assert twice == once
+    assert once.count("\\let\\allyoldcaption\\caption") == 1
+
+
+def test_a_single_brace_wrapper_is_not_touched(tmp_path: Path):
+    r"""`\color` in a single-brace body already leaks past the macro call --
+    a real bug in whatever driver does that, not this one -- so it is not
+    this corpus's convention and not a shape this rewrite recognises."""
+    from latexally.build import _fix_uncolored_captions_in_wrappers
+
+    text = "\\newcommand{\\ans}[1]{\\color{solutionColor} \\textbf{Answer: } #1}\n"
+    assert _fix_uncolored_captions_in_wrappers(text) == text
+
+
+def test_materialise_patches_the_mirror_driver_for_captions_too(tmp_path: Path):
+    """End to end through `materialise`, same as the semester-reference fix."""
+    corpus = tmp_path / "corpus"
+    folder = corpus / "fa26" / "dis" / "02A"
+    folder.mkdir(parents=True)
+    (folder / "sol02A.tex").write_text(
+        "\\newcommand{\\ans}[1]{{\\color{solutionColor} \\textbf{Answer: } #1}}\n"
+        "\\begin{document}x\\end{document}\n"
+    )
+
+    profile = Profile(name="test", corpus=CorpusScope(root=corpus, include=("**/*.tex",)))
+    assignment = Assignment(path="fa26/dis/02A", kind="discussion", driver="sol02A.tex")
+    config = RunConfig(output=Output(root=tmp_path / "out", write_mode="mirror"), write=True)
+
+    prepared = materialise(assignment, config, profile, lines=[])
+
+    assert "\\let\\allyoldcaption\\caption" in prepared.driver.read_text()

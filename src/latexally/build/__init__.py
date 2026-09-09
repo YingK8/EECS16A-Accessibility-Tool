@@ -517,6 +517,57 @@ def _fix_stale_relative_package(text: str, source_dir: Path, corpus_root: Path) 
     return _RELATIVE_INPUT.sub(_fix_input, text)
 
 
+#: `\newcommand{\ans}[1]{{\color{solutionColor} ... #1}}` -- this corpus's
+#: convention for "wrap an answer/solution in its section colour", under
+#: whatever name a driver gives it (`\ans`, `\sol`, `\solans`, ...). The double
+#: brace is what makes `\color` (and the patch below) local to this macro's
+#: own group; a single-brace body would leak the colour past the call site
+#: and is not a shape this corpus uses.
+_COLORED_WRAPPER = re.compile(
+    r"\\(?:re)?newcommand\{\\[A-Za-z@]+\}(?:\[1\])?\{\{\\color\{([A-Za-z0-9]+)\}"
+)
+_CAPTION_PATCH_NAME = "allyoldcaption"
+
+
+def _fix_uncolored_captions_in_wrappers(text: str) -> str:
+    r"""Make a `\caption` typeset inside a colour-wrapping macro match that colour.
+
+    A float does not inherit ambient `\color` at all -- confirmed by a minimal
+    reproduction, not just observed here -- so `\caption{<<TODO:id>>}` inside
+    `\ans{...\begin{figure}...\caption{...}...}` renders in the document's
+    default colour while "Answer:" and everything else in `\ans` renders in
+    `solutionColor`. Capturing "the current colour" at the figure and replaying
+    it (`\color{.}`, or xcolor's `\current@color` token) does not work either --
+    both are already wrong by the time they run, inside the float. Only a
+    *literal* colour name, given at the point `\caption` is actually invoked,
+    survives being placed by the float mechanism -- verified the same way.
+
+    So this locally redefines `\caption`, once, wherever the wrapping macro
+    itself sets the colour: baking the literal name into `\caption`'s own body
+    means it is replayed correctly no matter how deep in a float it fires,
+    without this tool ever needing to know which colour is active at any given
+    figure -- it only has to see the macro that sets it, which is the shared
+    part, however many drivers duplicate it.
+
+    Reaches only a driver's own preamble, never the shared question banks:
+    `apply.py`, which edits those, cannot see which macro (if any) will wrap a
+    given figure -- that is decided per driver, not in the file it edits.
+    """
+
+    def _patch(match: re.Match) -> str:
+        color = match.group(1)
+        tail = text[match.end() : match.end() + 300]
+        if _CAPTION_PATCH_NAME in tail:
+            return match.group(0)  # idempotent: already patched by an earlier run
+        patch = (
+            f" \\let\\{_CAPTION_PATCH_NAME}\\caption"
+            f"\\renewcommand{{\\caption}}[1]{{\\{_CAPTION_PATCH_NAME}{{\\color{{{color}}}##1}}}}"
+        )
+        return match.group(0) + patch
+
+    return _COLORED_WRAPPER.sub(_patch, text)
+
+
 def inject(source: TexSource, lines: list[str]) -> str:
     """Return the driver text with the conversion lines added.
 
@@ -773,6 +824,7 @@ def materialise(
 
     source = _reconverted(TexSource.from_path(source_dir / driver_name))
     fixed = _fix_stale_relative_package(source.text, source_dir, root)
+    fixed = _fix_uncolored_captions_in_wrappers(fixed)
     if fixed != source.text:
         source = TexSource(fixed, path=source.path, encoding=source.encoding)
     if config.output.edits_sources:
