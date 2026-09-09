@@ -276,7 +276,7 @@ def test_floatless_pgfplots_axis_gets_a_proportional_height(
     plan = plan_file(path, profile, {}, captions=True)
     out = plan.buffer.apply(plan.original)
 
-    assert "\\begin{axis}[height=0.4\\textwidth, " in out
+    assert "\\begin{axis}[height=0.6\\textwidth, " in out
     # the axis's own options survive untouched, right after the injected one
     assert "width=\\textwidth, view={60}{30}," in out
 
@@ -300,7 +300,7 @@ def test_axis_height_falls_back_to_linewidth_with_no_declared_width(
     plan = plan_file(path, profile, {}, captions=True)
     out = plan.buffer.apply(plan.original)
 
-    assert "height=0.4\\linewidth" in out
+    assert "height=0.6\\linewidth" in out
 
 
 def test_a_previously_captioned_axis_still_gets_its_height_fixed(
@@ -329,8 +329,96 @@ def test_a_previously_captioned_axis_still_gets_its_height_fixed(
     out = plan.buffer.apply(plan.original)
 
     assert plan.changed
-    assert "height=0.4\\textwidth" in out
+    assert "height=0.6\\textwidth" in out
     assert out.count("\\caption{") == 1  # the existing caption, not duplicated
+
+
+def test_floatless_pgfplots_axis_gets_trimmed(profile: Profile, tmp_path: Path):
+    r"""A 3D `axis` with `axis lines=middle` draws its lines to the full
+    declared xmin/xmax/ymin/ymax, not to where the data actually ends, so
+    `\centering` correctly centers a bounding box whose visibly inked content
+    reads as off-center anyway. `trim axis left/right` is pgfplots' own fix
+    for exactly this -- verified against a real render, not just added on
+    the strength of the documentation.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[width=\\textwidth]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert "\\begin{tikzpicture}[trim axis left, trim axis right]" in out
+
+
+def test_trim_is_appended_to_a_tikzpicture_with_its_own_options(
+    profile: Profile, tmp_path: Path
+):
+    """An author's own `tikzpicture` options (a scale, an anchor) are kept,
+    not replaced."""
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}[scale=0.8]\n"
+        "  \\begin{axis}[width=\\textwidth]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert (
+        "\\begin{tikzpicture}[trim axis left, trim axis right, scale=0.8]" in out
+    )
+
+
+def test_a_tikzpicture_with_no_axis_is_never_trimmed(profile: Profile, tmp_path: Path):
+    r"""`trim axis left`/`right` are pgfplots' own keys -- adding them to a
+    plain `tikzpicture` (a node diagram, a `circuitikz`) with no `axis`
+    inside risks an unknown-key error in a document that never loaded
+    pgfplots at all."""
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}\n"
+        "  \\node {1};\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert "trim axis" not in out
+
+
+def test_an_axis_already_trimmed_is_not_trimmed_twice(profile: Profile, tmp_path: Path):
+    """Idempotent, the same guarantee `_ensure_axis_height` gives."""
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}[trim axis left, trim axis right]\n"
+        "  \\begin{axis}[width=\\textwidth]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert out.count("trim axis left") == 1
 
 
 def test_axis_with_its_own_height_is_left_alone(profile: Profile, tmp_path: Path):
@@ -374,7 +462,7 @@ def test_already_floated_pgfplots_axis_also_gets_a_height(
     plan = plan_file(path, profile, {}, captions=True)
     out = plan.buffer.apply(plan.original)
 
-    assert "height=0.4\\textwidth" in out
+    assert "height=0.6\\textwidth" in out
     assert out.count("\\begin{figure}") == 1  # not re-floated
 
 

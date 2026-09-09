@@ -346,10 +346,28 @@ def _enclosing_float(text: str, reference: FigureRef) -> tuple[int, int] | None:
 #: ``\linewidth``, the only shapes ever seen here) -- an explicit unit-bearing
 #: width (``8cm``) instead goes through PGF's own braced arithmetic, which
 #: does not touch `\dimexpr` either.
-_AXIS_HEIGHT_FACTOR = "0.4"
+#:
+#: 0.6, not 0.4: measured directly against a real render of
+#: ``fa26/dis/02A/sol02A.tex`` -- **[verified]** -- 0.4 read as visibly
+#: squashed once ``trim axis left/right`` (below) was also in place.
+_AXIS_HEIGHT_FACTOR = "0.6"
 _AXIS_OPEN = re.compile(r"\\begin\{axis\}\s*\[")
 _AXIS_HEIGHT_KEY = re.compile(r"\bheight\s*=")
 _AXIS_WIDTH_KEY = re.compile(r"\bwidth\s*=\s*([^,\]]+)")
+
+#: A 3D `axis` with `axis lines=middle` draws its lines out to the full
+#: declared xmin/xmax/ymin/ymax, not to where the data actually ends --
+#: `q_span_basics.tex`'s v1/v2 vectors reach roughly x=2 inside an
+#: xmin=-2/xmax=5 range, for instance. `\centering` correctly centers the
+#: *bounding box* (checkable independently of this: the caption directly
+#: below sits exactly on the page's true center), but that box includes the
+#: mostly-empty axis-line extent past the data, so the visibly inked content
+#: reads as off-center even though the box is not. `trim axis left/right` is
+#: pgfplots' own answer to exactly this -- **[verified]** moved the measured
+#: midpoint of the visible content markedly closer to the page's true center
+#: on a real render, not just in theory.
+_TIKZ_OPEN = re.compile(r"\\begin\{tikzpicture\}(\s*\[)?")
+_TRIM_AXIS_KEY = re.compile(r"\btrim axis (?:left|right)\b")
 
 
 def _matching_bracket(text: str, open_pos: int) -> int | None:
@@ -398,6 +416,39 @@ def _ensure_axis_height(plan: ApplyPlan, reference: FigureRef) -> None:
         )
 
 
+def _ensure_axis_trim(plan: ApplyPlan, reference: FigureRef) -> None:
+    r"""Trim a pgfplots `axis`'s unused line-extent from its `tikzpicture`,
+    so `\centering` centers the visibly inked content, not empty axis line.
+
+    Only touches a `tikzpicture` that actually contains a pgfplots `axis` --
+    `trim axis left`/`right` are pgfplots' own keys, registered only once
+    pgfplots is loaded, so adding them to a plain `tikzpicture` (a node
+    diagram, a `circuitikz`) with no `axis` inside risks an unknown-key error
+    for a package that was never asked to be there.
+    """
+    text = plan.original
+    if not _AXIS_OPEN.search(text, reference.start, reference.end):
+        return
+    match = _TIKZ_OPEN.match(text, reference.start)
+    if match is None:
+        return
+    if match.group(1):  # already has its own [...] options
+        open_bracket = match.end() - 1
+        close_bracket = _matching_bracket(text, open_bracket)
+        options = text[open_bracket:close_bracket] if close_bracket else ""
+        if _TRIM_AXIS_KEY.search(options):
+            return
+        insertion = "trim axis left, trim axis right, "
+    else:
+        insertion = "[trim axis left, trim axis right]"
+    plan.buffer.insert(
+        match.end(),
+        insertion,
+        reason="pgfplots axis trimmed so \\centering centers the inked content",
+        rule="APPLY-AXIS-TRIM",
+    )
+
+
 def _add_caption(plan: ApplyPlan, reference: FigureRef, text: str) -> bool:
     r"""Give a figure with no caption one for an author to fill in.
 
@@ -422,10 +473,11 @@ def _add_caption(plan: ApplyPlan, reference: FigureRef, text: str) -> bool:
         return _float_and_caption(plan, reference)
     begin, end = span
     # Independent of the caption check below on purpose: a figure captioned by
-    # an older run of this tool -- before `_ensure_axis_height` existed -- must
-    # still get its height fixed on a later run, not be skipped as "already
-    # done" because idempotency here is about the caption only.
+    # an older run of this tool -- before `_ensure_axis_height`/`_ensure_axis_trim`
+    # existed -- must still get them fixed on a later run, not be skipped as
+    # "already done" because idempotency here is about the caption only.
     _ensure_axis_height(plan, reference)
+    _ensure_axis_trim(plan, reference)
     if _CAPTION_CALL.search(text, begin, end):
         return False  # idempotent: a captioned float is left alone
     caption = f"\\caption{{{PLACEHOLDER.format(id=reference.id)}}}"
@@ -474,6 +526,7 @@ def _float_and_caption(plan: ApplyPlan, reference: FigureRef) -> bool:
         )
         return False
     _ensure_axis_height(plan, reference)
+    _ensure_axis_trim(plan, reference)
     caption = f"\\caption{{{PLACEHOLDER.format(id=reference.id)}}}"
     indent = _indent_of(plan, reference)
     # `\centering`, matching how every hand-written `\begin{figure}` in this
