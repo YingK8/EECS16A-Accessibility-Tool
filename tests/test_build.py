@@ -1475,7 +1475,13 @@ def test_caption_inside_a_colored_wrapper_is_patched_to_match(tmp_path: Path):
     fixed = _fix_uncolored_captions_in_wrappers(text)
 
     assert "\\let\\allyoldcaption\\caption" in fixed
-    assert "\\renewcommand{\\caption}[1]{\\allyoldcaption{\\color{solutionColor}##1}}" in fixed
+    # colours the whole call, not just the argument: `\@makecaption` generates
+    # "Figure N: " itself, outside `##1`, so colouring only the argument left
+    # the label black -- found by checking the actual rendering.
+    assert (
+        "\\renewcommand{\\caption}[1]{{\\color{solutionColor}\\allyoldcaption{##1}}}"
+        in fixed
+    )
     # the original body survives untouched, right after the patch
     assert fixed.endswith("\\textbf{Answer: } #1}}\n")
 
@@ -1494,9 +1500,9 @@ def test_every_colored_wrapper_gets_patched_under_its_own_name_and_colour(tmp_pa
     fixed = _fix_uncolored_captions_in_wrappers(text)
 
     assert fixed.count("\\let\\allyoldcaption\\caption") == 3
-    assert "\\color{blue}##1" in fixed
-    assert "\\color{solutionColor}##1" in fixed
-    assert "\\color{solansColor}##1" in fixed
+    assert "\\color{blue}\\allyoldcaption{##1}" in fixed
+    assert "\\color{solutionColor}\\allyoldcaption{##1}" in fixed
+    assert "\\color{solansColor}\\allyoldcaption{##1}" in fixed
 
 
 def test_an_already_patched_wrapper_is_not_patched_twice(tmp_path: Path):

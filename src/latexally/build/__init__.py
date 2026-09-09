@@ -559,9 +559,15 @@ def _fix_uncolored_captions_in_wrappers(text: str) -> str:
         tail = text[match.end() : match.end() + 300]
         if _CAPTION_PATCH_NAME in tail:
             return match.group(0)  # idempotent: already patched by an earlier run
+        # The colour wraps the whole call, not just `##1`: `\@makecaption`
+        # generates "Figure N: " itself, outside the argument, so colouring
+        # only the argument left the number/label black while the text after
+        # it was correctly coloured -- found by checking the actual rendering,
+        # not just that some part of the caption picked up the colour.
         patch = (
             f" \\let\\{_CAPTION_PATCH_NAME}\\caption"
-            f"\\renewcommand{{\\caption}}[1]{{\\{_CAPTION_PATCH_NAME}{{\\color{{{color}}}##1}}}}"
+            f"\\renewcommand{{\\caption}}[1]{{{{\\color{{{color}}}"
+            f"\\{_CAPTION_PATCH_NAME}{{##1}}}}}}"
         )
         return match.group(0) + patch
 
