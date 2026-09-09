@@ -250,6 +250,134 @@ def test_wrapping_decorative_twice_changes_nothing(profile: Profile, tmp_path: P
     assert not again.changed
 
 
+def test_floatless_pgfplots_axis_gets_a_proportional_height(
+    profile: Profile, tmp_path: Path
+):
+    r"""pgfplots' auto-computed height for an unset 3D `axis` is far taller
+    than what renders in this corpus (confirmed by bisecting a real build:
+    loading both `algorithm` and `algpseudocode` triggers it), so the caption
+    below ends up inches under the picture. An explicit `height` sidesteps the
+    bad computation -- and a flat constant looked disproportionate on an axis
+    with a different width, so this scales to the axis's own `width` instead.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[\n"
+        "      width=\\textwidth, view={60}{30},\n"
+        "  ]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert "\\begin{axis}[height=\\dimexpr 0.4*\\textwidth\\relax, " in out
+    # the axis's own options survive untouched, right after the injected one
+    assert "width=\\textwidth, view={60}{30}," in out
+
+
+def test_axis_height_falls_back_to_linewidth_with_no_declared_width(
+    profile: Profile, tmp_path: Path
+):
+    """An axis with no `width=` of its own still gets a proportional height,
+    scaled against `\\linewidth` rather than a number with no basis at all."""
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[view={60}{30}]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert "height=\\dimexpr 0.4*\\linewidth\\relax" in out
+
+
+def test_a_previously_captioned_axis_still_gets_its_height_fixed(
+    profile: Profile, tmp_path: Path
+):
+    r"""The bug this pins: a figure captioned by an older run of this tool --
+    before `_ensure_axis_height` existed -- read as "already done" and was
+    skipped on every later run, silently missing the height fix forever.
+    `_ensure_axis_height` must run independently of the caption idempotency
+    check, not be gated behind "about to add a fresh caption".
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{figure}[h!]\n"
+        "\\centering\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[width=\\textwidth]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\caption{Already here.}\n"
+        "\\end{figure}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert plan.changed
+    assert "height=\\dimexpr 0.4*\\textwidth\\relax" in out
+    assert out.count("\\caption{") == 1  # the existing caption, not duplicated
+
+
+def test_axis_with_its_own_height_is_left_alone(profile: Profile, tmp_path: Path):
+    """An author's own `height` is never second-guessed or duplicated."""
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[width=\\textwidth, height=4cm]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert out.count("height=") == 1
+    assert "height=4cm" in out
+
+
+def test_already_floated_pgfplots_axis_also_gets_a_height(
+    profile: Profile, tmp_path: Path
+):
+    """The gap reproduced on a figure someone had already wrapped by hand too --
+    fixed by `_ensure_axis_height` running from the other `_add_caption` branch.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{figure}[h!]\n"
+        "\\centering\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[width=\\textwidth]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{figure}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert "height=\\dimexpr 0.4*\\textwidth\\relax" in out
+    assert out.count("\\begin{figure}") == 1  # not re-floated
+
+
 def test_floatless_figure_is_floated_so_its_caption_compiles(
     profile: Profile, tmp_path: Path
 ):

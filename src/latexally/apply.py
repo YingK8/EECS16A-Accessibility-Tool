@@ -323,6 +323,66 @@ def _enclosing_float(text: str, reference: FigureRef) -> tuple[int, int] | None:
     return None
 
 
+#: pgfplots computes a 3D `axis`'s box from its declared ranges through the
+#: view transform when `height` is unset, and in this corpus that computed box
+#: is far taller than what actually renders -- confirmed by bisection: loading
+#: both `algorithm` and `algpseudocode` (for pseudocode elsewhere in the same
+#: document) is what triggers it, and it reproduces on a plain `\begin{axis}`
+#: with no other figure content involved. An explicit `height` sidesteps the
+#: bad computation entirely, regardless of the value -- but a flat constant
+#: looks disproportionate on an axis whose own `width` differs from the one it
+#: was tuned against, so this scales to whatever `width` the axis itself
+#: already declares (``\linewidth`` when it declares none) rather than
+#: reusing one number everywhere.
+_AXIS_HEIGHT_FACTOR = "0.4"
+_AXIS_OPEN = re.compile(r"\\begin\{axis\}\s*\[")
+_AXIS_HEIGHT_KEY = re.compile(r"\bheight\s*=")
+_AXIS_WIDTH_KEY = re.compile(r"\bwidth\s*=\s*([^,\]]+)")
+
+
+def _matching_bracket(text: str, open_pos: int) -> int | None:
+    """Index of the ``]`` matching the ``[`` at ``open_pos``, or None."""
+    depth = 0
+    for index in range(open_pos, len(text)):
+        if text[index] == "[":
+            depth += 1
+        elif text[index] == "]":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _ensure_axis_height(plan: ApplyPlan, reference: FigureRef) -> None:
+    r"""Give every ``\begin{axis}[...]`` in this figure an explicit height,
+    proportional to whatever width it already declares.
+
+    Only touches an axis that does not already set one -- an author's own
+    `height` is never overridden. Safe to call on any figure: a plot without
+    pgfplots' `axis` environment (a plain `tikzpicture`, `circuitikz`,
+    `includegraphics`) simply has nothing for ``_AXIS_OPEN`` to match.
+    """
+    text = plan.original
+    for match in _AXIS_OPEN.finditer(text, reference.start, reference.end):
+        open_bracket = match.end() - 1
+        close_bracket = _matching_bracket(text, open_bracket)
+        options = text[open_bracket:close_bracket] if close_bracket else ""
+        if _AXIS_HEIGHT_KEY.search(options):
+            continue
+        width_match = _AXIS_WIDTH_KEY.search(options)
+        width = width_match.group(1).strip() if width_match else "\\linewidth"
+        height = f"\\dimexpr {_AXIS_HEIGHT_FACTOR}*{width}\\relax"
+        plan.buffer.insert(
+            match.end(),
+            f"height={height}, ",
+            reason=(
+                "pgfplots axis height set explicitly, proportional to its own "
+                "width, so its caption sits close"
+            ),
+            rule="APPLY-AXIS-HEIGHT",
+        )
+
+
 def _add_caption(plan: ApplyPlan, reference: FigureRef, text: str) -> bool:
     r"""Give a figure with no caption one for an author to fill in.
 
@@ -346,6 +406,11 @@ def _add_caption(plan: ApplyPlan, reference: FigureRef, text: str) -> bool:
     if span is None:
         return _float_and_caption(plan, reference)
     begin, end = span
+    # Independent of the caption check below on purpose: a figure captioned by
+    # an older run of this tool -- before `_ensure_axis_height` existed -- must
+    # still get its height fixed on a later run, not be skipped as "already
+    # done" because idempotency here is about the caption only.
+    _ensure_axis_height(plan, reference)
     if _CAPTION_CALL.search(text, begin, end):
         return False  # idempotent: a captioned float is left alone
     caption = f"\\caption{{{PLACEHOLDER.format(id=reference.id)}}}"
@@ -393,6 +458,7 @@ def _float_and_caption(plan: ApplyPlan, reference: FigureRef) -> bool:
             )
         )
         return False
+    _ensure_axis_height(plan, reference)
     caption = f"\\caption{{{PLACEHOLDER.format(id=reference.id)}}}"
     indent = _indent_of(plan, reference)
     # `\centering`, matching how every hand-written `\begin{figure}` in this
