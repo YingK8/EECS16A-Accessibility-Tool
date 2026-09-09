@@ -528,6 +528,17 @@ _COLORED_WRAPPER = re.compile(
 )
 _CAPTION_PATCH_NAME = "allyoldcaption"
 
+#: An earlier version of this rewrite coloured only `\caption`'s argument,
+#: not the "Figure N: " label `\@makecaption` generates outside it -- found by
+#: checking the actual rendering, not just that some part of the caption
+#: picked up the colour. A driver a previous run already patched needs
+#: upgrading in place, not skipping as "already done": the idempotency check
+#: below only looks for `_CAPTION_PATCH_NAME`, which this stale shape already
+#: contains.
+_STALE_CAPTION_PATCH = re.compile(
+    r"\\allyoldcaption\{\\color\{([A-Za-z0-9]+)\}##1\}"
+)
+
 
 def _fix_uncolored_captions_in_wrappers(text: str) -> str:
     r"""Make a `\caption` typeset inside a colour-wrapping macro match that colour.
@@ -553,6 +564,9 @@ def _fix_uncolored_captions_in_wrappers(text: str) -> str:
     `apply.py`, which edits those, cannot see which macro (if any) will wrap a
     given figure -- that is decided per driver, not in the file it edits.
     """
+    text = _STALE_CAPTION_PATCH.sub(
+        lambda m: f"{{\\color{{{m.group(1)}}}\\allyoldcaption{{##1}}}}", text
+    )
 
     def _patch(match: re.Match) -> str:
         color = match.group(1)

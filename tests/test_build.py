@@ -1518,6 +1518,34 @@ def test_an_already_patched_wrapper_is_not_patched_twice(tmp_path: Path):
     assert once.count("\\let\\allyoldcaption\\caption") == 1
 
 
+def test_a_stale_argument_only_patch_is_upgraded_in_place(tmp_path: Path):
+    r"""The bug this pins: `fa26/dis/02A/sol02A.tex` had already been patched
+    by an earlier version of this rewrite (colouring only `\caption`'s
+    argument), and the idempotency check above only looks for
+    `_CAPTION_PATCH_NAME` -- which that stale shape already contains -- so a
+    later run of the *fixed* rewrite skipped it as "already done" and the
+    label stayed black forever. Must upgrade the stale shape in place, not
+    treat its mere presence as nothing left to do.
+    """
+    from latexally.build import _fix_uncolored_captions_in_wrappers
+
+    stale = (
+        "\\newcommand{\\ans}[1]{{\\color{solutionColor} "
+        "\\let\\allyoldcaption\\caption"
+        "\\renewcommand{\\caption}[1]{\\allyoldcaption{\\color{solutionColor}##1}} "
+        "\\textbf{Answer: } #1}}\n"
+    )
+    fixed = _fix_uncolored_captions_in_wrappers(stale)
+
+    assert (
+        "\\renewcommand{\\caption}[1]{{\\color{solutionColor}\\allyoldcaption{##1}}}"
+        in fixed
+    )
+    assert fixed.count("\\let\\allyoldcaption\\caption") == 1  # not re-patched on top
+    # running it again changes nothing further
+    assert _fix_uncolored_captions_in_wrappers(fixed) == fixed
+
+
 def test_a_single_brace_wrapper_is_not_touched(tmp_path: Path):
     r"""`\color` in a single-brace body already leaks past the macro call --
     a real bug in whatever driver does that, not this one -- so it is not
