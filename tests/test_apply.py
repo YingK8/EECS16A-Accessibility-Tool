@@ -441,6 +441,36 @@ def test_axis_with_its_own_height_is_left_alone(profile: Profile, tmp_path: Path
     assert "height=4cm" in out
 
 
+def test_a_height_from_an_older_factor_is_upgraded_in_place(
+    profile: Profile, tmp_path: Path
+):
+    r"""The bug this pins: `fa26/dis/02A/sol02A.tex` already had a height
+    from an earlier run, written with an older `_AXIS_HEIGHT_FACTOR`
+    (0.4). `_AXIS_HEIGHT_KEY` alone cannot tell that value apart from an
+    author's own `height=4cm`, so the naive idempotency check read it as
+    "already done" and a factor change never reached a driver that had
+    ever been captioned before. `_TOOL_HEIGHT` recognises this tool's own
+    generated shape specifically and upgrades it instead.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{tikzpicture}\n"
+        "  \\begin{axis}[height=0.4\\textwidth, width=\\textwidth]\n"
+        "  \\addplot3[->] coordinates {(0,0,0) (1,2,0)};\n"
+        "  \\end{axis}\n"
+        "\\end{tikzpicture}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert out.count("height=") == 1  # upgraded, not appended alongside
+    assert "height=0.6\\textwidth" in out
+    assert "0.4" not in out
+
+
 def test_already_floated_pgfplots_axis_also_gets_a_height(
     profile: Profile, tmp_path: Path
 ):

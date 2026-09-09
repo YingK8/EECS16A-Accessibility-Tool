@@ -354,6 +354,14 @@ _AXIS_HEIGHT_FACTOR = "0.6"
 _AXIS_OPEN = re.compile(r"\\begin\{axis\}\s*\[")
 _AXIS_HEIGHT_KEY = re.compile(r"\bheight\s*=")
 _AXIS_WIDTH_KEY = re.compile(r"\bwidth\s*=\s*([^,\]]+)")
+#: The exact shapes this function itself generates for `height=`'s value --
+#: a bare coefficient prefix on a macro, or a braced `coefficient*value`.
+#: Matching a driver an earlier run of this tool already gave a height (with
+#: whatever the factor was then) lets that value track a changed
+#: `_AXIS_HEIGHT_FACTOR` on the next run, the same migration
+#: `_fix_uncolored_captions_in_wrappers` needs for its own stale patches. An
+#: author's own `height=4cm` matches neither shape and is still never touched.
+_TOOL_HEIGHT = re.compile(r"height=((?:\d+(?:\.\d+)?\\[A-Za-z]+)|(?:\{\d+(?:\.\d+)?\*[^}]*\}))")
 
 #: A 3D `axis` with `axis lines=middle` draws its lines out to the full
 #: declared xmin/xmax/ymin/ymax, not to where the data actually ends --
@@ -387,8 +395,11 @@ def _ensure_axis_height(plan: ApplyPlan, reference: FigureRef) -> None:
     r"""Give every ``\begin{axis}[...]`` in this figure an explicit height,
     proportional to whatever width it already declares.
 
-    Only touches an axis that does not already set one -- an author's own
-    `height` is never overridden. Safe to call on any figure: a plot without
+    An author's own `height` is never overridden -- but a height this same
+    function generated on an earlier run, with whatever `_AXIS_HEIGHT_FACTOR`
+    was then, is upgraded to the current one rather than read as the
+    author's, the same migration `_fix_uncolored_captions_in_wrappers` needs
+    for its own stale patches. Safe to call on any figure: a plot without
     pgfplots' `axis` environment (a plain `tikzpicture`, `circuitikz`,
     `includegraphics`) simply has nothing for ``_AXIS_OPEN`` to match.
     """
@@ -397,14 +408,29 @@ def _ensure_axis_height(plan: ApplyPlan, reference: FigureRef) -> None:
         open_bracket = match.end() - 1
         close_bracket = _matching_bracket(text, open_bracket)
         options = text[open_bracket:close_bracket] if close_bracket else ""
-        if _AXIS_HEIGHT_KEY.search(options):
-            continue
         width_match = _AXIS_WIDTH_KEY.search(options)
         width = width_match.group(1).strip() if width_match else "\\linewidth"
         if width.startswith("\\"):
             height = f"{_AXIS_HEIGHT_FACTOR}{width}"
         else:
             height = f"{{{_AXIS_HEIGHT_FACTOR}*{width}}}"
+
+        stale = _TOOL_HEIGHT.search(options)
+        if stale is not None:
+            if stale.group(1) == height:
+                continue  # already exactly this
+            start = open_bracket + stale.start()
+            end = open_bracket + stale.end()
+            plan.buffer.replace(
+                start,
+                end,
+                f"height={height}",
+                reason="pgfplots axis height upgraded to the current factor",
+                rule="APPLY-AXIS-HEIGHT",
+            )
+            continue
+        if _AXIS_HEIGHT_KEY.search(options):
+            continue  # an author's own height, in a shape this tool never writes
         plan.buffer.insert(
             match.end(),
             f"height={height}, ",
