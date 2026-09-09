@@ -334,6 +334,18 @@ def _enclosing_float(text: str, reference: FigureRef) -> tuple[int, int] | None:
 #: was tuned against, so this scales to whatever `width` the axis itself
 #: already declares (``\linewidth`` when it declares none) rather than
 #: reusing one number everywhere.
+#:
+#: The proportional value is written as ``0.4\textwidth``, not
+#: ``\dimexpr 0.4*\textwidth\relax``: the latter compiles fine in isolation but
+#: hard-fails ("Illegal unit of measure") once actually placed in this
+#: corpus's real preamble -- **[verified]** on ``fa26/dis/02A/sol02A.tex``, a
+#: `\dimexpr`/pgfmath parsing conflict somewhere in that much larger package
+#: set. ``<factor>\macro`` is the standard TikZ/PGF idiom for a fraction of
+#: another length and needs no eTeX primitive at all, so it is used
+#: unconditionally when the axis's own width is itself a macro (``\textwidth``,
+#: ``\linewidth``, the only shapes ever seen here) -- an explicit unit-bearing
+#: width (``8cm``) instead goes through PGF's own braced arithmetic, which
+#: does not touch `\dimexpr` either.
 _AXIS_HEIGHT_FACTOR = "0.4"
 _AXIS_OPEN = re.compile(r"\\begin\{axis\}\s*\[")
 _AXIS_HEIGHT_KEY = re.compile(r"\bheight\s*=")
@@ -371,7 +383,10 @@ def _ensure_axis_height(plan: ApplyPlan, reference: FigureRef) -> None:
             continue
         width_match = _AXIS_WIDTH_KEY.search(options)
         width = width_match.group(1).strip() if width_match else "\\linewidth"
-        height = f"\\dimexpr {_AXIS_HEIGHT_FACTOR}*{width}\\relax"
+        if width.startswith("\\"):
+            height = f"{_AXIS_HEIGHT_FACTOR}{width}"
+        else:
+            height = f"{{{_AXIS_HEIGHT_FACTOR}*{width}}}"
         plan.buffer.insert(
             match.end(),
             f"height={height}, ",

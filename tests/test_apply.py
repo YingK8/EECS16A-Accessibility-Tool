@@ -276,7 +276,7 @@ def test_floatless_pgfplots_axis_gets_a_proportional_height(
     plan = plan_file(path, profile, {}, captions=True)
     out = plan.buffer.apply(plan.original)
 
-    assert "\\begin{axis}[height=\\dimexpr 0.4*\\textwidth\\relax, " in out
+    assert "\\begin{axis}[height=0.4\\textwidth, " in out
     # the axis's own options survive untouched, right after the injected one
     assert "width=\\textwidth, view={60}{30}," in out
 
@@ -300,7 +300,7 @@ def test_axis_height_falls_back_to_linewidth_with_no_declared_width(
     plan = plan_file(path, profile, {}, captions=True)
     out = plan.buffer.apply(plan.original)
 
-    assert "height=\\dimexpr 0.4*\\linewidth\\relax" in out
+    assert "height=0.4\\linewidth" in out
 
 
 def test_a_previously_captioned_axis_still_gets_its_height_fixed(
@@ -329,7 +329,7 @@ def test_a_previously_captioned_axis_still_gets_its_height_fixed(
     out = plan.buffer.apply(plan.original)
 
     assert plan.changed
-    assert "height=\\dimexpr 0.4*\\textwidth\\relax" in out
+    assert "height=0.4\\textwidth" in out
     assert out.count("\\caption{") == 1  # the existing caption, not duplicated
 
 
@@ -374,7 +374,7 @@ def test_already_floated_pgfplots_axis_also_gets_a_height(
     plan = plan_file(path, profile, {}, captions=True)
     out = plan.buffer.apply(plan.original)
 
-    assert "height=\\dimexpr 0.4*\\textwidth\\relax" in out
+    assert "height=0.4\\textwidth" in out
     assert out.count("\\begin{figure}") == 1  # not re-floated
 
 
