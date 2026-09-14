@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>latexally Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;600&family=Atkinson+Hyperlegible+Next:ital,wght@0,400;0,600;0,700;1,400&family=STIX+Two+Text:wght@500;600&display=swap">
+<style>
+:root {
+  --ground: #FDF6E3;
+  --surface: #FFFFFF;
+  --sunken: #FAECC6;
+  --ink: #1F1A10;
+  --muted: #5C5340;
+  --rule: #EFDBA8;
+  --accent: #E06C00;
+  --accent-ink: #A34F00;
+  --accent-wash: #FFE79A;
+  --ok: #007900;
+  --warn: #A34F00;
+  --bad: #D20000;
+  --code-ground: #1F1A10;
+  --code-ink: #FFF3D6;
+  --code-dim: #A89F85;
+  --code-accent: #FFC21A;
+  --wave: #1E2F7A;
+  --display: "STIX Two Text", "STIX Two", "Latin Modern Roman", Georgia, serif;
+  --body: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Atkinson Hyperlegible Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #15120B; --surface: #1F1A10; --sunken: #282013; --ink: #F4ECDA; --muted: #BAAE92;
+    --rule: #3D3320; --accent: #FFA41A; --accent-ink: #FFBD3A; --accent-wash: #422C04;
+    --ok: #5CC45C; --warn: #FF9A33; --bad: #FF7A7A;
+    --code-ground: #0C0A05; --code-ink: #FFF3D6; --code-dim: #A09778; --code-accent: #FFC21A;
+    --wave: #3550C8;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #15120B; --surface: #1F1A10; --sunken: #282013; --ink: #F4ECDA; --muted: #BAAE92;
+  --rule: #3D3320; --accent: #FFA41A; --accent-ink: #FFBD3A; --accent-wash: #422C04;
+  --ok: #5CC45C; --warn: #FF9A33; --bad: #FF7A7A;
+  --code-ground: #0C0A05; --code-ink: #FFF3D6; --code-dim: #A09778; --code-accent: #FFC21A;
+  --wave: #3550C8;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  background: var(--ground); color: var(--ink);
+  font: 400 16.5px/1.6 var(--body);
+  padding-inline: 24px; padding-block: 0 80px;
+}
+.shell { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 56px; }
+
+/* nav */
+aside { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; padding-block: 36px; }
+.brand { font: 600 1.35rem/1.1 var(--display); letter-spacing: -0.01em; margin: 0 0 4px; }
+.brand span { color: var(--accent-ink); }
+.tagline { color: var(--muted); font-size: 0.85rem; margin: 0 0 28px; }
+nav { display: grid; gap: 22px; }
+nav h2 { font: 600 0.72rem/1 var(--body); text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); margin: 0 0 8px; }
+nav ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+nav a { display: block; color: var(--ink); text-decoration: none; font-size: 0.93rem; padding: 3px 10px; margin-left: -10px; border-radius: 4px; }
+nav a:hover { background: var(--sunken); }
+nav a[aria-current="true"] { background: var(--accent-wash); color: var(--accent-ink); font-weight: 600; }
+
+/* content */
+main { min-width: 0; padding-block: 40px; }
+.prose { max-width: 70ch; }
+header.hero { padding-block: 8px 36px; border-bottom: 1px solid var(--rule); margin-bottom: 8px; }
+.hero h1 { font: 600 clamp(2.1rem, 4.4vw, 3rem)/1.08 var(--display); letter-spacing: -0.015em; margin: 0 0 14px; text-wrap: balance; }
+.hero p.lead { font-size: 1.12rem; color: var(--muted); margin: 0 0 26px; max-width: 58ch; }
+.short { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px 28px; align-items: center; background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 18px 20px; max-width: 760px; }
+.short pre { margin: 0; }
+.short p { margin: 0; font-size: 0.95rem; color: var(--muted); max-width: 26ch; }
+@media (max-width: 640px) { .short { grid-template-columns: 1fr; } .short p { max-width: none; } }
+
+.part { padding-top: 56px; }
+.eyebrow { font: 600 0.74rem/1 var(--body); text-transform: uppercase; letter-spacing: 0.14em; color: var(--accent-ink); margin: 0 0 10px; }
+.part > h2 { font: 600 2rem/1.15 var(--display); letter-spacing: -0.01em; margin: 0 0 8px; text-wrap: balance; }
+.part > .intro { color: var(--muted); margin: 0 0 8px; max-width: 64ch; }
+section.topic { padding-top: 40px; }
+section.topic + section.topic { border-top: 1px solid var(--rule); margin-top: 40px; }
+h3 { font: 600 1.45rem/1.2 var(--display); margin: 0 0 12px; text-wrap: balance; }
+h3 .opt { font: 400 0.9rem var(--body); color: var(--muted); margin-left: 6px; }
+h4 { font: 700 0.98rem/1.3 var(--body); margin: 26px 0 8px; }
+p { margin: 0 0 14px; }
+a { color: var(--accent-ink); text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+ol.steps { padding-left: 1.4em; margin: 0 0 16px; display: grid; gap: 10px; }
+ol.steps > li::marker { font-weight: 700; color: var(--accent-ink); }
+ul.plain { padding-left: 1.2em; margin: 0 0 16px; display: grid; gap: 4px; }
+
+code { font: 0.9em var(--mono); background: var(--sunken); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+kbd { font: 600 0.82em var(--mono); background: var(--surface); border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+.codeblock { position: relative; margin: 0 0 18px; }
+.codeblock:has(.copy) pre { padding-right: 68px; }  /* wrapped lines stay clear of Copy */
+pre { background: var(--code-ground); color: var(--code-ink); font: 0.88rem/1.6 var(--mono); padding: 14px 18px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+pre code { background: none; padding: 0; font-size: inherit; overflow-wrap: anywhere; }
+pre .p { color: var(--code-dim); user-select: none; }
+pre .c { color: var(--code-dim); }
+pre .k { color: var(--code-accent); }
+.copy { position: absolute; top: 8px; right: 8px; font: 600 0.72rem var(--body); color: var(--code-dim); background: transparent; border: 1px solid #4A4220; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+.copy:hover { color: var(--code-ink); border-color: var(--code-dim); }
+
+.tablewrap { overflow-x: auto; margin: 0 0 18px; border: 1px solid var(--rule); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; vertical-align: top; padding: 9px 14px; border-bottom: 1px solid var(--rule); }
+tr:last-child td { border-bottom: 0; }
+th { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); background: var(--sunken); white-space: nowrap; }
+td code { white-space: nowrap; }
+td.wrap code { white-space: normal; }
+.mark { font: 700 1.05rem var(--mono); }
+.mark.ok { color: var(--ok); } .mark.warn { color: var(--warn); } .mark.bad { color: var(--bad); }
+
+.note { background: var(--accent-wash); border-radius: 6px; padding: 12px 16px; margin: 0 0 18px; font-size: 0.95rem; }
+.note.caution { background: color-mix(in srgb, var(--warn) 13%, var(--surface)); }
+.note b:first-child { margin-right: 4px; }
+.more { font-size: 0.9rem; color: var(--muted); margin-top: 6px; }
+dl.where { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 18px; margin: 0 0 18px; font-size: 0.93rem; }
+dl.where dt { font-family: var(--mono); font-size: 0.88rem; color: var(--accent-ink); }
+dl.where dd { margin: 0; }
+.tree { font: 0.88rem/1.7 var(--mono); }
+
+footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.85rem; }
+
+@media (max-width: 880px) {
+  .shell { grid-template-columns: 1fr; gap: 0; }
+  aside { position: static; max-height: none; padding-block: 24px 0; border-bottom: 1px solid var(--rule); }
+  nav { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; padding-bottom: 18px; }
+  .tagline { margin-bottom: 16px; }
+  main { padding-block: 28px; }
+}
+@media (max-width: 480px) {
+  body { padding-inline: 16px; }
+  dl.where { grid-template-columns: 1fr; gap: 0; }
+  dl.where dd { margin-bottom: 8px; }
+}
+/* decorative dotted sine wave, centred in the left margin */
+.wave { position: fixed; top: 0; left: 0; height: 100vh; pointer-events: none; z-index: 0; overflow: visible; }
+.wave circle { fill: var(--wave); }
+body { padding-left: clamp(56px, 9vw, 128px); }
+.shell { position: relative; z-index: 1; }
+</style>
+
+<svg class="wave" aria-hidden="true" focusable="false"></svg>
+<div class="shell">
+<aside>
+  <p class="brand"><span>EE 66</span> Fall 2026</p>
+  <p class="tagline">Accessibility</p>
+  <nav aria-label="Guide">
+    <div>
+      <h2>Tutorial</h2>
+      <ul>
+        <li><a href="#setup">Setup</a></li>
+        <li><a href="#run">First run</a></li>
+        <li><a href="#keys">Keys</a></li>
+        <li><a href="#output">Output</a></li>
+        <li><a href="#undo">Undo</a></li>
+      </ul>
+    </div>
+    <div>
+      <h2>How-to</h2>
+      <ul>
+        <li><a href="#course">New course</a></li>
+        <li><a href="#notation">Vector and notation style</a></li>
+        <li><a href="#standards">Build standards</a></li>
+        <li><a href="#colours">Colours</a></li>
+        <li><a href="#figures">Figure descriptions</a></li>
+        <li><a href="#replay">Replay a run</a></li>
+        <li><a href="#verify">Checking a PDF</a></li>
+      </ul>
+    </div>
+    <div>
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="#commands">Commands</a></li>
+        <li><a href="#profile-keys">Profile keys</a></li>
+        <li><a href="#runyaml-keys">run.yaml keys</a></li>
+        <li><a href="#errors">Errors</a></li>
+        <li><a href="#reading">Further reading</a></li>
+      </ul>
+    </div>
+  </nav>
+</aside>
+
+<main>
+<header class="hero">
+  <h1>latexally Guide</h1>
+  <p class="lead">latexally converts homework, discussion, and exam sources into PDFs a screen reader can navigate: real headings, spoken math, described figures, and contrast-safe colours. Your <code>.tex</code> stays untouched by default.</p>
+  <div class="short">
+    <div class="codeblock"><pre><code><span class="p">$ </span>cd questionBank/fa26/hw/9
+<span class="p">$ </span>latexally run</code></pre></div>
+    <p>Press <kbd>Enter</kbd> through each screen, then <kbd>b</kbd> to build. The PDF lands in the same folder.</p>
+  </div>
+</header>
+
+<!-- ============================ TUTORIAL ============================ -->
+<div class="part" id="tutorial">
+  <p class="eyebrow">Tutorial</p>
+  <h2>Your first accessible PDF</h2>
+  <p class="intro">One homework folder, start to finish. About ten minutes the first time, most of it installing TeX.</p>
+
+  <section class="topic prose" id="setup">
+    <h3>Setup</h3>
+    <ol class="steps">
+      <li>
+        <p>Clone the tool next to <code>questionBank/</code>. The shipped profiles find the course sources at <code>../../questionBank</code>, relative to <code>profiles/</code>.</p>
+        <div class="codeblock"><pre class="tree"><code>
+├── EECS16A-Accessibility-Tool/
+└── questionBank/</code></pre></div>
+      </li>
+      <li>
+        <p>Install TeX and the tagging packages:</p>
+        <div class="codeblock"><pre><code><span class="p">$ </span>brew install --cask mactex-no-gui
+<span class="p">$ </span>sudo tlmgr install tagpdf pdfmanagement-testphase latex-lab latexmk</code></pre></div>
+      </li>
+      <li>
+        <p>Install latexally with all extras, from the clone:</p>
+        <div class="codeblock"><pre><code><span class="p">$ </span>cd EECS16A-Accessibility-Tool
+<span class="p">$ </span>uv tool install --editable '.[all]'</code></pre></div>
+        <p>Keep <code>--editable</code>: the tool reads <code>profiles/</code> from the clone.</p>
+      </li>
+      <li>
+        <p>Build the spoken-math driver (needs Rust's <code>cargo</code>):</p>
+        <div class="codeblock"><pre><code><span class="p">$ </span>git submodule update --init
+<span class="p">$ </span>cd mathspeech-driver &amp;&amp; cargo build --release</code></pre></div>
+        <p>Without it, every formula builds silent, and the build reports no error.</p>
+      </li>
+      <li>
+        <p>Verify the toolchain:</p>
+        <div class="codeblock"><pre><code><span class="p">$ </span>latexally -p ee66 doctor</code></pre></div>
+        <p>Look for <code>Tagging mode: modern</code> on the last line. A veraPDF warning is fine.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="topic prose" id="run">
+    <h3>First run</h3>
+    <p>Where you run it is the scope. Stand in the assignment folder:</p>
+    <div class="codeblock"><pre><code><span class="p">$ </span>cd ../questionBank/fa26/hw/9
+<span class="p">$ </span>latexally run</code></pre></div>
+    <p>The runner opens full-screen. Each screen has a sensible default, so <kbd>Enter</kbd> alone gets you a good build.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Screen</th><th>Default</th><th>Change it when</th></tr></thead>
+      <tbody>
+        <tr><td>Which course?</td><td>EE 66</td><td>You teach another installed course. Shown only without <code>-p</code>.</td></tr>
+        <tr><td>Which material?</td><td><code>local</code>: this folder</td><td>You want folders elsewhere: pick <code>choose</code>.</td></tr>
+        <tr><td>What do you want to convert?</td><td>Everything found here, ticked</td><td>You want a subset. Untick with <kbd>x</kbd>.</td></tr>
+        <tr><td>Which documents of each assignment?</td><td><code>solution</code>, <code>problem</code></td><td>You also publish <code>answer</code>.</td></tr>
+        <tr><td>Which standards should this run apply?</td><td>All six on</td><td>Rarely. See <a href="#standards">Build standards</a>.</td></tr>
+        <tr><td>Course colours</td><td>Accessible palette</td><td>A colour must stay as written. See <a href="#colours">Colours</a>.</td></tr>
+        <tr><td>What should happen to undescribed figures?</td><td><code>caption</code></td><td>See <a href="#figures">Figure descriptions</a>.</td></tr>
+        <tr><td>Where does the output go?</td><td><code>in-place</code></td><td>You want output away from the course repo: <code>mirror</code>.</td></tr>
+        <tr><td>Review</td><td></td><td>Check the <em>What gets built</em> table, then <kbd>Enter</kbd>.</td></tr>
+        <tr><td>Build</td><td></td><td>Press <kbd>b</kbd>. Each document takes three LaTeX passes. <kbd>Enter</kbd> exits when done.</td></tr>
+      </tbody>
+    </table></div>
+    <p>On exit, the runner prints the results table to your terminal, so it stays in scrollback.</p>
+  </section>
+
+  <section class="topic prose" id="keys">
+    <h3>Keys</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Key</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>Enter</kbd> or <kbd>n</kbd></td><td>Next screen</td></tr>
+        <tr><td><kbd>\</kbd> or <kbd>b</kbd></td><td>Back. <kbd>Esc</kbd> does nothing.</td></tr>
+        <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Move, or change a radio choice</td></tr>
+        <tr><td><kbd>x</kbd> or <kbd>space</kbd></td><td>Tick or untick a row</td></tr>
+        <tr><td><kbd>a</kbd> / <kbd>c</kbd></td><td>Tick all / clear all</td></tr>
+        <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Switch scope (when choosing material)</td></tr>
+        <tr><td><kbd>b</kbd></td><td>Build (on the Build screen)</td></tr>
+        <tr><td><kbd>s</kbd></td><td>Save choices to <code>run.yaml</code></td></tr>
+        <tr><td><kbd>f</kbd></td><td>Notation rewrite screen</td></tr>
+        <tr><td><kbd>r</kbd></td><td>Revert screen</td></tr>
+        <tr><td><kbd>q</kbd></td><td>Quit. Nothing is built before <kbd>b</kbd>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Screens that change your sources (revert and notation) confirm with <kbd>y</kbd>. They ignore <kbd>Enter</kbd> on purpose.</p>
+  </section>
+
+  <section class="topic prose" id="output">
+    <h3>Output</h3>
+    <p>With the default <code>in-place</code> mode:</p>
+    <div class="codeblock"><pre class="tree"><code>questionBank/
+├── fa26/hw/9/
+│   ├── <span class="k">fa26-hw-9-solution-accessible.pdf</span>   <span class="c"># the file to publish</span>
+│   ├── <span class="k">fa26-hw-9-problem-accessible.pdf</span>
+│   ├── accessible/                          <span class="c"># converted .tex, logs, math</span>
+│   └── …your .tex, untouched
+└── ally-out/
+    ├── build-log.txt                        <span class="c"># run summary</span>
+    └── run.yaml                             <span class="c"># the choices you made</span></code></pre></div>
+    <h4>Results table</h4>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Mark</th><th>Meaning</th><th>Next</th></tr></thead>
+      <tbody>
+        <tr><td><span class="mark ok">✓</span></td><td>Built clean</td><td>Publish it.</td></tr>
+        <tr><td><span class="mark warn">!</span></td><td>Built, with log errors worth reading</td><td>Search the log for the banner the table names.</td></tr>
+        <tr><td><span class="mark bad">✗</span></td><td>No PDF</td><td>Run <code>latexally -p ee66 doctor --tagging fa26/hw/9</code>.</td></tr>
+        <tr><td><span class="mark warn">≈</span></td><td>Built from a question the semester banks disagree on</td><td>Proofread that question.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Below the table, the runner lists figures still needing descriptions and any <code>\input</code> files it had to substitute. The runner exits 1 if any document isn't <span class="mark ok">✓</span>.</p>
+  </section>
+
+  <section class="topic prose" id="undo">
+    <h3>Undo</h3>
+    <p><code>revert</code> deletes what a run produced and restores any <code>.tex</code> it rewrote, using git. It previews first:</p>
+    <div class="codeblock"><pre><code><span class="p">$ </span>latexally -p ee66 revert          <span class="c"># preview</span>
+<span class="p">$ </span>latexally -p ee66 revert --write  <span class="c"># do it</span></code></pre></div>
+    <p><code>clean</code> deletes output only. Both keep worklogs with written descriptions unless you add <code>--force</code>.</p>
+  </section>
+</div>
+
+<!-- ============================ HOW-TO ============================ -->
+<div class="part" id="howto">
+  <p class="eyebrow">How-to guides</p>
+  <h2>Tuning it to your course</h2>
+  <p class="intro">Two files carry every setting. The <strong>profile</strong> (<code>profiles/&lt;course&gt;.yaml</code>) holds course facts and style. <strong>run.yaml</strong> holds one run's choices.</p>
+
+  <section class="topic prose" id="course">
+    <h3>New course</h3>
+    <ol class="steps">
+      <li>
+        <p>Copy a shipped profile:</p>
+        <div class="codeblock"><pre><code><span class="p">$ </span>cp profiles/eecs16a.yaml profiles/ee120.yaml</code></pre></div>
+      </li>
+      <li>
+        <p>Edit the identity and corpus keys:</p>
+        <div class="codeblock"><pre><code><span class="k">name:</span> ee120
+<span class="k">course:</span>
+  <span class="k">number:</span> "EE 120"
+  <span class="k">name:</span> "Signals and Systems"
+  <span class="k">language:</span> en-US
+<span class="k">corpus:</span>
+  <span class="k">root:</span> "../../ee120-materials"   <span class="c"># relative to this file</span></code></pre></div>
+      </li>
+      <li>
+        <p>Verify, then use it:</p>
+        <div class="codeblock"><pre><code><span class="p">$ </span>latexally -p ee120 doctor
+<span class="p">$ </span>latexally -p ee120 run</code></pre></div>
+      </li>
+    </ol>
+    <dl class="where">
+      <dt>course.number</dt><dd>Labels the course in the runner's course picker</dd>
+      <dt>course.name</dt><dd>Same. Neither appears in the PDF.</dd>
+      <dt>course.language</dt><dd>PDF language tag, which screen readers use to pick a voice</dd>
+      <dt>default: true</dt><dd>Makes <code>latexally run</code> start on this course. Set it in one profile only.</dd>
+    </dl>
+    <p>The PDF title comes from each document's own <code>\title</code>.</p>
+    <div class="note caution"><b>Typos are silent.</b> The loader ignores keys it doesn't know. Check spelling against <a href="#profile-keys">Profile keys</a>.</div>
+    <p>Every command except <code>run</code> needs <code>-p</code> while several profiles are installed. Save typing with an alias:</p>
+    <div class="codeblock"><pre><code><span class="p">$ </span>alias latexally='latexally -p ee120'</code></pre></div>
+    <p class="more">More: <code>corpus.scopes</code>, <code>variants</code>, and <code>kinds</code> in <a href="#profile-keys">Profile keys</a>.</p>
+  </section>
+
+  <section class="topic prose" id="notation">
+    <h3>Vector and notation style</h3>
+    <p>Notation is a list of rewrite rules under <code>notation:</code> in the profile. Each rule finds one form inside math and names its replacement. EE 66 ships bold vectors:</p>
+    <div class="codeblock"><pre><code><span class="k">notation:</span>
+  - <span class="k">id:</span> bold-vector
+    <span class="k">message:</span> "vectors are bold, not arrowed"
+    <span class="k">macro:</span> [vec, overrightarrow]
+    <span class="k">to:</span> '\mathbf{{arg}}'</code></pre></div>
+    <h4>Rule fields</h4>
+    <dl class="where">
+      <dt>id</dt><dd>Rule name. Findings report as <code>ALLY-FMT-&lt;id&gt;</code>.</dd>
+      <dt>macro</dt><dd>Macro name or list, matching <code>\name{arg}</code> or <code>\name x</code></dd>
+      <dt>pattern</dt><dd>Python regex instead of <code>macro</code>. Use exactly one of the two.</dd>
+      <dt>to</dt><dd>Replacement. <code>{arg}</code> is the macro argument; <code>\1</code>…<code>\9</code> are regex groups.</dd>
+      <dt>parenthesize</dt><dd><code>true</code> wraps a non-atomic argument in <code>( )</code>. Default <code>false</code>.</dd>
+      <dt>fix</dt><dd><code>false</code> reports without rewriting. Default <code>true</code>.</dd>
+      <dt>message</dt><dd>Text shown with each finding</dd>
+    </dl>
+    <p>Keep <code>to</code> and <code>pattern</code> in single quotes, so backslashes survive YAML.</p>
+
+    <h4>Arrowed vectors instead</h4>
+    <div class="codeblock"><pre><code>  - <span class="k">id:</span> arrow-vector
+    <span class="k">message:</span> "vectors are arrowed"
+    <span class="k">macro:</span> mathbf
+    <span class="k">to:</span> '\vec{{arg}}'</code></pre></div>
+    <div class="note caution"><b>Scope check.</b> This rule also rewrites bold matrices such as <code>\mathbf{A}</code>. Preview before building.</div>
+
+    <h4>Report only</h4>
+    <div class="codeblock"><pre><code>  - {<span class="k">id:</span> vec-report, <span class="k">macro:</span> vec, <span class="k">to:</span> '\mathbf{{arg}}', <span class="k">fix:</span> false}</code></pre></div>
+
+    <h4>Where rules apply</h4>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Where</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>latexally run</code> / <code>build</code></td><td>Rewrites the converted copy. Sources untouched.</td></tr>
+        <tr><td><code>latexally -p ee66 check</code></td><td>Lists each departure as a warning</td></tr>
+        <tr><td><code>latexally -p ee66 notation --show-diff</code></td><td>Previews a permanent source rewrite</td></tr>
+        <tr><td><code>latexally -p ee66 notation --write</code></td><td>Rewrites your <code>.tex</code>. Needs a clean git tree.</td></tr>
+        <tr><td><kbd>f</kbd> in the runner</td><td>Same rewrite, confirmed with <kbd>y</kbd></td></tr>
+      </tbody>
+    </table></div>
+    <p>Rules touch math only: <code>$…$</code>, <code>\[…\]</code>, <code>\(…\)</code>, and display environments. Comments and verbatim are skipped.</p>
+
+    <h4>Matrix alignment</h4>
+    <div class="codeblock"><pre><code><span class="k">math:</span>
+  <span class="k">matrix_align:</span> r   <span class="c"># l, c, r, or empty for LaTeX's centred default</span></code></pre></div>
+    <p>This adds one preamble line at build time. Starred <code>bmatrix*</code> keeps its own alignment.</p>
+  </section>
+
+  <section class="topic prose" id="standards">
+    <h3>Build standards</h3>
+    <p>Six toggles, all on by default. Set them on the runner's standards screen, or under <code>standards:</code> in <code>run.yaml</code>.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Runner label</th><th>run.yaml key</th><th>Adds</th></tr></thead>
+      <tbody>
+        <tr><td>Tag structure (PDF/UA)</td><td><code>tagging</code></td><td>Structure tree: headings, figures, tables, and reading order. Everything else depends on it.</td></tr>
+        <tr><td>Course macro retrofit</td><td><code>retrofit</code></td><td>Patches the course <code>.sty</code>, so the document keeps its look</td></tr>
+        <tr><td>PDF bookmark outline</td><td><code>bookmarks</code></td><td>Sidebar outline in PDF readers</td></tr>
+        <tr><td>Question headings as real H2 tags</td><td><code>question_tags</code></td><td>Screen-reader jumps between questions. Needs <code>retrofit</code>.</td></tr>
+        <tr><td>Spoken math (Formula /Alt)</td><td><code>math_speech</code></td><td>Speech text for every formula. Off gives silent formulas: only for quick structure checks.</td></tr>
+        <tr><td>Extractable text (ToUnicode)</td><td><code>unicode_map</code></td><td>Copyable, searchable text</td></tr>
+      </tbody>
+    </table></div>
+    <p>The Review screen prints the exact preamble lines your choices inject.</p>
+    <p class="more">More: <a href="#runyaml-keys">run.yaml keys</a>, and <code>build</code> flags in <a href="#commands">Commands</a>.</p>
+  </section>
+
+  <section class="topic prose" id="colours">
+    <h3>Colours</h3>
+    <p>Coloured text must reach 4.5:1 contrast against white. The colours screen shows each course colour, its contrast, and its replacement.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td><code>palette</code> (default)</td><td>Remaps every course colour onto latexally's shared accessible palette</td></tr>
+        <tr><td><code>conforming</code></td><td>Darkens each failing colour just enough to pass. Passing colours stay as written.</td></tr>
+        <tr><td><code>house</code></td><td>Keeps course colours unchanged, contrast failures included</td></tr>
+      </tbody>
+    </table></div>
+    <p>On that screen, <kbd>k</kbd> keeps a colour's original, <kbd>u</kbd> undoes that, and <kbd>e</kbd> sets a custom hex. Choices save to <code>run.yaml</code>:</p>
+    <div class="codeblock"><pre><code><span class="k">colors:</span>
+  <span class="k">mode:</span> palette
+  <span class="k">overrides:</span> {<span class="k">solutionColor:</span> '#187AC4'}</code></pre></div>
+    <p>To register a course colour, add it to the profile's <code>colors.originals</code> as <code>name: "#RRGGBB"</code>.</p>
+  </section>
+
+  <section class="topic prose" id="figures">
+    <h3>Figure descriptions</h3>
+    <p>A screen reader announces a figure by its description. The runner's figures screen picks how undescribed figures are handled:</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Choice</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>caption</code> (default)</td><td class="wrap">Adds a visible <code>\caption{&lt;&lt;TODO:figure-id&gt;&gt;}</code> to floats that lack one</td></tr>
+        <tr><td><code>on</code> (<code>placeholders</code>)</td><td class="wrap">Marks <code>&lt;&lt;TODO:figure-id&gt;&gt;</code> in the converted source, and lists each figure in a worklog</td></tr>
+        <tr><td><code>off</code></td><td>Skips figures. Tagging, headings, and math still run.</td></tr>
+      </tbody>
+    </table></div>
+    <h4>Writing descriptions</h4>
+    <ol class="steps">
+      <li>
+        <p>List the figures in scope. From the assignment folder:</p>
+        <div class="codeblock"><pre><code><span class="p">$ </span>latexally -p ee66 scan</code></pre></div>
+        <p>This writes a worklog such as <code>questionBank/ally-out/descriptions/fa26/hw_fig_alt_texts.yaml</code>. The most-used figures come first.</p>
+      </li>
+      <li>
+        <p>Fill in each <code>alt_text</code>. Leave the id and <code>at</code> alone.</p>
+        <div class="codeblock"><pre><code><span class="k">fig-3870069f66da:</span>
+  <span class="k">at:</span> fa26/hw/9/questions/q_divider.tex:14
+  <span class="k">alt_text:</span> Voltage divider. A 5 V source drives 1 kΩ and 2 kΩ resistors in series; the output is across the 2 kΩ.</code></pre></div>
+      </li>
+      <li>
+        <p>Check progress, then rebuild with <code>latexally run</code>:</p>
+        <div class="codeblock"><pre><code><span class="p">$ </span>latexally -p ee66 figures</code></pre></div>
+      </li>
+    </ol>
+    <p>Each id is content-addressed, so one description covers every assignment that reuses the figure. To write descriptions into the <code>.tex</code> permanently, run <code>latexally -p ee66 apply --write</code>.</p>
+    <h4>Good descriptions</h4>
+    <ul class="plain">
+      <li>Plain words: no <code>$</code>, backslashes, or braces.</li>
+      <li>Skip "image of", the caption, and the filename.</li>
+      <li>Convey the data, not the drawing. Don't rely on colour alone.</li>
+      <li>About one sentence, 200 characters or fewer.</li>
+      <li>Don't give away the answer.</li>
+    </ul>
+    <p>The test: cover the figure, read only your description, and answer the question.</p>
+    <p>Mark purely decorative images (banners, logos) in the profile's <code>figures.artifact_allowlist</code>.</p>
+    <p class="more">More: all ten rules, genre templates for circuits and plots, and table markup in <a href="https://github.com/YingK8/EECS16A-Accessibility-Tool/blob/main/docs/ALT_TEXT_SPEC.md">ALT_TEXT_SPEC.md</a>.</p>
+  </section>
+
+  <section class="topic prose" id="replay">
+    <h3>Replay a run</h3>
+    <p>Rebuild many assignments, or rebuild in CI, without the runner.</p>
+    <ol class="steps">
+      <li>Press <kbd>s</kbd> in the runner. It saves <code>questionBank/ally-out/run.yaml</code>.</li>
+      <li>
+        <p>Replay it, from the <code>questionBank/</code> folder:</p>
+        <div class="codeblock"><pre><code><span class="p">$ </span>latexally -p ee66 build --config ally-out/run.yaml --write</code></pre></div>
+      </li>
+    </ol>
+    <p>A saved file looks like this. Edit <code>assignments</code> to build more.</p>
+    <div class="codeblock"><pre><code><span class="k">profile:</span> ee66
+<span class="k">assignments:</span>
+- fa26/hw/9
+<span class="k">standards:</span>
+  <span class="k">tagging:</span> true
+  <span class="k">retrofit:</span> true
+  <span class="k">bookmarks:</span> true
+  <span class="k">question_tags:</span> true
+  <span class="k">math_speech:</span> true
+  <span class="k">unicode_map:</span> true
+<span class="k">colors:</span>
+  <span class="k">mode:</span> palette
+  <span class="k">overrides:</span> {}
+<span class="k">alt:</span>
+  <span class="k">mode:</span> caption
+  <span class="k">strict:</span> false
+<span class="k">output:</span>
+  <span class="k">root:</span> ally-out
+  <span class="k">write_mode:</span> in-place
+  <span class="k">keep_pdf:</span> true
+  <span class="k">keep_logs:</span> true
+  <span class="k">keep_tex:</span> true
+  <span class="k">paths:</span> {}
+<span class="k">variants:</span> []
+<span class="k">baseline:</span> false
+<span class="k">jobs:</span> 1</code></pre></div>
+    <p>Without <code>--write</code>, <code>build</code> is a dry run. The file never stores <code>write</code>. To reopen it in the runner, use <code>latexally run --config ally-out/run.yaml</code>.</p>
+    <div class="note caution"><b>Hand-written files.</b> Missing keys get older defaults: <code>conforming</code> colours, <code>worklog</code> figures, and <code>mirror</code> output. Start from a saved file.</div>
+  </section>
+
+  <section class="topic prose" id="verify">
+    <h3>Checking a PDF</h3>
+    <p>Validate a built PDF's structure: tags, figure and formula alt text, headings, title, language, and bookmarks.</p>
+    <div class="codeblock"><pre><code><span class="p">$ </span>latexally -p ee66 check --pdf fa26-hw-9-solution-accessible.pdf</code></pre></div>
+    <p>Hear it the way a student would, as Canvas Ally renders it:</p>
+    <div class="codeblock"><pre><code><span class="p">$ </span>latexally -p ee66 formats fa26-hw-9-solution-accessible.pdf</code></pre></div>
+    <p><code>formats</code> writes text transcripts, an MP3, and a braille file to <code>formats/&lt;name&gt;/</code> beside the PDF. It needs extra tools:</p>
+    <div class="codeblock"><pre><code><span class="p">$ </span>brew install poppler liblouis ghostscript ffmpeg openjdk
+<span class="p">$ </span>./vendor/pdfbox/fetch.sh    <span class="c"># from the tool clone</span></code></pre></div>
+  </section>
+</div>
+
+<!-- ============================ REFERENCE ============================ -->
+<div class="part" id="reference">
+  <p class="eyebrow">Reference</p>
+  <h2>Commands, keys, and messages</h2>
+
+  <section class="topic" id="commands">
+    <h3>Commands</h3>
+    <p class="prose">Global options go before the command: <code>latexally -p ee66 check</code>. A <code>[SCOPE]</code> defaults to the current folder; it also accepts a path or a named scope such as <code>homeworks</code>.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Global option</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>-p, --profile NAME|PATH</code></td><td>Course profile. Required by all commands but <code>run</code> while several are installed.</td></tr>
+        <tr><td><code>-c, --corpus DIR</code></td><td>Overrides the profile's <code>corpus.root</code></td></tr>
+        <tr><td><code>--json</code></td><td>Machine-readable output</td></tr>
+        <tr><td><code>-q, --quiet</code></td><td>Suppress human-readable output</td></tr>
+        <tr><td><code>-h, --help</code></td><td>Help for any command</td></tr>
+      </tbody>
+    </table></div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Command</th><th>Does</th><th>Key options</th></tr></thead>
+      <tbody>
+        <tr><td><code>run</code></td><td>Interactive runner</td><td class="wrap"><code>--config FILE</code>, <code>-o DIR</code></td></tr>
+        <tr><td><code>build [ASSIGNMENTS]</code></td><td>Convert and build, no screens</td><td class="wrap"><code>--write</code>, <code>--config FILE</code>, <code>-o DIR</code>, <code>--in-place</code>, <code>--edit</code>, <code>-j N</code>, <code>--house-colors</code>, <code>--no-math-speech</code>, <code>--placeholders</code>, <code>--captions</code>, <code>--baseline</code>, <code>--allow-dirty</code></td></tr>
+        <tr><td><code>doctor [SCOPE]</code></td><td>Check the toolchain</td><td class="wrap"><code>--strict</code>, <code>--tagging</code>, <code>--fix</code>, <code>--write</code></td></tr>
+        <tr><td><code>check [SCOPE]</code></td><td>Lint sources, a log, or a PDF</td><td class="wrap"><code>--pdf PATH</code>, <code>--log PATH</code>, <code>--severity error|warning|info</code></td></tr>
+        <tr><td><code>formats PDF</code></td><td>Transcripts, audio, and braille of a PDF</td><td class="wrap"><code>--evidence DIR</code>, <code>--no-audio</code>, <code>--no-braille</code></td></tr>
+        <tr><td><code>notation [SCOPE]</code></td><td>Rewrite sources to course notation</td><td class="wrap"><code>--show-diff</code>, <code>--write</code>, <code>--allow-dirty</code></td></tr>
+        <tr><td><code>scan [SCOPE]</code></td><td>Find figures, update worklogs</td><td class="wrap"><code>--no-write</code></td></tr>
+        <tr><td><code>figures [SCOPE]</code></td><td>Count described and outstanding figures</td><td></td></tr>
+        <tr><td><code>apply [SCOPE]</code></td><td>Write descriptions into <code>.tex</code></td><td class="wrap"><code>--write</code>, <code>--captions</code>, <code>--show-diff</code></td></tr>
+        <tr><td><code>files [SCOPE]</code></td><td>List source files in scope</td><td class="wrap"><code>--documents</code>, <code>--limit N</code></td></tr>
+        <tr><td><code>clean [SCOPE]</code></td><td>Delete run output</td><td class="wrap"><code>--write</code>, <code>--force</code>, <code>-o DIR</code>, <code>--config FILE</code></td></tr>
+        <tr><td><code>revert [SCOPE]</code></td><td><code>clean</code>, plus restore rewritten <code>.tex</code></td><td class="wrap"><code>--write</code>, <code>--force</code>, <code>-o DIR</code>, <code>--config FILE</code></td></tr>
+      </tbody>
+    </table></div>
+    <p class="prose"><code>build</code>, <code>apply</code>, <code>notation</code>, <code>clean</code>, and <code>revert</code> are dry runs until you pass <code>--write</code>.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Exit code</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>0</code></td><td>OK</td></tr>
+        <tr><td><code>1</code></td><td>Ran, with findings or failed documents</td></tr>
+        <tr><td><code>2</code></td><td>Could not run</td></tr>
+      </tbody>
+    </table></div>
+    <h4>Write modes</h4>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Mode</th><th>PDF goes</th><th>Your .tex</th></tr></thead>
+      <tbody>
+        <tr><td><code>in-place</code> (default)</td><td>Assignment folder; converted sources in <code>accessible/</code></td><td>Untouched</td></tr>
+        <tr><td><code>mirror</code></td><td>Output tree (<code>ally-out/pdf/</code>, <code>tex/</code>, <code>logs/</code>)</td><td>Untouched</td></tr>
+        <tr><td><code>edit</code></td><td>Beside the original</td><td>Rewritten, so a bare <code>pdflatex</code> builds it. Needs a clean git tree.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="topic" id="profile-keys">
+    <h3>Profile keys</h3>
+    <p class="prose">Keys the tool reads, in <code>profiles/&lt;course&gt;.yaml</code>.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Key</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>name</code></td><td>file name</td><td>Profile id, passed to <code>-p</code></td></tr>
+        <tr><td><code>default</code></td><td></td><td><code>true</code>: <code>run</code> starts on this course</td></tr>
+        <tr><td><code>course.number</code>, <code>course.name</code></td><td></td><td>Course picker label</td></tr>
+        <tr><td><code>course.language</code></td><td><code>en-US</code></td><td>PDF language</td></tr>
+        <tr><td><code>corpus.root</code></td><td><code>.</code></td><td>Course sources, relative to the profile file</td></tr>
+        <tr><td><code>corpus.include</code> / <code>exclude</code></td><td><code>**/*.tex</code> / none</td><td>Globs in and out of scope</td></tr>
+        <tr><td><code>corpus.scopes</code></td><td></td><td>Named scopes, e.g. <code>homeworks: ["*/hw/**/*.tex"]</code></td></tr>
+        <tr><td><code>corpus.variants</code></td><td></td><td>File prefix to document type, e.g. <code>sol: solution</code></td></tr>
+        <tr><td><code>corpus.kinds</code></td><td></td><td>Path fragment to material kind; names worklog files</td></tr>
+        <tr><td><code>figures.artifact_allowlist</code></td><td></td><td>Images marked decorative</td></tr>
+        <tr><td><code>figures.figure_environments</code></td><td>tikzpicture, circuitikz, axis, pgfpicture</td><td>Environments treated as one figure</td></tr>
+        <tr><td><code>colors.originals</code></td><td></td><td>Course colours, <code>name: "#RRGGBB"</code></td></tr>
+        <tr><td><code>colors.min_contrast_normal</code> / <code>_large</code></td><td>4.5 / 3.0</td><td>Contrast floors</td></tr>
+        <tr><td><code>colors.large_text_colors</code></td><td></td><td>Colours held to the large-text floor</td></tr>
+        <tr><td><code>colors.background</code></td><td><code>#FFFFFF</code></td><td>Contrast background</td></tr>
+        <tr><td><code>engine.pdf_standard</code> / <code>pdf_version</code></td><td><code>ua-1</code> / <code>1.7</code></td><td>Declared standard</td></tr>
+        <tr><td><code>engine.min_format_date</code></td><td><code>2025-06-01</code></td><td>Oldest LaTeX format for modern tagging</td></tr>
+        <tr><td><code>engine.unlet_before</code></td><td></td><td>Commands to free before a package loads, e.g. <code>ee66.sty: [proof]</code></td></tr>
+        <tr><td><code>engine.min_runs</code> / <code>timeout_seconds</code></td><td>3 / 300</td><td>LaTeX passes and per-document timeout</td></tr>
+        <tr><td><code>math.matrix_align</code></td><td>empty</td><td><code>l</code>, <code>c</code>, or <code>r</code></td></tr>
+        <tr><td><code>notation</code></td><td>none</td><td>Rewrite rules. See <a href="#notation">Vector and notation style</a>.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="prose">The shipped profiles also carry <code>course.semester</code>, <code>headings</code>, and length limits under <code>figures</code>. The build doesn't currently read them.</p>
+  </section>
+
+  <section class="topic" id="runyaml-keys">
+    <h3>run.yaml keys</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Key</th><th>Values</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>profile</code></td><td>profile name</td><td>Course</td></tr>
+        <tr><td><code>assignments</code></td><td>corpus paths</td><td>Folders to build, e.g. <code>fa26/hw/9</code></td></tr>
+        <tr><td><code>variants</code></td><td><code>solution</code>, <code>problem</code>, <code>answer</code></td><td>Documents to build</td></tr>
+        <tr><td><code>standards.*</code></td><td><code>true</code> / <code>false</code></td><td>See <a href="#standards">Build standards</a></td></tr>
+        <tr><td><code>colors.mode</code></td><td><code>palette</code>, <code>conforming</code>, <code>house</code></td><td>See <a href="#colours">Colours</a></td></tr>
+        <tr><td><code>colors.overrides</code></td><td>name → hex</td><td>Per-colour replacement</td></tr>
+        <tr><td><code>alt.mode</code></td><td><code>caption</code>, <code>placeholders</code>, <code>worklog</code>, <code>off</code></td><td>Undescribed figures</td></tr>
+        <tr><td><code>alt.strict</code></td><td><code>true</code> / <code>false</code></td><td><code>true</code>: undescribed figures are errors</td></tr>
+        <tr><td><code>output.root</code></td><td>path</td><td>Output tree, default <code>&lt;corpus&gt;/ally-out</code></td></tr>
+        <tr><td><code>output.write_mode</code></td><td><code>in-place</code>, <code>mirror</code>, <code>edit</code></td><td>See <a href="#commands">Write modes</a></td></tr>
+        <tr><td><code>output.paths</code></td><td>slug → path</td><td>Move one artifact: <code>pdf</code>, <code>logs</code>, <code>tex</code>, <code>math</code>, <code>descriptions</code>, or <code>baseline</code></td></tr>
+        <tr><td><code>output.keep_pdf</code> / <code>keep_logs</code> / <code>keep_tex</code></td><td><code>true</code> / <code>false</code></td><td>Keep each artifact</td></tr>
+        <tr><td><code>baseline</code></td><td><code>true</code> / <code>false</code></td><td>Also build the original and report pixel diff. About 40% slower.</td></tr>
+        <tr><td><code>jobs</code></td><td>1 to 64</td><td>Documents built at once</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="topic" id="errors">
+    <h3>Errors</h3>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Message</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td class="wrap"><code>more than one profile is installed</code></td><td>Add <code>-p ee66</code> before the command.</td></tr>
+        <tr><td class="wrap"><code>no such profile</code></td><td>Check the name, or reinstall with <code>--editable</code>.</td></tr>
+        <tr><td class="wrap"><code>corpus root does not exist</code></td><td>Put the clone next to <code>questionBank/</code>, or pass <code>-c DIR</code>.</td></tr>
+        <tr><td class="wrap"><code>unknown scope</code></td><td>Use a listed scope or a path relative to the corpus root.</td></tr>
+        <tr><td class="wrap"><code>latexally run needs a terminal</code></td><td>In CI or a pipe, use <code>build --config … --write</code>.</td></tr>
+        <tr><td class="wrap"><code>nothing to build; name assignments or pass --config</code></td><td><code>cd</code> into an assignment, or name one.</td></tr>
+        <tr><td class="wrap"><code>this toolchain cannot produce a tagged PDF</code></td><td>Install the tlmgr packages from <a href="#setup">Setup</a>, then run <code>doctor</code>.</td></tr>
+        <tr><td class="wrap"><code>the corpus has N uncommitted change(s)</code></td><td>Commit or stash. In the runner, <kbd>i</kbd> builds anyway.</td></tr>
+        <tr><td class="wrap"><code>question_tags needs the course macro retrofit</code></td><td>Turn retrofit back on, or question tags off.</td></tr>
+        <tr><td class="wrap"><code>no worklogs found; run `latexally scan` first</code></td><td>Run <code>scan</code>, or <code>apply --captions</code>.</td></tr>
+        <tr><td class="wrap"><code>pdflatex timed out after 300s</code></td><td>Raise <code>engine.timeout_seconds</code>.</td></tr>
+        <tr><td class="wrap"><code>the source does not compile either</code></td><td>The original is broken. Fix it before converting.</td></tr>
+        <tr><td class="wrap">Formulas silent, no error</td><td>Build the math driver (<a href="#setup">Setup</a> step 4). Confirm with <code>doctor</code> checks T011 and T012.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="topic prose" id="reading">
+    <h3>Further reading</h3>
+    <dl class="where">
+      <dt><a href="https://github.com/YingK8/EECS16A-Accessibility-Tool/blob/main/docs/ALT_TEXT_SPEC.md">ALT_TEXT_SPEC.md</a></dt><dd>Figure description rules, templates, and table markup</dd>
+      <dt><a href="https://github.com/YingK8/EECS16A-Accessibility-Tool/blob/main/docs/MIGRATION.md">MIGRATION.md</a></dt><dd>Moving legacy course macros onto the accessible class</dd>
+      <dt><a href="https://github.com/YingK8/EECS16A-Accessibility-Tool/blob/main/src/latexally/README.md">src/latexally/README.md</a></dt><dd><code>doctor</code> checks and tagging modes</dd>
+      <dt><a href="https://github.com/YingK8/EECS16A-Accessibility-Tool/blob/main/docs/METHODOLOGY.md">METHODOLOGY.md</a></dt><dd>Design decisions and measurements</dd>
+      <dt><a href="https://github.com/YingK8/EECS16A-Accessibility-Tool/tree/main/profiles">profiles/</a></dt><dd>Annotated course profiles</dd>
+    </dl>
+    <p><code>latexally &lt;command&gt; --help</code> is always current.</p>
+  </section>
+
+  <footer>latexally · EECS16A-Accessibility-Tool</footer>
+</div>
+</main>
+</div>
+
+<script>
+(() => {
+  // copy buttons
+  document.querySelectorAll('.codeblock pre:not(.tree)').forEach(pre => {
+    const btn = document.createElement('button');
+    btn.className = 'copy'; btn.type = 'button'; btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code');
+    btn.addEventListener('click', async () => {
+      const text = [...pre.querySelector('code').childNodes]
+        .filter(n => !(n.classList && (n.classList.contains('p') || n.classList.contains('c'))))
+        .map(n => n.textContent).join('').replace(/[ \t]+$/gm, '');
+      try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; }
+      catch { btn.textContent = 'Select to copy'; }
+      setTimeout(() => (btn.textContent = 'Copy'), 1600);
+    });
+    pre.parentElement.appendChild(btn);
+  });
+  // current section in nav
+  const links = new Map([...document.querySelectorAll('nav a')].map(a => [a.getAttribute('href').slice(1), a]));
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      links.forEach(a => a.removeAttribute('aria-current'));
+      links.get(e.target.id)?.setAttribute('aria-current', 'true');
+    });
+  }, { rootMargin: '-10% 0px -75% 0px' });
+  links.forEach((_, id) => { const el = document.getElementById(id); if (el) obs.observe(el); });
+  // decorative dotted sine wave: evenly spaced dots, centred in the left margin
+  const wave = document.querySelector('.wave'), shell = document.querySelector('.shell');
+  const drawWave = () => {
+    const w = Math.max(0, shell.getBoundingClientRect().left), h = innerHeight;
+    const r = Math.min(8, w * 0.084);                   // 16px dots; smaller only when the margin can't fit them
+    const amp = 0.35 * Math.max(0, Math.min(64, w / 2 - r - 6));
+    const period = 210, gap = r * 3.8;                  // centre-to-centre distance along the curve
+    const xAt = y => w / 2 + amp * Math.sin(2 * Math.PI * y / period);
+    wave.setAttribute('width', w); wave.setAttribute('height', h);
+    wave.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    wave.replaceChildren();
+    if (r < 2) return;
+    // walk the curve by arc length and drop a dot every `gap`, so slopes and crests space alike
+    let px = xAt(-r), py = -r, run = gap;
+    for (let y = -r + 0.25; y <= h + r; y += 0.25) {  // start one step in: a zero-length first step made every distance NaN
+      const x = xAt(y), step = Math.hypot(x - px, y - py);
+      if (run + step >= gap) {
+        const t = (gap - run) / step, dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        dot.setAttribute('cx', (px + (x - px) * t).toFixed(1));
+        dot.setAttribute('cy', (py + (y - py) * t).toFixed(1));
+        dot.setAttribute('r', r.toFixed(1));
+        wave.appendChild(dot);
+        run = step * (1 - t);
+      } else run += step;
+      px = x; py = y;
+    }
+  };
+  drawWave();
+  addEventListener('resize', drawWave);
+})();
+</script>

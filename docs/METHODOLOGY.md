@@ -1010,6 +1010,69 @@ answer to "do nothing here". `tests/test_build.py` pins all four.
 With the three `00B` descriptions written, the same build produces 8 `Figure`
 elements, 46 `/Alt`, and `formats` goes clean.
 
+### 11.2a Does Ally read the drawing, or the description?
+
+The question § 11.2 leaves open. A `Described` figure carries `/Alt` on the
+structure element *and* `actualtext` on its marked content
+(`latexally-core.sty:210`), and the drawing's own label glyphs sit inside that
+same marked-content leaf. Whether a reader announces the labels is therefore
+not a property of the file: it is whether that reader honours `/ActualText`.
+
+Measured on `examples/build/demo-homework-prob.pdf`, the described circuit:
+
+| Extractor | Stands for | What it returns |
+|---|---|---|
+| structure tree | JAWS, NVDA, VoiceOver | the description only |
+| **PDFBox** | **Canvas Ally** | **the description only** |
+| PyMuPDF | Preview, pdf.js | `S1 + C1 V1 - C2 V2 -`; the description absent |
+| poppler | most Linux pipelines | `top 1nodes. C1 carries2voltage V1 ...` |
+| Ghostscript | the floor | the same, unspaced |
+
+So **Ally already skips figures**, and has since `Described` existed. It was
+never visible because nothing in the corpus was described: `0` `/Figure`
+elements in every PDF built to date.
+
+This is worth stating because the obvious diagnostic gives the opposite answer.
+`pdftotext` is the extractor nearest to hand, it is poppler, and poppler ignores
+`/ActualText` by design -- so the first look at a correctly-built file shows
+mangled glyph soup and invites a fix for a defect that is not there. The fix in
+question, outlining every drawing's text at build time, means externalising
+every `tikzpicture` and running each through Ghostscript. It is not built, and
+`docs/ALT_TEXT_SPEC.md` now records the table above as the reason rather than
+"this tool does not do that yet".
+
+The same trap as § 11.1, one level down: the PDF is right, and which reader you
+ask decides what you conclude about it.
+
+### 11.2b Counting the work: 698 call sites, 536 figures
+
+`scan` reports described-versus-outstanding for one scope, which is the right
+unit for somebody about to sit down and write descriptions and the wrong one
+for "how far through are we". The profile's scopes overlap -- `live` contains
+`bank` -- and a figure is content-addressed, so a drawing reached by three
+scopes is one description to write. Adding the per-scope counts overcounts.
+
+`latexally figures` scans once and buckets afterwards. On `ee66`:
+
+| | |
+|---|---|
+| figure environments in the live scope, counted by grep | 720 |
+| call sites the scanner resolves | 698 |
+| **distinct figures to describe** | **536** |
+| further uses covered by describing each once | 162 |
+
+The gap between 720 and 698 is comment-stripping and environments the scanner
+does not treat as figures; the gap between 698 and 536 is the payoff of content
+addressing. 536 is the number the burn-down is against.
+
+Writing 536 sentences is not something `src/latexally/` may do -- § 1's wall,
+enforced by `tests/test_no_ai_in_production.py` -- so the loop lives in
+`tools/describe_lab/`, outside the wheel. It reaches a model by *shelling out*
+to a command rather than importing an SDK, because that test reads every
+dependency group in `pyproject.toml` and would fail on `anthropic` as an extra.
+The side effect is a harness that tests without a network: the describer is a
+command, so `tests/test_describe_lab.py` replaces it with a shell script.
+
 ### 11.3 Evidence you can play
 
 A transcript diff settles a disagreement between two engineers. It does not

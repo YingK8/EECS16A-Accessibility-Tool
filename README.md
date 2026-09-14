@@ -91,9 +91,20 @@ latexally -help             # show all args and options
 
 latexally files             # what is in scope: body.tex, prob1.tex, sol1.tex
 latexally scan              # figures -> alt-text worklogs
+latexally figures           # how many are described, how many are left
 latexally build --write     # converted copies under ally-out/
 latexally formats <pdf>     # what Ally will read: transcripts, MP3, braille
+
+latexally notation          # course notation: what it would change (dry run)
+latexally notation --write  # ...and write it into the course material
 ```
+
+Two kinds of course formatting, set per course in the profile. `notation:` is a
+list of source rewrites — bold vectors, `^*` for a conjugate, `x[n]` for a
+discrete-time signal — reported by `check` and applied to every build's own
+copy. `math: matrix_align: r` is typesetting rather than source, so it arrives
+as one preamble line: matrix columns line up on the right and a minus sign hangs
+off to the left instead of centring inside the number's width.
 
 The tool does not apply accessibility changes to commented-out texts.
 
@@ -124,6 +135,10 @@ into floats — a bare `\includegraphics` is reported and skipped, because
 `\caption` outside a `figure` or `table` does not compile — and a figure that
 already has a caption is left alone, so re-running only touches what is
 outstanding.
+
+A graphic listed in the profile's `figures.artifact_allowlist` is wrapped in
+`\begin{Decorative}` instead — an artifact a reader skips entirely. That list is
+hand-curated; nothing is ever inferred from a filename.
 
 **Your `.tex` is not edited unless you ask.** By default a run writes an
 assignment's output into that assignment's own `accessible/` folder — the
@@ -173,6 +188,44 @@ Then `latexally -p ee66 apply --write` writes them into the sources.
 **`ally-out/descriptions/` is course content and should be committed.** The
 worklogs outlive any checkout of the tool, and a description that is lost has
 to be written again by hand. The rest of `ally-out/` is build output.
+
+**How much is left.** `scan` answers for one scope; `figures` answers for the
+corpus and writes nothing:
+
+```bash
+latexally -p ee66 figures live
+```
+
+```
+0 of 536 figures described (0%), 536 outstanding
+698 call sites — describing each figure once covers 162 further use(s)
+```
+
+The per-scope rows overlap and are not meant to add up: `live` contains `bank`,
+and a figure is content-addressed, so one drawing reached by three scopes is
+one description to write. The total is the honest count.
+
+**Writing them with an agent.** 536 sentences is more than an afternoon, so
+`tools/describe_lab/` drives the same `agent next-task` / `agent submit` loop a
+person would:
+
+```bash
+latexally -p ee66 scan live                                   # worklogs first
+python -m tools.describe_lab --scope live --limit 20 --dry-run
+python -m tools.describe_lab --scope live --limit 20
+```
+
+Re-running is how you resume — a described figure stops being outstanding — and
+the most-cited figures are done first, so an interrupted run has done the work
+that matters most.
+
+It lives in `tools/` and not in the package on purpose: the shipped pipeline has
+no model in it, and `tests/test_no_ai_in_production.py` enforces that. The
+describer is a *command* (`claude -p` by default, `--describer` to change it),
+not a library, so no model dependency is ever declared.
+
+**There is no review gate.** Whatever the agent submits reaches a student on the
+next build. Every submission is appended to `describe-log.jsonl`. Read it.
 
 #### 4. Checking what a student will actually hear
 

@@ -30,7 +30,13 @@ from typing import Iterable
 from .config import Profile
 from .texlex import EnvSpan, TexSource
 
-__all__ = ["FigureRef", "scan_file", "scan_corpus", "IMAGE_EXTENSIONS"]
+__all__ = [
+    "FigureRef",
+    "scan_file",
+    "scan_corpus",
+    "is_artifact_listed",
+    "IMAGE_EXTENSIONS",
+]
 
 IMAGE_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg", ".eps", ".svg", ".gif", ".PNG", ".JPG")
 
@@ -187,6 +193,32 @@ def _resolve_image(declared: str, tex_file: Path, roots: list[Path]) -> Path | N
 # ---------------------------------------------------------------------- #
 # scanning
 # ---------------------------------------------------------------------- #
+
+
+def is_artifact_listed(reference: FigureRef, profile: Profile) -> bool:
+    r"""Has a person listed this graphic as decorative in the profile?
+
+    The decision is never inferred -- not from the filename, not from the
+    genre. ``figures.artifact_allowlist`` is a hand-curated list, and this asks
+    whether the graphic is on it. In this corpus ``lefthalfpic.jpg`` and
+    ``righthalfpic.jpg`` look ornamental and are the panorama halves the
+    image-stitching question is about, which is why guessing is not on offer.
+
+    Only a raster can be listed: the allowlist holds paths, and a
+    ``tikzpicture`` has none. A drawing that is genuinely ornamental still needs
+    ``\begin{Decorative}`` written around it by hand.
+
+    Both the scan and the apply pass ask this. It lives here so they cannot
+    drift: the worklog carries ``at`` and ``alt_text`` and nothing else, so a
+    disposition written at scan time does not survive the round trip to disk,
+    and re-deriving it is cheaper than a fourth field somebody has to maintain.
+    """
+    if not reference.image_path:
+        return False
+    return any(
+        reference.image_path.endswith(candidate)
+        for candidate in profile.figures.artifact_allowlist
+    )
 
 
 def scan_file(path: Path, profile: Profile) -> list[FigureRef]:

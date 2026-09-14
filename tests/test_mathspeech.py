@@ -443,6 +443,45 @@ def test_speech_is_folded_to_characters_pdftex_can_write():
     assert all(ord(c) <= 0xFFFF for c in normalise_speech("\U0001F600 x"))
 
 
+def test_bold_is_spoken_as_the_letter_rather_than_as_the_word_bold():
+    r"""Measured against the driver: `<mi mathvariant="bold">x</mi>` speaks as
+    "bold x", and `latex2mathml` writes `\mathbf{x}` as the bold codepoint
+    U+1D431, which speaks the same way. This course writes every vector bold,
+    so a reader would hear "bold" thousands of times for what is only how a
+    vector is written.
+    """
+    from latexally.mathspeech import plain_bold
+
+    assert plain_bold("<mi>&#x1D431;</mi>") == "<mi>x</mi>"
+    assert plain_bold("<mi>&#x1D400;</mi>") == "<mi>A</mi>"
+    assert plain_bold("<mi>&#x1D6C2;</mi>") == "<mi>α</mi>"
+    assert plain_bold('<mi mathvariant="bold">x</mi>') == "<mi>x</mi>"
+    # A compound keeps its other half.
+    assert (
+        plain_bold('<mi mathvariant="bold-italic">x</mi>')
+        == '<mi mathvariant="italic">x</mi>'
+    )
+
+
+def test_meaningful_alphabets_are_not_folded_with_the_bold():
+    r"""`\mathbb{R}` is the reals, and "double-struck cap R" is the right
+    reading of it. Only bold is emphasis rather than meaning."""
+    from latexally.mathspeech import plain_bold
+
+    assert plain_bold("<mi>&#x211D;</mi>") == "<mi>&#x211D;</mi>"
+    assert plain_bold("<mi>&#x1D507;</mi>") == "<mi>&#x1D507;</mi>"  # fraktur
+
+
+def test_the_attached_mathml_keeps_its_bold():
+    """Only the copy handed to the speech engine is folded: a reader that
+    renders the attached MathML should still see a vector as bold."""
+    from latexally.mathspeech import Formula, _to_mathml
+
+    markup = _to_mathml(Formula("h", r"$\mathbf{x}$"))
+
+    assert "&#x1D431;" in markup
+
+
 def test_the_escaped_string_never_carries_a_four_octet_character():
     from latexally.mathspeech import _escape_tex_string
 

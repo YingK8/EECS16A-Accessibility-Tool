@@ -43,6 +43,7 @@ from latexally.tui.app import (
     ColorsScreen,
     DocumentsScreen,
     LatexAllyApp,
+    NotationScreen,
     OutputScreen,
     ModeScreen,
     ProfileScreen,
@@ -923,7 +924,7 @@ async def test_backing_out_keeps_the_current_output_settings(profile: Profile):
         await output(pilot)
         await retreat(pilot)
         assert app.config.output.root == _out(profile)
-        assert app.config.output.write_mode == "in-place"
+        assert app.config.output.write_mode == "edit"
 
 
 async def test_the_worklog_path_is_named_so_staff_can_find_it(profile: Profile):
@@ -1067,11 +1068,11 @@ async def test_the_review_states_whether_anything_will_be_written(profile: Profi
     async with app.run_test(size=SIZE) as pilot:
         await scope_all_homework(pilot)
         await walk_to(pilot, ReviewScreen)
-        # in-place is the default now: the PDF goes beside the document, and
-        # the review has to say so rather than promise an untouched corpus.
+        # edit is the runner's default: the review has to say the sources are
+        # rewritten rather than promise an untouched corpus.
         shown = visible(app)
-        assert "beside the document it came from" in shown
-        assert app.config.output.edits_sources is False
+        assert "REWRITE THE .tex FILES THEMSELVES" in shown
+        assert app.config.output.edits_sources is True
 
 
 async def test_the_review_names_build_as_the_key_that_writes(profile: Profile):
@@ -1707,6 +1708,70 @@ async def test_scanning_clears_the_list_and_says_so(profile: Profile, monkeypatc
         assert screen.query_one("#assignments", SelectionList).option_count == 3
         # The tick from the other scope stands.
         assert app.config.assignments == ("sem/dis/01A",)
+
+
+# ---------------------------------------------------------------------- #
+# notation
+# ---------------------------------------------------------------------- #
+
+
+def _notation_profile(profile: Profile) -> Profile:
+    """The same corpus, plus one rule and a file that breaks it."""
+    from latexally.config import NotationRule
+
+    (profile.corpus.root / "sem" / "hw" / "1" / "q.tex").write_text(
+        "$\\vec{x}$\n", encoding="utf-8"
+    )
+    return replace(
+        profile,
+        notation=(
+            NotationRule(
+                id="bold-vector",
+                to="\\mathbf{{arg}}",
+                message="vectors are bold",
+                macros=("vec",),
+            ),
+        ),
+    )
+
+
+async def test_f_opens_notation_from_any_step(profile: Profile):
+    """App-level like `r`: writing the course's notation is not a step in
+    converting, and it must be reachable without walking the wizard."""
+    app = LatexAllyApp(_notation_profile(profile))
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        opened_from = type(app.screen)
+        await press(pilot, "f")
+        assert isinstance(app.screen, NotationScreen)
+        await press(pilot, "backslash")
+        assert isinstance(app.screen, opened_from)
+
+
+async def test_notation_counts_the_sites_before_writing_anything(profile: Profile):
+    """The screen opens on the plan, and nothing is written until `y`."""
+    app = LatexAllyApp(_notation_profile(profile))
+    source = profile.corpus.root / "sem" / "hw" / "1" / "q.tex"
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await press(pilot, "f")
+        shown = visible(app)
+        assert "ALLY-FMT-bold-vector" in shown
+        assert "1 site" in shown
+        # A bare tmp_path is not a git repository, so the screen has to say that
+        # rather than offer a key that cannot work.
+        assert "git" in shown.lower()
+        assert source.read_text() == "$\\vec{x}$\n"
+
+
+async def test_notation_says_so_when_the_course_declares_none(profile: Profile):
+    """The fixture profile has no `notation:` at all, which is the state every
+    course starts in."""
+    app = LatexAllyApp(profile)
+    async with app.run_test(size=SIZE) as pilot:
+        await settle(pilot)
+        await press(pilot, "f")
+        assert "no notation rules" in visible(app)
 
 
 # ---------------------------------------------------------------------- #

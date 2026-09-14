@@ -11,6 +11,7 @@ the Python function it is supposed to call.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -41,6 +42,75 @@ def _profile_args(tmp_path: Path, corpus: Path) -> list[str]:
     profile_yaml = tmp_path / "profile.yaml"
     profile_yaml.write_text("name: test\n")
     return ["-p", str(profile_yaml), "--corpus", str(corpus)]
+
+
+def _notation_args(tmp_path: Path, corpus: Path) -> list[str]:
+    """A profile with one notation rule, so the command has something to do."""
+    profile_yaml = tmp_path / "notation.yaml"
+    profile_yaml.write_text(
+        "name: test\n"
+        "notation:\n"
+        "  - id: bold-vector\n"
+        "    message: vectors are bold\n"
+        "    macro: vec\n"
+        "    to: '\\mathbf{{arg}}'\n"
+    )
+    return ["-p", str(profile_yaml), "--corpus", str(corpus)]
+
+
+def _math_corpus(tmp_path: Path) -> tuple[Path, Path]:
+    corpus = _corpus(tmp_path)
+    body = corpus / "sem" / "hw" / "3" / "body.tex"
+    body.write_text("\\begin{document}\n$\\vec{x}$\n\\end{document}\n")
+    return corpus, body
+
+
+def test_notation_is_a_dry_run_by_default(tmp_path: Path):
+    """It reports what it would change and leaves the corpus alone."""
+    corpus, body = _math_corpus(tmp_path)
+    result = CliRunner().invoke(
+        main, [*_notation_args(tmp_path, corpus), "notation", "sem/hw/3"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "ALLY-FMT-bold-vector" in result.output
+    assert "--write" in result.output
+    assert "\\vec{x}" in body.read_text(), "a dry run must not edit the corpus"
+
+
+def test_notation_write_refuses_outside_git(tmp_path: Path):
+    """Writing over course material is only undoable with git behind it."""
+    corpus, body = _math_corpus(tmp_path)
+    result = CliRunner().invoke(
+        main, [*_notation_args(tmp_path, corpus), "notation", "sem/hw/3", "--write"]
+    )
+    assert result.exit_code != 0
+    assert "\\vec{x}" in body.read_text()
+
+
+def test_notation_write_edits_a_clean_corpus(tmp_path: Path):
+    corpus, body = _math_corpus(tmp_path)
+    for command in (
+        ["git", "init", "-q"],
+        ["git", "add", "-A"],
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "corpus"],
+    ):
+        subprocess.run(command, cwd=corpus, check=True, capture_output=True)
+
+    result = CliRunner().invoke(
+        main, [*_notation_args(tmp_path, corpus), "notation", "sem/hw/3", "--write"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "1 file(s) rewritten" in result.output
+    assert "$\\mathbf{x}$" in body.read_text()
+
+
+def test_notation_says_so_when_the_profile_declares_none(tmp_path: Path):
+    corpus = _corpus(tmp_path)
+    result = CliRunner().invoke(
+        main, [*_profile_args(tmp_path, corpus), "notation", "sem/hw/3"]
+    )
+    assert result.exit_code != 0
+    assert "no notation rules" in result.output
 
 
 def test_apply_captions_needs_no_worklog(tmp_path: Path):

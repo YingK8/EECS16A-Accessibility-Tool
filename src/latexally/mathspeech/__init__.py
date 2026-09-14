@@ -558,7 +558,10 @@ def _to_mathml(formula: Formula) -> str:
 #: Bumped whenever anything upstream of the speech string changes -- the macro
 #: table, the engine, its preferences, the fork's rules. It is stored in the
 #: cache and checked on read, because the cache key cannot see any of them.
-RECIPE = "mathcat-0.7.5+augmented-matrix+temp-name/clearspeak/macros-5-intertext-label-eqref"
+RECIPE = (
+    "mathcat-0.7.5+augmented-matrix+temp-name/clearspeak/"
+    "macros-5-intertext-label-eqref+plain-bold"
+)
 
 #: Not a valid MD5, so it can never collide with a formula's hash.
 _RECIPE_KEY = "#recipe"
@@ -663,7 +666,13 @@ def convert(
         except Exception:
             continue  # unconvertible source; ALLY-PDF-040 will report the gap
 
-    spoken = _speak(sorted(mathml.items()), domain=domain, timeout=timeout)
+    # Spoken from the de-emboldened copy; `mathml` keeps the bold, because that
+    # is what gets attached to the PDF as MathML. See `plain_bold`.
+    spoken = _speak(
+        sorted((digest, plain_bold(markup)) for digest, markup in mathml.items()),
+        domain=domain,
+        timeout=timeout,
+    )
     for digest, markup in mathml.items():
         # Whitespace-only speech is not a result. `$\\\\$` -- a line break that
         # ended up inside maths -- converts to a lone `<mspace linebreak>`, and
@@ -681,6 +690,53 @@ def convert(
         payload.update({k: list(v) for k, v in known.items()})
         cache.write_text(json.dumps(payload, indent=1))
     return known
+
+
+#: A numeric character reference, which is how ``latex2mathml`` writes any
+#: non-ASCII character it emits.
+_CHAR_REF = re.compile(r"&#x([0-9A-Fa-f]+);")
+
+#: ``mathvariant="bold"`` and its compounds -- ``bold-italic``, ``bold-fraktur``.
+#: The converter uses the codepoints instead, but a hand-written or upstream
+#: fragment may carry the attribute, and MathCAT reads both the same way.
+_BOLD_VARIANT = re.compile(r'\s*mathvariant="bold-?([a-z-]*)"')
+
+
+def plain_bold(mathml: str) -> str:
+    r"""Bold letters, spoken as the letter. ``\mathbf{x}`` is "x", not "bold x".
+
+    This course writes every vector bold, so with the notation rules on, a third
+    of the corpus's symbols are bold and a reader would hear the word "bold"
+    thousands of times: *"bold x is equal to bold cap a bold b"*. The bold is
+    how a vector is written, not something said out loud.
+
+    ``latex2mathml`` does not emit ``mathvariant`` -- it substitutes the
+    Mathematical Alphanumeric codepoint itself, ``\mathbf{x}`` becoming
+    ``&#x1D431;`` -- and MathCAT speaks that as "bold x". Folding those back to
+    their base letter (NFKC is the exact inverse of the substitution) is what
+    removes the word.
+
+    Only *bold* is folded, and it is selected by the character's own Unicode
+    name. Double-struck and fraktur are left alone: ``\mathbb{R}`` means the
+    reals and "double-struck cap R" is the right reading of it.
+
+    Applied to the copy handed to the speech engine only. The MathML attached
+    to the PDF keeps the bold, so a reader that renders MathML still shows a
+    vector as bold.
+    """
+
+    def fold(match: re.Match[str]) -> str:
+        char = chr(int(match.group(1), 16))
+        if "BOLD" not in unicodedata.name(char, ""):
+            return match.group(0)
+        plain = unicodedata.normalize("NFKC", char)
+        return plain if plain != char else match.group(0)
+
+    # `\1` keeps the other half of a compound: bold-italic is still italic.
+    return _BOLD_VARIANT.sub(
+        lambda m: f' mathvariant="{m.group(1)}"' if m.group(1) else "",
+        _CHAR_REF.sub(fold, mathml),
+    )
 
 
 def normalise_speech(text: str) -> str:

@@ -168,6 +168,7 @@ where you are standing.
 | `Esc` or `b` | Back, keeping everything you already changed. Step 1 has no back |
 | `s` | write the settings to `<output>/run.yaml` without building — replay with `latexally run --config` or `latexally build --config` |
 | `r` | Revert — undo a run: restore your `.tex` with git and delete what the tool wrote. Shows the list first; `y` confirms |
+| `f` | Notation — write the course's own notation (bold vectors, `^*`, `x[n]`) into your `.tex`. Shows the count per rule first; `y` confirms. Needs a clean git worktree, and every build applies these to its own copy anyway |
 | `q` | quit; nothing is built |
 
 **It opens on the folder you started it from.** The first screen asks one
@@ -388,10 +389,10 @@ latexally scan bank
 ```
 266 call sites → 234 unique figures (1.14× deduplication)
 described: 0   outstanding: 234
-worklogs: .../questionBank/ally/descriptions (42 files)
+worklogs: .../questionBank/ally-out/descriptions (42 files)
 ```
 
-This creates `questionBank/ally/descriptions/*.yaml` — one file per assignment
+This creates `questionBank/ally-out/descriptions/*.yaml` — one file per assignment
 folder. **This is the only thing `scan` writes, and it writes nothing inside
 your `.tex` files.** Safe to re-run: it rebuilds the list of figures from the
 source and never overwrites a description a person typed.
@@ -403,28 +404,32 @@ Add `--no-write` to see the counts without creating any files.
 Open a worklog, e.g.:
 
 ```bash
-open "/Users/meli/Desktop/Kevin/UCB/EECS 16A/questionBank/ally/descriptions/questionBank-hw-10.yaml"
+open ally-out/descriptions/bank/questionBank-hw-10.yaml
 ```
 
 Each entry is three lines: the figure's id, where it is first used, and an
-empty `description:`. Type the description there — that is the whole step.
+empty `alt_text:`. Type the description there — that is the whole step.
 
 ```yaml
-  - figure: fig-3870069f66da
-    file: sp26/dis/13A/questions/q_pca.tex:10
-    description: >-
-      Scatter plot on x and y axes running about minus 4 to 4, with four
-      transactions marked.
+fig-3870069f66da:
+  at: sp26/dis/13A/questions/q_pca.tex:10
+  alt_text: >-
+    Scatter plot on x and y axes running about minus 4 to 4, with four
+    transactions marked.
 ```
 
-The `>-` is YAML for "this paragraph continues on the following indented
-lines"; it exists so a one-word edit is a one-line diff. A single-line
-description can go straight after `description:` with no `>-`. The rules for
-what to write are in `ALT_TEXT_SPEC.md`.
+`at:` is re-derived by the next scan and ignored on the way in; `alt_text:` is
+the only field read back. The `>-` is YAML for "this paragraph continues on the
+following indented lines"; it exists so a one-word edit is a one-line diff. A
+single-line description can go straight after `alt_text:` with no `>-`. The
+rules for what to write are in `ALT_TEXT_SPEC.md`.
+
+Figures are ordered most-referenced first, so the entry at the top of the file
+is the one whose description buys the most.
 
 **Anything you write here is written into the PDF.** There is no separate
 approval step, so an unfinished sentence ships as alt text. Leave
-`description:` empty until it is ready. To see the machine-derived facts for a
+`alt_text:` empty until it is ready. To see the machine-derived facts for a
 figure — extracted circuit topology, plot data, labels — use
 `latexally agent next-task`, which reports them without putting them in the
 file.
@@ -443,8 +448,9 @@ When the diff looks right:
 latexally apply bank --write
 ```
 
-Only entries marked `approved` are written. The tool creates no `.bak` files;
-rollback is `latexally revert`, below.
+Any entry whose `alt_text:` is non-empty is written; the file carries no
+separate approval status. The tool creates no `.bak` files; rollback is
+`latexally revert`, below.
 
 ### Undo everything a run did
 

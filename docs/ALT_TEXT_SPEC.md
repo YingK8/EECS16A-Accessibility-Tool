@@ -85,9 +85,26 @@ there. It is invisible in the strict sense -- not one pixel moves -- and adds
 nothing to the tag tree, so a tag-following reader still hears the `/Alt` once
 and never sees it. Switch it off with `\accesssetup{text-layer=false}`.
 
-The drawing's own labels are still in the text layer beside it, so a tag-blind
-viewer reads both. Removing them means converting the figure's text to outlines
-at build time; this tool does not do that yet.
+The drawing's own labels are still in the text layer beside it. Whether a
+reader announces them depends on whether it honours `/ActualText` on the marked
+content, and the five disagree. Measured on
+`examples/build/demo-homework-prob.pdf`, on the described circuit:
+
+| Reader | Announces |
+|---|---|
+| structure tree (JAWS, NVDA, VoiceOver) | the description only |
+| **PDFBox (Canvas Ally)** | **the description only** |
+| PyMuPDF (Preview, pdf.js) | the labels only; the description never appears |
+| poppler | the description with the labels spliced into it |
+| Ghostscript | the same |
+
+Ally is clean, which is the row this corpus is converted for. Removing the
+labels for the other three means converting the figure's text to outlines at
+build time. **This tool deliberately does not do that**: it would mean
+externalising every `tikzpicture` and running each through Ghostscript, and it
+buys nothing for Ally. The disagreement is reported as `ALLY-FMT-002`, a
+warning, because poppler and Ghostscript behave as designed and no change to
+the document alters them.
 
 ---
 
@@ -103,10 +120,14 @@ Apply in order, stop at the first hit:
 5. Anything else → describe it.
 
 **The worklog cannot mark a graphic decorative.** It carries `alt_text` and
-nothing else, so every figure the scan finds either gets a description or ships
-undescribed. A genuinely ornamental graphic needs `\begin{Decorative}` written
-around it in the source by hand, which is the only thing that makes a reader
-skip it.
+nothing else, so a disposition does not survive being written to disk and read
+back. The decision is recorded in the profile instead: a raster listed in
+`figures.artifact_allowlist` is wrapped in `\begin{Decorative}` by `apply`,
+which is what makes a reader skip it. The list is hand-curated and read
+straight from the profile at apply time -- nothing is inferred from a filename.
+
+A `tikzpicture` has no path to list, so a drawing that is genuinely ornamental
+still needs `\begin{Decorative}` written around it in the source by hand.
 
 When in doubt, describe it. A wrong decorative call silently deletes
 information; a wrong description call costs a second of speech.

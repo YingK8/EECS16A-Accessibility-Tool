@@ -10,21 +10,23 @@ from __future__ import annotations
 import re
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..config import Profile
+from ..config import Profile, matches_pattern
 from ..errors import CatalogError
 from ..describe import describe_reference
-from ..scan import FigureRef, scan_corpus
+from ..scan import FigureRef, is_artifact_listed, scan_corpus
 from ..texlex import TexSource
 from .worklog import Entry, Worklog, merge, read_worklog, write_worklog
 
 __all__ = [
     "BANK_BUCKET",
     "CatalogResult",
+    "Coverage",
     "WORKLOG_NAME",
     "build_catalog",
+    "coverage",
     "default_output_root",
     "load_entries",
     "worklog_dir",
@@ -58,6 +60,108 @@ class CatalogResult:
             "outstanding": len(self.outstanding),
             "worklogs": [str(path) for path in self.worklogs],
         }
+
+
+@dataclass(slots=True)
+class Coverage:
+    """How much of the corpus is described, cut by scope and by genre.
+
+    ``scan`` answers this for one scope at a time, which is the right unit when
+    somebody is about to sit down and write descriptions. It is the wrong unit
+    for "how far through are we": the scopes overlap -- ``live`` contains
+    ``bank`` -- and a figure is content-addressed, so the same drawing is one
+    unit of work no matter how many scopes reach it. Counting per scope and
+    adding up therefore overcounts, sometimes by a lot.
+
+    So this scans once and buckets afterwards. ``total`` is the honest number
+    of distinct figures; the per-scope rows are a breakdown of the same set and
+    are expected to sum to more than it.
+    """
+
+    total: int
+    done: int
+    call_sites: int
+    by_scope: dict[str, tuple[int, int]] = field(default_factory=dict)
+    by_genre: dict[str, tuple[int, int]] = field(default_factory=dict)
+
+    @property
+    def outstanding(self) -> int:
+        return self.total - self.done
+
+    def as_dict(self) -> dict:
+        def rows(counts: dict[str, tuple[int, int]]) -> list[dict]:
+            return [
+                {"name": name, "total": total, "done": done, "outstanding": total - done}
+                for name, (total, done) in sorted(
+                    counts.items(), key=lambda item: (-(item[1][0] - item[1][1]), item[0])
+                )
+            ]
+
+        return {
+            "total": self.total,
+            "done": self.done,
+            "outstanding": self.outstanding,
+            "call_sites": self.call_sites,
+            "by_scope": rows(self.by_scope),
+            "by_genre": rows(self.by_genre),
+        }
+
+
+def coverage(
+    profile: Profile,
+    scope: str | None = None,
+    *,
+    output_root: Path | None = None,
+    worklogs: Path | None = None,
+) -> Coverage:
+    """Count described and outstanding figures without writing anything.
+
+    Read-only on purpose: this is the burn-down somebody checks between
+    authoring sessions, and it must not be able to disturb the worklogs it is
+    reporting on. ``build_catalog`` is called with ``write=False`` and the
+    descriptions come from :func:`load_entries`, which reads every worklog on
+    disk -- so a description written for one assignment counts wherever the
+    same figure appears.
+    """
+    result = build_catalog(profile, scope, write=False)
+    written = load_entries(profile, output_root, worklogs=worklogs)
+
+    named = {
+        name: profile.corpus.patterns_for(name)
+        for name in sorted(profile.corpus.named)
+    }
+    by_scope: dict[str, list[int]] = {name: [0, 0] for name in named}
+    by_genre: dict[str, list[int]] = {}
+
+    done_total = 0
+    for identity, entry in result.entries.items():
+        # A description reaches the PDF if it exists in ANY worklog, so the
+        # catalog's own copy is not the last word: `load_entries` is.
+        on_disk = written.get(identity)
+        done = entry.is_done or bool(on_disk and on_disk.is_done)
+        done_total += int(done)
+
+        genre = entry.genre or "unknown"
+        row = by_genre.setdefault(genre, [0, 0])
+        row[0] += 1
+        row[1] += int(done)
+
+        for name, patterns in named.items():
+            if any(
+                matches_pattern(site, pattern)
+                for site, _ in entry.sites
+                for pattern in patterns
+            ):
+                by_scope[name][0] += 1
+                by_scope[name][1] += int(done)
+
+    return Coverage(
+        total=len(result.entries),
+        done=done_total,
+        call_sites=result.call_sites,
+        by_scope={n: (t, d) for n, (t, d) in by_scope.items() if t},
+        by_genre={n: (t, d) for n, (t, d) in by_genre.items()},
+    )
 
 
 #: Where a run writes when nobody says otherwise. Kept here as well as on
@@ -264,15 +368,11 @@ def build_catalog(
                 continue
             sources[primary.file] = source
         skeleton = describe_reference(primary, source)
-        artifact_listed = any(
-            primary.image_path and primary.image_path.endswith(candidate)
-            for candidate in profile.figures.artifact_allowlist
-        )
         entries[identity] = Entry(
             id=identity,
             kind=primary.kind,
             genre=skeleton.genre,
-            disposition="artifact" if artifact_listed else "figure",
+            disposition="artifact" if is_artifact_listed(primary, profile) else "figure",
             confidence=skeleton.confidence,
             sites=[
                 (reference.file.resolve().relative_to(root).as_posix(), reference.line)

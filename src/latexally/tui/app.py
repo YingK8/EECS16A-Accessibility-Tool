@@ -84,6 +84,7 @@ __all__ = [
     "Choice",
     "LatexAllyApp",
     "ModeScreen",
+    "NotationScreen",
     "Radio",
     "RevertScreen",
 ]
@@ -254,6 +255,7 @@ class ListStepScreen(StepScreen):
     BINDINGS = [
         Binding("a", "select_all", "All"),
         Binding("c", "select_none", "Clear"),
+        Binding("x", "toggle", "Select"),
     ]
     list_id = "choices"
 
@@ -272,6 +274,12 @@ class ListStepScreen(StepScreen):
 
     def action_select_none(self) -> None:
         self.choices.deselect_all()
+
+    def action_toggle(self) -> None:
+        """x or space: tick/untick the highlighted row. Enter stays "Next"."""
+        highlighted = self.choices.highlighted
+        if highlighted is not None:
+            self.choices.toggle(self.choices.get_option_at_index(highlighted))
 
 
 class ProfileScreen(StepScreen):
@@ -1364,12 +1372,14 @@ class BuildScreen(Screen):
     BINDINGS = [
         Binding("b", "start", "Build"),
         Binding("enter", "finish", "Exit", priority=True),
+        Binding("i", "ignore", "Build anyway"),
     ]
 
     _build_started: bool = False
     _build_queue: list[tuple[str, str, str]] = []
     _build_done: bool = False
     _waiting = None
+    _dirty: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static("", id="build-status", classes="heading")
@@ -1443,7 +1453,21 @@ class BuildScreen(Screen):
             return None if self._build_started or not self._build_queue else True
         if action == "finish":
             return True if self._build_done else None
+        if action == "ignore":
+            return True if self._dirty else None
         return super().check_action(action, parameters)
+
+    def action_ignore(self) -> None:
+        """Build anyway, uncommitted changes and all. The user's call, not ours."""
+        if not self._dirty:
+            return
+        if self._waiting is not None:
+            self._waiting.stop()
+            self._waiting = None
+        self._dirty = False
+        self.app.config = replace(self.app.config, allow_dirty=True)
+        self._build_started = False
+        self.action_start()
 
     def _queue(self) -> list[tuple[str, str, str]]:
         from ..discover import iter_selected
@@ -1554,9 +1578,13 @@ class BuildScreen(Screen):
             # kind of dead end this screen exists to avoid, so it watches the
             # worktree and starts itself when it comes back clean.
             self._build_started = False
+            self._dirty = True
             self.query_one("#build-progress", LoadingIndicator).display = False
             self.query_one("#build-hint", Static).update(
-                Content("Commit or stash them and this starts itself — or press b.")
+                Content(
+                    "Commit or stash them and this starts itself — or press b. "
+                    "Press i to build anyway, uncommitted changes and all."
+                )
             )
             self.refresh_bindings()
             self._waiting = self.set_interval(2, self._check_worktree)
@@ -1582,6 +1610,7 @@ class BuildScreen(Screen):
             return
         self._waiting.stop()
         self._waiting = None
+        self._dirty = False
         self.action_start()
 
     def _done(self, reports, descriptions) -> None:
@@ -1818,6 +1847,188 @@ class RevertScreen(Screen):
         note.display = bool(text)
 
 
+class NotationScreen(Screen):
+    """The course's own notation, written into the course material.
+
+    Every build already applies these rules to its own mirrored copy, so this
+    screen is for the other case: bringing the sources themselves into line.
+    That rewrites real course material, so it is guarded the way in-place
+    conversion is -- git clean, or it does not run -- and it shows the count per
+    rule before it will take `y`.
+    """
+
+    BINDINGS = [
+        Binding("backslash", "close", "Back", key_display="\\"),
+        Binding("y", "confirm", "Yes, rewrite"),
+        Binding("enter", "refuse", "", show=False, priority=True),
+    ]
+
+    def compose(self) -> ComposeResult:
+        yield Static("Course notation", id="notation-heading", classes="heading")
+        yield Static(
+            "Bold vectors, ^* for a conjugate, x[n] for a discrete-time signal — "
+            "whatever this course's profile declares. Maths only; prose and "
+            "comments are left alone.",
+            classes="hint",
+        )
+        with VerticalScroll(id="body"):
+            yield Static("", id="notation-plan")
+        spinner = LoadingIndicator(id="notation-progress")
+        spinner.display = False
+        yield spinner
+        yield Static("", id="notation-note", classes="reason")
+        yield Footer()
+
+    _writing: bool = False
+
+    def on_mount(self) -> None:
+        self._plans: list | None = None
+        self._blocked = ""
+        self._load()
+
+    def _heading(self, text: str) -> None:
+        self.query_one("#notation-heading", Static).update(Content(text))
+
+    def action_refuse(self) -> None:
+        """Enter means Next everywhere else, and must not mean this here."""
+        if self._writing:
+            return
+        if not self._plans:
+            self.say("Nothing to rewrite.")
+            return
+        self.say(
+            "Enter does not rewrite — this edits your course material. "
+            "Press y to go ahead, or \\ to go back."
+        )
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if action == "confirm":
+            if self._writing or not self._plans or self._blocked:
+                return None
+            return True
+        if action == "notation":
+            return False
+        return True
+
+    def _load(self) -> None:
+        self._heading("Course notation — reading the plan…")
+        self.query_one("#notation-progress", LoadingIndicator).display = True
+        self.refresh_bindings()
+        self._plan_notation()
+
+    def _scope_files(self) -> list[Path]:
+        """Every source file the run's own scope covers."""
+        profile = self.app.profile
+        scopes = self.app.config.assignments or (None,)
+        paths: set[Path] = set()
+        for scope in scopes:
+            try:
+                paths.update(profile.iter_files(scope))
+            except LatexAllyError:
+                continue
+        return sorted(
+            path for path in paths if path.suffix.lower() in (".tex", ".sty", ".cls")
+        )
+
+    @work(thread=True, exclusive=True, group="notation-plan")
+    def _plan_notation(self) -> None:
+        from ..build import require_clean_worktree
+        from ..notation import plan_files
+
+        profile = self.app.profile
+        if not profile.notation:
+            self.app.call_from_thread(
+                self._planned,
+                [],
+                f"This course declares no notation rules. Add a `notation:` "
+                f"section to {profile.source_path or 'the profile'}.",
+            )
+            return
+        # Reported up front rather than on `y`: an offer that cannot be taken
+        # is worse than one that is not made.
+        blocked = ""
+        try:
+            require_clean_worktree(Path(profile.corpus.root).resolve())
+        except LatexAllyError as exc:
+            blocked = str(exc)
+        try:
+            plans = plan_files(self._scope_files(), profile.notation)
+        except LatexAllyError as exc:
+            self.app.call_from_thread(self._planned, [], str(exc))
+            return
+        self.app.call_from_thread(self._planned, plans, blocked)
+
+    def _planned(self, plans: list, blocked: str) -> None:
+        self._plans = plans
+        self._blocked = blocked if plans else ""
+        if not self._writing:
+            self.query_one("#notation-progress", LoadingIndicator).display = False
+        self._heading(
+            "Confirm rewrite (y)" if plans and not blocked else "Course notation"
+        )
+        self.query_one("#notation-plan", Static).update(self._describe(plans, blocked))
+        self.refresh_bindings()
+
+    def _describe(self, plans: list, blocked: str) -> Content:
+        if not plans:
+            return Content(
+                blocked
+                or "Nothing to change — the material already matches this "
+                "course's notation."
+            )
+        counts: dict[str, int] = {}
+        for plan in plans:
+            for rule, sites in plan.counts.items():
+                counts[rule] = counts.get(rule, 0) + sites
+        lines = [f"{len(plans)} file(s) would change:", ""]
+        lines += [
+            f"  {rule}  {sites} site(s)" for rule, sites in sorted(counts.items())
+        ]
+        lines.append("")
+        for plan in plans[:8]:
+            lines.append(f"  {under(plan.path, self.app.profile.corpus.root)}")
+        if len(plans) > 8:
+            lines.append(f"  …{len(plans) - 8} more")
+        if blocked:
+            lines += ["", blocked]
+        return Content("\n".join(lines))
+
+    def action_close(self) -> None:
+        self.app.pop_screen()
+
+    def action_confirm(self) -> None:
+        if self._writing or not self._plans or self._blocked:
+            return
+        self._writing = True
+        self.refresh_bindings()
+        self.query_one("#notation-progress", LoadingIndicator).display = True
+        self.say(f"Rewriting {len(self._plans)} file(s)…")
+        self._run_notation()
+
+    @work(thread=True, exclusive=True)
+    def _run_notation(self) -> None:
+        written = 0
+        error = ""
+        try:
+            for plan in self._plans or ():
+                written += bool(plan.write())
+        except OSError as exc:
+            error = str(exc)
+        self.app.call_from_thread(self._written, written, error)
+
+    def _written(self, written: int, error: str) -> None:
+        self._writing = False
+        self.query_one("#notation-progress", LoadingIndicator).display = False
+        self.say(error or f"Rewrote {written} file(s). \\ to go back.")
+        self._load()
+        self.refresh_bindings()
+
+    def say(self, text: str) -> None:
+        note = self.query_one("#notation-note", Static)
+        note.update(Content(text))
+        note.display = bool(text)
+
+
 STEPS: tuple[type[StepScreen], ...] = (
     ModeScreen,
     ScopeScreen,
@@ -1838,6 +2049,7 @@ class LatexAllyApp(App):
         Binding("q", "quit", "Quit"),
         Binding("s", "save", "Save run.yaml"),
         Binding("r", "revert", "Revert"),
+        Binding("f", "notation", "Notation"),
     ]
     CSS = """
     Screen { background: transparent; }
@@ -1924,7 +2136,12 @@ class LatexAllyApp(App):
         super().__init__()
         self.theme = "ansi-light"
         self.profile = profile
-        self.config = config or RunConfig(profile=profile.name)
+        if config is None:
+            config = RunConfig(profile=profile.name)
+            # The runner defaults to `edit`; `build` keeps `in-place`, so a bare
+            # command in CI never rewrites sources. A passed config is honoured.
+            config.output.write_mode = "edit"
+        self.config = config
         self.config.output.anchor(profile)
         self.here_scope = scope_from_cwd(profile)
         self.scope_mode = "local" if self.here_scope is not None else "choose"
@@ -1985,8 +2202,10 @@ class LatexAllyApp(App):
         self.push_screen(BuildScreen())
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
-        """Hide `r` while the revert screen is the one showing."""
+        """Hide `r` and `f` while their own screen is the one showing."""
         if action == "revert" and isinstance(self.screen, RevertScreen):
+            return False
+        if action == "notation" and isinstance(self.screen, NotationScreen):
             return False
         return super().check_action(action, parameters)
 
@@ -1995,6 +2214,12 @@ class LatexAllyApp(App):
         if isinstance(self.screen, RevertScreen):
             return
         self.push_screen(RevertScreen())
+
+    def action_notation(self) -> None:
+        """Write the course's notation into the corpus. Available from anywhere."""
+        if isinstance(self.screen, NotationScreen):
+            return
+        self.push_screen(NotationScreen())
 
     def action_save(self, path: Path | None = None) -> Path:
         path = path or (self.config.output.root / "run.yaml")

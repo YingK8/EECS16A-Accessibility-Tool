@@ -17,6 +17,8 @@ A profile answers four questions:
 from __future__ import annotations
 
 import fnmatch
+import functools
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -27,11 +29,14 @@ from .errors import ConfigError
 
 __all__ = [
     "CourseIdentity",
+    "matches_pattern",
     "CorpusScope",
     "HeadingMap",
     "FigurePolicy",
     "ColorPolicy",
     "EnginePolicy",
+    "MathPolicy",
+    "NotationRule",
     "Profile",
     "load_profile",
     "builtin_profile_dir",
@@ -90,21 +95,38 @@ _ALWAYS_EXCLUDE = (
 )
 
 
-def _excluded(relative: str, pattern: str) -> bool:
-    """Does the corpus-relative path ``relative`` match exclude ``pattern``?
+def matches_pattern(relative: str, pattern: str) -> bool:
+    """Does the corpus-relative path ``relative`` match glob ``pattern``?
+
+    Written for the exclude list and reused by the include side: a scope is a
+    tuple of the same globs, so asking "is this file in `exams`?" is this
+    question with a different pattern.
 
     ``fnmatch`` has no notion of a path separator, so ``**/`` compiles to
-    ``.*/`` -- which demands *at least one* directory before the match and
-    therefore never fires at the corpus root. ``**/*_questionBank/**`` skipped
+    ``.*/`` -- which demands *at least one* directory and therefore never fires
+    where the profile author expects it to. ``**/*_questionBank/**`` skipped
     ``fa19/su24_questionBank/...`` and let ``su24_questionBank/...`` straight
-    through. Matching the pattern with its ``**/`` prefix stripped as well makes
-    the leading ``**/`` mean "at any depth, including none", which is what every
-    profile that writes one intends.
+    through; ``questionBank/**/*.tex`` misses a file sitting directly in
+    ``questionBank/``. Both are the same defect at different offsets, so ``**/``
+    is compiled to "zero or more directories" wherever it appears rather than
+    special-cased at the front.
     """
     pattern = pattern.lstrip("/")
-    if fnmatch.fnmatch(relative, pattern):
-        return True
-    return pattern.startswith("**/") and fnmatch.fnmatch(relative, pattern[3:])
+    return _compiled(pattern).match(relative) is not None
+
+
+#: A token no path contains and ``re.escape`` leaves alone, so it survives
+#: ``fnmatch.translate`` intact and can be swapped for the real subpattern
+#: afterwards. Translating around ``**/`` by hand would mean reimplementing
+#: fnmatch's escaping, which is the part that is easy to get subtly wrong.
+_ANY_DEPTH = "ZZLATEXALLYANYDEPTHZZ"
+
+
+@functools.lru_cache(maxsize=512)
+def _compiled(pattern: str) -> re.Pattern[str]:
+    """``pattern`` as a regex, with ``**/`` meaning zero or more directories."""
+    translated = fnmatch.translate(pattern.replace("**/", _ANY_DEPTH))
+    return re.compile(translated.replace(_ANY_DEPTH, "(?:.*/)?"))
 
 
 def builtin_profile_dir() -> Path:
@@ -276,7 +298,7 @@ class CorpusScope:
                 if not path.is_file() or path in seen:
                     continue
                 relative = path.relative_to(root).as_posix()
-                if any(_excluded(relative, pat) for pat in excludes):
+                if any(matches_pattern(relative, pat) for pat in excludes):
                     continue
                 seen.add(path)
                 results.append(path)
@@ -368,6 +390,46 @@ class EnginePolicy:
 
 
 @dataclass(slots=True)
+class MathPolicy:
+    r"""How this course sets maths that no source rewrite can express.
+
+    ``matrix_align`` is the column type amsmath's matrix environments use.
+    Empty leaves them as LaTeX has them, centred, where a ``-1`` beside a ``10``
+    centres its own column and the minus sign sits *inside* the number's width.
+    ``r`` right-aligns the columns, so the digits line up and the signs hang off
+    to the left -- which is how a matrix is set in print.
+
+    Applied as one preamble line at build time, not by editing anyone's source:
+    the alignment is a property of how the document is typeset.
+    """
+
+    #: ``l``, ``c`` or ``r``. Empty means leave LaTeX's own default alone.
+    matrix_align: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class NotationRule:
+    r"""One course notation convention: what to find in maths, what to write.
+
+    Exactly one of ``macros`` or ``pattern`` is set. A macro rule replaces
+    ``\name{arg}`` (or ``\name x``) with ``to``, ``{arg}`` standing for the
+    argument; a pattern rule replaces a regex match, ``\1``-``\9`` standing for
+    its groups. Not an accessibility rule: ``check`` reports it, ``build``
+    applies it in the mirror when ``fix`` is set.
+    """
+
+    id: str
+    to: str
+    message: str = ""
+    macros: tuple[str, ...] = ()
+    pattern: re.Pattern[str] | None = None
+    #: Wrap an argument longer than one symbol in parentheses, so
+    #: ``\overline{x+y}`` becomes ``(x+y)^*`` rather than ``x+y^*``.
+    parenthesize: bool = False
+    fix: bool = True
+
+
+@dataclass(slots=True)
 class Profile:
     name: str = "default"
     course: CourseIdentity = field(default_factory=CourseIdentity)
@@ -376,6 +438,8 @@ class Profile:
     figures: FigurePolicy = field(default_factory=FigurePolicy)
     colors: ColorPolicy = field(default_factory=ColorPolicy)
     engine: EnginePolicy = field(default_factory=EnginePolicy)
+    math: MathPolicy = field(default_factory=MathPolicy)
+    notation: tuple[NotationRule, ...] = ()
     #: Where catalogs and worklogs live, relative to the corpus root.
     source_path: Path | None = None
 
@@ -412,6 +476,69 @@ def _as_command_map(value: Any, field_name: str) -> dict[str, tuple[str, ...]]:
         str(key): _as_tuple(item, f"{field_name}.{key}")
         for key, item in value.items()
     }
+
+
+def _matrix_align(math_data: Any) -> str:
+    """``math.matrix_align`` from YAML, checked against what ``array`` accepts."""
+    if not isinstance(math_data, dict):
+        raise ConfigError("math must be a mapping")
+    value = str(math_data.get("matrix_align") or "").strip()
+    if value and value not in ("l", "c", "r"):
+        raise ConfigError(
+            f"math.matrix_align must be l, c or r, not {value!r}",
+            hint="it is an array column type; `r` is what hangs a minus sign to the left",
+        )
+    return value
+
+
+def _notation_rules(value: Any) -> tuple[NotationRule, ...]:
+    """``notation:`` from YAML, validated here so a bad regex fails at load
+    with its rule named, not halfway through a build."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigError("notation must be a list of rules")
+    rules = []
+    for index, item in enumerate(value):
+        where = f"notation[{index}]"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{where} must be a mapping")
+        rule_id = str(item.get("id") or "").strip()
+        to = item.get("to")
+        macros = _as_tuple(item.get("macro"), f"{where}.macro")
+        pattern_text = item.get("pattern")
+        if not rule_id or to is None:
+            raise ConfigError(f"{where} needs both an `id` and a `to`")
+        where = f"{where} ({rule_id})"
+        if bool(macros) == (pattern_text is not None):
+            raise ConfigError(f"{where} needs exactly one of `macro` or `pattern`")
+        pattern = None
+        if pattern_text is not None:
+            try:
+                pattern = re.compile(str(pattern_text))
+            except re.error as exc:
+                raise ConfigError(
+                    f"{where}: bad pattern: {exc}",
+                    hint="write it in YAML single quotes, so '\\\\ell' reaches the regex as \\\\ell",
+                ) from exc
+            refs = [int(ref) for ref in re.findall(r"\\(\d)", str(to))]
+            if refs and max(refs) > pattern.groups:
+                raise ConfigError(
+                    f"{where}: `to` uses \\{max(refs)} but the pattern has "
+                    f"{pattern.groups} group(s)"
+                )
+        rules.append(
+            NotationRule(
+                id=rule_id,
+                to=str(to),
+                message=str(item.get("message") or ""),
+                macros=tuple(name.lstrip("\\") for name in macros),
+                pattern=pattern,
+                parenthesize=bool(item.get("parenthesize", False)),
+                fix=bool(item.get("fix", True)),
+            )
+        )
+    return tuple(rules)
 
 
 def load_profile(
@@ -569,6 +696,8 @@ def load_profile(
             min_runs=int(engine_data.get("min_runs", 3)),
             timeout_seconds=int(engine_data.get("timeout_seconds", 300)),
         ),
+        math=MathPolicy(matrix_align=_matrix_align(data.get("math") or {})),
+        notation=_notation_rules(data.get("notation")),
         source_path=source,
     )
     return profile

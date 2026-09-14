@@ -157,3 +157,42 @@ engine:
   min_runs: 3
   timeout_seconds: 300
 
+# How this course sets maths that no source rewrite can express. Applied as one
+# preamble line at build time, so nobody's .tex is edited for it.
+math:
+  # Right-align matrix columns, so digits line up and a minus sign hangs off to
+  # the left instead of centring inside the number's own width. Empty or absent
+  # leaves LaTeX's centred default alone.
+  matrix_align: r
+
+# Course notation. Not accessibility: `check` reports each departure as
+# ALLY-FMT-<id>, and `build` rewrites it in the mirror (never the corpus) unless
+# the rule says `fix: false`. Rules only ever touch maths.
+#
+#   macro:   \name{arg} or \name x  ->  `to`, with {arg} standing for the argument
+#   pattern: a Python regex         ->  `to`, with \1..\9 standing for its groups
+#
+# Keep patterns in single quotes so backslashes reach the regex unchanged.
+notation:
+  - id: bold-vector
+    message: "vectors are bold, not arrowed"
+    macro: [vec, overrightarrow]
+    to: '\mathbf{{arg}}'
+  - id: conj-star
+    message: "complex conjugate is ^*, not an overline"
+    macro: overline
+    # Outer braces: \overline{z}^2 must not become the double superscript z^*^2.
+    to: '{{arg}^{*}}'
+    parenthesize: true          # \overline{x+y} -> (x+y)^{*}
+  - id: ell-subscript
+    message: "sequence spaces are written \\ell_p, not \\ell^p"
+    # Exponents that name a space only: \ell^\top is a transposed vector.
+    pattern: '\\ell\s*\^\s*(\{?(?:\d+|p|q|\\infty)\}?)(?![\w}]|\s*_)'
+    to: '\ell_\1'
+  - id: dt-brackets
+    message: "discrete-time signals take square brackets"
+    # Only these bare signal letters, applied to n, k or m. A looser pattern
+    # turns the products i(k-m) and c_n(n - 1) into indexings.
+    pattern: '(?<![\\A-Za-z_^])([xyhgsuvabcd])\s*\(\s*([nkm](?:\s*[-+]\s*\w+)?)\s*\)'
+    to: '\1[\2]'
+

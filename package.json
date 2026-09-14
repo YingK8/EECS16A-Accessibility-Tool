@@ -1,8 +1,0 @@
-{
-  "name": "latexally-mathspeech",
-  "private": true,
-  "description": "LaTeX -> MathML + speech, for src/latexally/mathspeech. Not a published package.",
-  "dependencies": {
-    "speech-rule-engine": "^4.1.4"
-  }
-}

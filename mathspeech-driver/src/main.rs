@@ -1,13 +1,14 @@
 //! MathML -> speech, one long-lived process for the whole batch.
 //!
-//! This is the same shape `speech.cjs` had, and for the same reason: MathCAT's
-//! own CLI takes one expression per invocation, which at 35,504 unique formulas
+//! It is driven as a library, not through a CLI, because MathCAT's own CLI
+//! takes one expression per invocation, which at 35,504 unique formulas
 //! is 35,504 process spawns. Loading the rules once costs seconds; loading them
 //! per formula costs hours.
 //!
 //! Protocol is JSON Lines both ways -- `{"hash","mathml"}` in, `{"hash","speech"}`
-//! or `{"hash","error"}` out -- unchanged from the SRE driver, so the Python
-//! side only had to change which program it spawns. One formula MathCAT chokes
+//! or `{"hash","error"}` out -- kept from the Speech Rule Engine driver this
+//! replaced, so the Python side only had to change which program it spawns,
+//! and that driver is now deleted. One formula MathCAT chokes
 //! on cannot take down the batch.
 //!
 //! MathCAT keeps its engine in thread-local state, so this stays single

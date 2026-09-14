@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import pytest
 
+from dataclasses import replace
+
 from latexally.build import preamble_for, split_preamble
-from latexally.config import Profile, load_profile
+from latexally.config import MathPolicy, Profile, load_profile
 from latexally.errors import ConfigError, LatexAllyError, ToolchainError
 from latexally.run import (
     STANDARD_TOGGLES,
@@ -142,6 +144,46 @@ def test_unavailable_toolchain_refuses_rather_than_emitting_untagged(profile):
     """
     with pytest.raises(ToolchainError):
         preamble_for(RunConfig(), profile, TaggingMode.UNAVAILABLE)
+
+
+def test_matrix_alignment_is_emitted_as_one_preamble_line(profile):
+    r"""Right-aligned columns are typesetting, not a source rewrite, so they
+    arrive as a preamble line and nobody's .tex is edited for them.
+
+    `\makeatletter` must lead the line, outside the hook: the hook's argument is
+    tokenised when the line is read, and a `\makeatletter` inside the braces
+    leaves `\@ifundefined` parsing as `\@` + letters, which fails with "You
+    can't use \spacefactor in vertical mode" and writes no PDF.
+    """
+    lines = preamble_for(RunConfig(), profile, TaggingMode.LEGACY_TESTPHASE)
+    [line] = [item for item in lines if "env@matrix" in item]
+
+    assert line.startswith("\\makeatletter")
+    assert line.endswith("\\makeatother")
+    assert "\\c@MaxMatrixCols r" in line
+    # Balanced, counted rather than eyeballed: the first version of this line
+    # was one `}` short. Every other assertion here passed and pdflatex stopped
+    # with "Emergency stop", which is a long way from the code that caused it.
+    assert line.count("{") == line.count("}")
+    # It is an ordinary preamble line, not one that has to lead the file.
+    assert line in split_preamble(lines)[1]
+
+
+def test_no_matrix_line_when_the_course_does_not_ask_for_one(profile):
+    """A course that says nothing keeps LaTeX's centred matrices."""
+    lines = preamble_for(
+        RunConfig(), replace(profile, math=MathPolicy()), TaggingMode.LEGACY_TESTPHASE
+    )
+    assert not any("env@matrix" in line for line in lines)
+
+
+def test_a_matrix_alignment_that_array_cannot_take_is_refused(tmp_path):
+    """`array` takes l, c or r. Anything else would reach LaTeX as a column
+    type and fail at build time, a long way from the profile that caused it."""
+    bad = tmp_path / "p.yaml"
+    bad.write_text("math:\n  matrix_align: right\n")
+    with pytest.raises(ConfigError):
+        load_profile(bad)
 
 
 def test_house_colors_emits_no_palette_line(profile):

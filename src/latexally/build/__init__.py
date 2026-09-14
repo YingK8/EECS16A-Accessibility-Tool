@@ -31,7 +31,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 
 from ..check.contrast import palette_value
-from ..config import Profile
+from ..config import NotationRule, Profile
 from ..errors import LatexAllyError, ToolchainError
 from ..run import RunConfig
 from ..discover import Assignment
@@ -253,6 +253,34 @@ def preamble_for(
         # reads does not exist yet -- the package tolerates that, and it is the
         # run that produces the table's input.
         lines.append("\\usepackage{latexally-math}")
+
+    if profile.math.matrix_align:
+        # Right-aligned matrix columns, so a minus sign hangs off to the left
+        # instead of centring inside the number's own width: `-1` above `100`
+        # lines its digits up rather than sitting 1.1pt to the left of them.
+        #
+        # `\makeatletter` has to be OUTSIDE the hook. The hook's argument is
+        # tokenised when this line is *read*, so a `\makeatletter` within the
+        # braces comes too late and `\@ifundefined` parses as `\@` + letters --
+        # "You can't use \spacefactor in vertical mode", and no PDF. Measured.
+        #
+        # Redefined without an optional argument, which is how amsmath itself
+        # declares it. mathtools' starred `bmatrix*[r]` is a separate
+        # environment that never reaches `\env@matrix`, so the 941 of them in
+        # this corpus keep the alignment their author asked for -- verified:
+        # a `pmatrix*[c]` display is byte-identical either way.
+        # Concatenated rather than interpolated: an f-string doubles every brace
+        # in a line that is mostly braces, and the first version of this came out
+        # one `}` short -- which every test passed and pdflatex rejected with
+        # "Emergency stop", a long way from the code that caused it.
+        lines.append(
+            "\\makeatletter\\AtBeginDocument{\\@ifundefined{env@matrix}{}{"
+            "\\renewcommand*\\env@matrix{\\hskip-\\arraycolsep"
+            "\\let\\@ifnextchar\\new@ifnextchar"
+            "\\array{*\\c@MaxMatrixCols "
+            + profile.math.matrix_align
+            + "}}}}\\makeatother"
+        )
 
     if config.standards.unicode_map:
         # Guarded: \pdfgentounicode is a pdfTeX primitive and does not exist
@@ -674,7 +702,10 @@ def _alt_text_failures(pdf: Path, config: RunConfig) -> list[str]:
 
 
 def rewrite_incompatibilities(
-    prepared: Prepared, *, mode: TaggingMode | None = None
+    prepared: Prepared,
+    *,
+    mode: TaggingMode | None = None,
+    notation: tuple[NotationRule, ...] = (),
 ) -> dict[str, int]:
     """Fix the constructs tagging cannot compile, in the MIRROR.
 
@@ -688,6 +719,10 @@ def rewrite_incompatibilities(
     relies on. ``-original.tex`` is excluded for the same reason it is there:
     it is compiled unconverted for the visual diff, and rewriting it would make
     the comparison measure this tool against itself.
+
+    The profile's ``notation`` rules run afterwards, over the same files, as a
+    separate pass: they are course style, not tagging blockers, and never share
+    an ``EditBuffer`` with the fixes above.
     """
     from ..rewrite import FIXED_BY_TAGGING, rewrite_files
 
@@ -704,6 +739,10 @@ def rewrite_incompatibilities(
     for plan in rewrite_files(files, write=True, skip=skip):
         for rule, sites in plan.counts().items():
             counts[rule] = counts.get(rule, 0) + sites
+    if notation:
+        from ..notation import apply_files
+
+        counts.update(apply_files(files, notation))
     return counts
 
 
@@ -1897,7 +1936,9 @@ def build_assignment(
     # latex-lab's default alt: the source file name, read aloud verbatim.
     # Before the descriptions: a document that cannot compile has no figures to
     # describe, and three of the four constructs below produce no PDF at all.
-    report.rewrites = rewrite_incompatibilities(prepared, mode=probe(profile).tagging_mode)
+    report.rewrites = rewrite_incompatibilities(
+        prepared, mode=probe(profile).tagging_mode, notation=profile.notation
+    )
     report.described = apply_descriptions(prepared, config, profile)
     # `config.baseline` unless the caller insisted. Building the untouched
     # original is a second full LaTeX run of every document, and the pixel diff

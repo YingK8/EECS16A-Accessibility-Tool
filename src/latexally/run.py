@@ -648,6 +648,10 @@ class RunConfig:
     baseline: bool = False
     #: False is a dry run: nothing is written anywhere. The default, deliberately.
     write: bool = False
+    #: Skip `require_clean_worktree` for `edit`/`in-place`. Same reasoning as
+    #: `write`: a decision made at the moment of running, never inherited from
+    #: a replayed run.yaml -- so not stored in `as_dict`/`from_dict` either.
+    allow_dirty: bool = False
     #: Documents compiled at once. Each LaTeX run is three passes of a
     #: subprocess, so this is where the wall clock goes; the conversion work in
     #: front of it stays serial because an assignment's variants share one

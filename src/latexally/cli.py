@@ -388,6 +388,71 @@ def scan(ctx: Context, scope: str | None, no_write: bool) -> None:
 
 
 # ---------------------------------------------------------------------- #
+# figures
+# ---------------------------------------------------------------------- #
+
+
+@main.command()
+@click.argument("scope", required=False)
+@pass_context
+def figures(ctx: Context, scope: str | None) -> None:
+    """How many figures are described, and how many are left.
+
+    `scan` answers this for the scope you are about to work on, and writes
+    worklogs while it is there. This answers it for the corpus, writes nothing,
+    and is the number to check between authoring sessions.
+
+    The per-scope rows sum to more than the total, and that is not a bug: the
+    profile's scopes overlap -- `live` contains `bank` -- and a figure is
+    content-addressed, so one drawing reached by three scopes is still one
+    description to write. The total is the honest count.
+    """
+    from .catalog import coverage
+
+    try:
+        report = coverage(ctx.profile, scope)
+    except LatexAllyError as exc:
+        if ctx.as_json:
+            ctx.emit({"ok": False, "error": str(exc)})
+        else:
+            click.echo(f"error: {exc}", err=True)
+        sys.exit(EXIT_ERROR)
+
+    if ctx.as_json:
+        ctx.emit(report.as_dict() | {"scope": scope or "default"})
+        sys.exit(EXIT_FINDINGS if report.outstanding else EXIT_OK)
+
+    console = ctx.console
+    percent = (100 * report.done / report.total) if report.total else 100.0
+    console.print(
+        f"[bold]{report.done}[/bold] of [bold]{report.total}[/bold] figures "
+        f"described ([green]{percent:.0f}%[/green]), "
+        f"[yellow]{report.outstanding}[/yellow] outstanding"
+    )
+    if report.call_sites > report.total:
+        console.print(
+            f"[dim]{report.call_sites} call sites — describing each figure once "
+            f"covers {report.call_sites - report.total} further use(s)[/dim]"
+        )
+    rows = report.as_dict()
+    if rows["by_scope"]:
+        console.print("\n[bold]by scope[/bold] [dim](scopes overlap; they do not sum)[/dim]")
+        for row in rows["by_scope"]:
+            console.print(
+                f"  [dim]{row['name']:<16}[/dim] {row['done']:>4}/{row['total']:<5} "
+                f"[yellow]{row['outstanding']}[/yellow] left"
+            )
+    if rows["by_genre"]:
+        console.print("\n[bold]by genre[/bold]")
+        for row in rows["by_genre"]:
+            console.print(
+                f"  [dim]{row['name']:<16}[/dim] {row['done']:>4}/{row['total']:<5} "
+                f"[yellow]{row['outstanding']}[/yellow] left"
+            )
+    sys.exit(EXIT_FINDINGS if report.outstanding else EXIT_OK)
+
+
+# ---------------------------------------------------------------------- #
 # apply
 # ---------------------------------------------------------------------- #
 
@@ -735,6 +800,134 @@ def check(
             f"([red]{len(errors)} errors[/red]) across {len(counts)} rules"
         )
     sys.exit(EXIT_FINDINGS if errors else EXIT_OK)
+
+
+# ---------------------------------------------------------------------- #
+# notation — the course's own conventions, written into the corpus
+# ---------------------------------------------------------------------- #
+
+
+@main.command()
+@click.argument("scope", required=False)
+@click.option(
+    "--write",
+    is_flag=True,
+    help="Actually edit the corpus. Refuses on a dirty git worktree.",
+)
+@click.option(
+    "--allow-dirty",
+    is_flag=True,
+    help="With --write: skip the clean-worktree guard. You are the undo then.",
+)
+@click.option("--show-diff", is_flag=True, help="Print the unified diff for each file.")
+@pass_context
+def notation(
+    ctx: Context, scope: str | None, write: bool, allow_dirty: bool, show_diff: bool
+) -> None:
+    r"""Rewrite the source to the course's own notation.
+
+    The rules come from the profile's `notation:` key -- bold vectors, `^*` for
+    a conjugate, `x[n]` for a discrete-time signal -- and only ever touch maths.
+
+    Defaults to a dry run. `build` already applies these to its mirror on every
+    run, so this command is for the other case: bringing the course material
+    itself into line, once, in a commit you can read.
+    """
+    scope = ctx.scope_or_here(scope)
+    from .build import require_clean_worktree
+    from .notation import plan_files
+
+    rules = ctx.profile.notation
+    if not rules:
+        click.echo(
+            "error: this profile declares no notation rules", err=True
+        )
+        click.echo(
+            "hint: add a `notation:` section to "
+            f"{ctx.profile.source_path or 'the profile'}",
+            err=True,
+        )
+        sys.exit(EXIT_ERROR)
+    if write:
+        # The same guard `build --in-place` uses: the only thing that makes a
+        # sweep over thousands of files revertible is git.
+        require_clean_worktree(
+            Path(ctx.profile.corpus.root).resolve(), allow_dirty=allow_dirty
+        )
+
+    paths = sorted(
+        path
+        for path in _files_to_check(ctx.profile, scope)
+        if path.suffix.lower() in (".tex", ".sty", ".cls")
+    )
+    plans = plan_files(paths, rules)
+    counts: dict[str, int] = {}
+    files: dict[str, int] = {}
+    for plan in plans:
+        for rule, sites in plan.counts.items():
+            counts[rule] = counts.get(rule, 0) + sites
+            files[rule] = files.get(rule, 0) + 1
+    if write:
+        for plan in plans:
+            plan.write()
+
+    report_only = [rule for rule in rules if not rule.fix]
+
+    if ctx.as_json:
+        ctx.emit(
+            {
+                "scope": scope,
+                "files": len(paths),
+                "changed": len(plans),
+                "written": len(plans) if write else 0,
+                "rules": [
+                    {"rule": rule, "sites": sites, "files": files.get(rule, 0)}
+                    for rule, sites in sorted(counts.items())
+                ],
+                "report_only": [f"ALLY-FMT-{rule.id}" for rule in report_only],
+                "diffs": (
+                    {str(plan.path): plan.diff() for plan in plans} if show_diff else {}
+                ),
+            }
+        )
+        sys.exit(EXIT_OK)
+
+    console = ctx.console
+    if not plans:
+        console.print(
+            f"[green]Nothing to change in {len(paths)} file(s).[/green] "
+            "The notation already matches the profile."
+        )
+        sys.exit(EXIT_OK)
+
+    table = Table(
+        title=f"course notation — {len(paths)} file(s) scanned", title_justify="left"
+    )
+    table.add_column("Rule", style="bold", no_wrap=True)
+    table.add_column("Sites", justify="right")
+    table.add_column("Files", justify="right")
+    for rule, sites in sorted(counts.items()):
+        table.add_row(rule, str(sites), str(files.get(rule, 0)))
+    console.print(table)
+
+    if report_only:
+        console.print(
+            "\n[dim]report-only (fix: false in the profile), left alone: "
+            + ", ".join(f"ALLY-FMT-{rule.id}" for rule in report_only)
+            + "[/dim]"
+        )
+    if show_diff:
+        for plan in plans[:20]:
+            console.print(escape(plan.diff()))
+
+    if write:
+        console.print(f"\n[green]{len(plans)} file(s) rewritten.[/green]")
+    else:
+        console.print(
+            f"\n[dim]{len(plans)} file(s) would change; re-run with --write to "
+            "apply, or --show-diff to read them first[/dim]"
+        )
+    sys.exit(EXIT_OK)
 
 
 # ---------------------------------------------------------------------- #

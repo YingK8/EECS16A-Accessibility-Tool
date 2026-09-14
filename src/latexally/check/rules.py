@@ -281,6 +281,10 @@ def check_source(path: Path, profile: Profile) -> list[Finding]:
             )
 
     findings.extend(_check_contrast(source, profile, name))
+
+    from ..notation import check_notation  # it imports this module
+
+    findings.extend(check_notation(source, profile.notation, name))
     return findings
 
 

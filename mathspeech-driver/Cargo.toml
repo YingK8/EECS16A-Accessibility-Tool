@@ -1,5 +1,5 @@
-# The MathML -> speech driver. Replaces the Speech Rule Engine that used to sit
-# behind `speech.cjs`; see `src/latexally/mathspeech/__init__.py` for why the
+# The MathML -> speech driver. Replaced the Speech Rule Engine, whose Node
+# bridge is gone; see `src/latexally/mathspeech/__init__.py` for why the
 # process boundary and the JSON-Lines protocol are shaped the way they are.
 #
 # The dependency is a `path` into the submodule rather than a crates.io version,

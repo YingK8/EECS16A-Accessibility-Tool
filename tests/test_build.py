@@ -153,6 +153,28 @@ def test_rewrites_land_in_the_mirror_and_never_in_the_corpus(
     assert _tree_digest(corpus) == before, "the corpus must be byte-identical"
 
 
+def test_notation_rules_land_in_the_mirror_and_never_in_the_corpus(
+    corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path
+):
+    from latexally.build import rewrite_incompatibilities
+    from latexally.config import load_profile
+
+    body = corpus / "sem" / "hw" / "3" / "body.tex"
+    body.write_text("\\begin{document}\n$x(n) + \\vec{v}$\n\\end{document}\n")
+    before = _tree_digest(corpus)
+
+    config = RunConfig(
+        output=Output(root=tmp_path / "out", write_mode="mirror"), write=True
+    )
+    prepared = materialise(assignment, config, profile, lines=LINES)
+    rules = load_profile("eecs16a", corpus_root=corpus).notation
+    counts = rewrite_incompatibilities(prepared, notation=rules)
+
+    assert counts == {"ALLY-FMT-dt-brackets": 1, "ALLY-FMT-bold-vector": 1}
+    assert "$x[n] + \\mathbf{v}$" in (prepared.work_dir / "body.tex").read_text()
+    assert _tree_digest(corpus) == before, "the corpus must be byte-identical"
+
+
 def test_the_unconverted_baseline_is_not_rewritten(
     corpus: Path, profile: Profile, assignment: Assignment, tmp_path: Path
 ):
