@@ -1310,6 +1310,9 @@ async def test_enter_is_the_way_out_once_the_build_is_over(
 
     config = RunConfig().with_assignments(["sem/hw/1"])
     config.output.root = tmp_path / "out"
+    # `edit` is the default and builds on arrival, so this pins the other
+    # behaviour: a mode that writes nothing until asked must not start itself.
+    config.output.write_mode = "in-place"
     app = LatexAllyApp(profile, config)
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, ReviewScreen)
@@ -1353,6 +1356,9 @@ async def test_reaching_the_build_screen_builds_nothing(
 
     config = RunConfig().with_assignments(["sem/hw/1"])
     config.output.root = tmp_path / "out"
+    # `edit` is the default and starts itself on arrival, so the mode that
+    # waits for `b` is the one this test has to ask for.
+    config.output.write_mode = "in-place"
     app = LatexAllyApp(profile, config)
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, ReviewScreen)
@@ -1657,11 +1663,12 @@ async def test_the_write_mode_is_where_the_output_cursor_starts(
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, OutputScreen)
         assert app.focused is app.screen.query_one("#write-mode")
-        assert app.config.output.write_mode == "in-place"
-        await press(pilot, "down")
-        assert app.config.output.in_place is True
+        assert app.config.output.write_mode == "edit"
+        assert app.config.output.edits_sources is True
         await press(pilot, "up")
         assert app.config.output.write_mode == "in-place"
+        await press(pilot, "down")
+        assert app.config.output.write_mode == "edit"
 
 
 async def test_scanning_clears_the_list_and_says_so(profile: Profile, monkeypatch):
@@ -2311,15 +2318,20 @@ async def test_a_dirty_worktree_is_waited_out_not_a_dead_end(
 
     config = RunConfig().with_assignments(["sem/hw/1"])
     config.output.root = tmp_path / "out"
+    # The guard is keyed on `edits_sources`, which is now the default -- but
+    # say it outright so this test is about the refusal, not about the default.
+    config.output.write_mode = "edit"
     app = LatexAllyApp(profile, config)
     async with app.run_test(size=SIZE) as pilot:
         await walk_to(pilot, ReviewScreen)
         await advance(pilot)
         screen = app.screen
-        await pilot.press("b")
-        for _ in range(20):
+        # `edit` starts itself on arrival, so the refusal is already on its way
+        # before `b` is pressed. Wait for it rather than for `calls`, which the
+        # refusal itself appends to.
+        for _ in range(40):
             await pilot.pause()
-            if calls:
+            if screen._dirty:
                 break
         assert "uncommitted change" in visible(app)
         # `b` is live again, and Enter is not offered: the run is not over.

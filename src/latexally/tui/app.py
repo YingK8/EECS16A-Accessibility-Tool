@@ -1577,7 +1577,14 @@ class BuildScreen(Screen):
             # and walk all seven screens again to be asked a second time is the
             # kind of dead end this screen exists to avoid, so it watches the
             # worktree and starts itself when it comes back clean.
+            #
+            # `_build_done` is cleared as well as `_build_started`. `edit` is
+            # the default and starts itself on arrival, so by the time this
+            # refusal arrives the screen has already offered Enter as the way
+            # out -- and Enter would exit the runner instead of waiting for the
+            # commit the hint is asking for.
             self._build_started = False
+            self._build_done = False
             self._dirty = True
             self.query_one("#build-progress", LoadingIndicator).display = False
             self.query_one("#build-hint", Static).update(
@@ -2137,10 +2144,9 @@ class LatexAllyApp(App):
         self.theme = "ansi-light"
         self.profile = profile
         if config is None:
+            # `Output` itself defaults to `edit`, so the runner and `build`
+            # agree. A passed config is honoured as it always was.
             config = RunConfig(profile=profile.name)
-            # The runner defaults to `edit`; `build` keeps `in-place`, so a bare
-            # command in CI never rewrites sources. A passed config is honoured.
-            config.output.write_mode = "edit"
         self.config = config
         self.config.output.anchor(profile)
         self.here_scope = scope_from_cwd(profile)

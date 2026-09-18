@@ -255,7 +255,7 @@ body { padding-left: clamp(56px, 9vw, 128px); }
         <tr><td>Which standards should this run apply?</td><td>All six on</td><td>Rarely. See <a href="#standards">Build standards</a>.</td></tr>
         <tr><td>Course colours</td><td>Accessible palette</td><td>A colour must stay as written. See <a href="#colours">Colours</a>.</td></tr>
         <tr><td>What should happen to undescribed figures?</td><td><code>caption</code></td><td>See <a href="#figures">Figure descriptions</a>.</td></tr>
-        <tr><td>Where does the output go?</td><td><code>in-place</code></td><td>You want output away from the course repo: <code>mirror</code>.</td></tr>
+        <tr><td>Where does the output go?</td><td><code>edit</code></td><td>You want your sources left alone: <code>in-place</code> or <code>mirror</code>.</td></tr>
         <tr><td>Review</td><td></td><td>Check the <em>What gets built</em> table, then <kbd>Enter</kbd>.</td></tr>
         <tr><td>Build</td><td></td><td>Press <kbd>b</kbd>. Each document takes three LaTeX passes. <kbd>Enter</kbd> exits when done.</td></tr>
       </tbody>
@@ -286,14 +286,15 @@ body { padding-left: clamp(56px, 9vw, 128px); }
 
   <section class="topic prose" id="output">
     <h3>Output</h3>
-    <p>With the default <code>in-place</code> mode:</p>
+    <p>With the default <code>edit</code> mode:</p>
     <div class="codeblock"><pre class="tree"><code>questionBank/
 ├── fa26/hw/9/
-│   ├── <span class="k">fa26-hw-9-solution-accessible.pdf</span>   <span class="c"># the file to publish</span>
-│   ├── <span class="k">fa26-hw-9-problem-accessible.pdf</span>
-│   ├── accessible/                          <span class="c"># converted .tex, logs, math</span>
-│   └── …your .tex, untouched
+│   └── …your .tex, rewritten: tagged, captioned, described
 └── ally-out/
+    ├── pdf/
+    │   ├── <span class="k">fa26-hw-9-solution-accessible.pdf</span>   <span class="c"># the file to publish</span>
+    │   └── <span class="k">fa26-hw-9-problem-accessible.pdf</span>
+    ├── descriptions/                        <span class="c"># alt-text worklogs</span>
     ├── build-log.txt                        <span class="c"># run summary</span>
     └── run.yaml                             <span class="c"># the choices you made</span></code></pre></div>
     <h4>Results table</h4>
@@ -451,7 +452,7 @@ body { padding-left: clamp(56px, 9vw, 128px); }
     <div class="tablewrap"><table>
       <thead><tr><th>Choice</th><th>Effect</th></tr></thead>
       <tbody>
-        <tr><td><code>caption</code> (default)</td><td class="wrap">Adds a visible <code>\caption{&lt;&lt;TODO:figure-id&gt;&gt;}</code> to floats that lack one</td></tr>
+        <tr><td><code>caption</code> (default)</td><td class="wrap">Adds a visible <code>\caption{&lt;&lt;TODO:figure-id&gt;&gt;}</code> to every figure and table that lacks one. A figure with no float around it gets one, unless it shares its line or its <code>center</code> with other content</td></tr>
         <tr><td><code>on</code> (<code>placeholders</code>)</td><td class="wrap">Marks <code>&lt;&lt;TODO:figure-id&gt;&gt;</code> in the converted source, and lists each figure in a worklog</td></tr>
         <tr><td><code>off</code></td><td>Skips figures. Tagging, headings, and math still run.</td></tr>
       </tbody>
@@ -517,7 +518,7 @@ body { padding-left: clamp(56px, 9vw, 128px); }
   <span class="k">strict:</span> false
 <span class="k">output:</span>
   <span class="k">root:</span> ally-out
-  <span class="k">write_mode:</span> in-place
+  <span class="k">write_mode:</span> edit
   <span class="k">keep_pdf:</span> true
   <span class="k">keep_logs:</span> true
   <span class="k">keep_tex:</span> true
@@ -589,9 +590,9 @@ body { padding-left: clamp(56px, 9vw, 128px); }
     <div class="tablewrap"><table>
       <thead><tr><th>Mode</th><th>PDF goes</th><th>Your .tex</th></tr></thead>
       <tbody>
-        <tr><td><code>in-place</code> (default)</td><td>Assignment folder; converted sources in <code>accessible/</code></td><td>Untouched</td></tr>
+        <tr><td><code>edit</code> (default)</td><td>Output tree (<code>ally-out/pdf/</code>)</td><td>Rewritten, so a bare <code>pdflatex</code> builds it. Needs a clean git tree.</td></tr>
+        <tr><td><code>in-place</code></td><td>Assignment folder; converted sources in <code>accessible/</code></td><td>Untouched</td></tr>
         <tr><td><code>mirror</code></td><td>Output tree (<code>ally-out/pdf/</code>, <code>tex/</code>, <code>logs/</code>)</td><td>Untouched</td></tr>
-        <tr><td><code>edit</code></td><td>Beside the original</td><td>Rewritten, so a bare <code>pdflatex</code> builds it. Needs a clean git tree.</td></tr>
       </tbody>
     </table></div>
   </section>
@@ -642,7 +643,7 @@ body { padding-left: clamp(56px, 9vw, 128px); }
         <tr><td><code>alt.mode</code></td><td><code>caption</code>, <code>placeholders</code>, <code>worklog</code>, <code>off</code></td><td>Undescribed figures</td></tr>
         <tr><td><code>alt.strict</code></td><td><code>true</code> / <code>false</code></td><td><code>true</code>: undescribed figures are errors</td></tr>
         <tr><td><code>output.root</code></td><td>path</td><td>Output tree, default <code>&lt;corpus&gt;/ally-out</code></td></tr>
-        <tr><td><code>output.write_mode</code></td><td><code>in-place</code>, <code>mirror</code>, <code>edit</code></td><td>See <a href="#commands">Write modes</a></td></tr>
+        <tr><td><code>output.write_mode</code></td><td><code>edit</code>, <code>in-place</code>, <code>mirror</code></td><td>See <a href="#commands">Write modes</a></td></tr>
         <tr><td><code>output.paths</code></td><td>slug → path</td><td>Move one artifact: <code>pdf</code>, <code>logs</code>, <code>tex</code>, <code>math</code>, <code>descriptions</code>, or <code>baseline</code></td></tr>
         <tr><td><code>output.keep_pdf</code> / <code>keep_logs</code> / <code>keep_tex</code></td><td><code>true</code> / <code>false</code></td><td>Keep each artifact</td></tr>
         <tr><td><code>baseline</code></td><td><code>true</code> / <code>false</code></td><td>Also build the original and report pixel diff. About 40% slower.</td></tr>

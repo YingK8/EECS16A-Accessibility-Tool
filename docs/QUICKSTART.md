@@ -206,7 +206,7 @@ Then eight steps, each already carrying a sensible default:
 | Standards | which standards to apply |
 | Colours | which course colours fail WCAG, and what to do about each |
 | Alt text | write a description template into undescribed figures, or skip |
-| Output | where everything goes: mirror, PDF-in-place, or edit the sources |
+| Output | where everything goes: mirror, PDF-in-place, or edit the sources (the default) |
 | Review | every directory selected, the exact preamble, every file touched |
 
 Every list scrolls, so a scope larger than your terminal is still reachable and
@@ -348,13 +348,13 @@ answer there. An explicit scope argument still wins over all of it, and
 
 Two write modes reach the corpus, and they are not the same thing:
 
+* `--edit` (the default) writes the converted **sources** back over the
+  originals, installs the `latexally-*.sty` they need beside them, and puts the
+  alt-text worklog in the same folder — so `pdflatex` alone builds the tagged
+  PDF afterwards. This is the one for the weekly job; see "One week's homework,
+  in place" in the README.
 * `--in-place` puts the finished **PDF** beside the document it came from. No
   `.tex` is edited.
-* `--edit` also writes the converted **sources** back over the originals,
-  installs the `latexally-*.sty` they need beside them, and puts the alt-text
-  worklog in the same folder — so `pdflatex` alone builds the tagged PDF
-  afterwards. This is the one for the weekly job; see "One week's homework, in
-  place" in the README.
 
 Both refuse unless the corpus's git worktree is clean, which is what makes
 `latexally revert` able to undo them completely.

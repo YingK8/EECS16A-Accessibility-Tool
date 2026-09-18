@@ -605,7 +605,7 @@ def _doctor_tagging(ctx: Context, scope: str | None, *, fix: bool, write: bool) 
     skip = FIXED_BY_TAGGING if mode is TaggingMode.MODERN else frozenset()
 
     if write:
-        # The same guard `build --in-place` uses, and for the same reason: the
+        # The same guard `build --edit` uses, and for the same reason: the
         # only thing that makes 588 rewritten files revertible is git.
         require_clean_worktree(Path(ctx.profile.corpus.root).resolve())
 
@@ -849,7 +849,7 @@ def notation(
         )
         sys.exit(EXIT_ERROR)
     if write:
-        # The same guard `build --in-place` uses: the only thing that makes a
+        # The same guard `build --edit` uses: the only thing that makes a
         # sweep over thousands of files revertible is git.
         require_clean_worktree(
             Path(ctx.profile.corpus.root).resolve(), allow_dirty=allow_dirty
@@ -1115,14 +1115,18 @@ def _report_table(reports: list) -> Table:
 @click.option(
     "--in-place",
     is_flag=True,
-    help="Write the PDF beside the original instead of into the output directory. Refuses on a dirty git worktree (see --allow-dirty).",
+    help=(
+        "Write the PDF beside the original, in the assignment's own folder, "
+        "instead of into the output directory. No .tex is edited, so a dirty "
+        "git worktree is fine."
+    ),
 )
 @click.option(
     "--edit",
     is_flag=True,
     help=(
         "Rewrite the corpus .tex in place, so the folder builds with a bare "
-        "pdflatex. Implies --in-place. Refuses on a dirty git worktree (see "
+        "pdflatex. The default. Refuses on a dirty git worktree (see "
         "--allow-dirty); undo with `latexally revert`."
     ),
 )

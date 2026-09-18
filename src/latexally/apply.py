@@ -532,24 +532,87 @@ def _add_caption(plan: ApplyPlan, reference: FigureRef, text: str) -> bool:
     return True
 
 
+def _starts_line(plan: ApplyPlan, reference: FigureRef) -> bool:
+    r"""True when nothing but whitespace precedes the graphic on its line.
+
+    The other half of ``_continues_line``: a graphic with text before it is
+    mid-sentence however the line ends, and floating it would pull it out of
+    that sentence just as surely as floating one with text after it.
+    """
+    line_start = plan.original.rfind("\n", 0, reference.start) + 1
+    return not plan.original[line_start : reference.start].strip()
+
+
+#: Environments a lone graphic is centred in. A graphic that is the whole of
+#: one of these is a figure; one sharing it with other content is a row or a
+#: table-like layout, and floating it would pull it out of that arrangement.
+_CENTRING_ENVIRONMENTS = ("center", "flushleft", "flushright")
+
+
+def _enclosing_centring(text: str, reference: FigureRef) -> tuple[int, int] | None:
+    r"""``(body_start, end_start)`` of the centring environment around the
+    graphic, or None when it is not inside one."""
+    for name in _CENTRING_ENVIRONMENTS:
+        opener = f"\\begin{{{name}}}"
+        start = text.rfind(opener, 0, reference.start)
+        if start == -1:
+            continue
+        closer = f"\\end{{{name}}}"
+        if text.find(closer, start, reference.start) != -1:
+            continue  # this one closed again before the graphic
+        end = text.find(closer, reference.end)
+        if end == -1:
+            continue
+        return start + len(opener), end
+    return None
+
+
+def _floating_obstacle(plan: ApplyPlan, reference: FigureRef) -> str | None:
+    r"""Why the graphic cannot be floated, or None when it can be.
+
+    ``\caption`` is legal only inside a float, so a captionless graphic with no
+    float around it needs one put around it -- but only where floating it
+    cannot tear apart the layout it sits in. Three things make that safe: the
+    graphic begins its line, nothing follows it on that line, and if a
+    ``center`` (or ``flushleft``/``flushright``) holds it, the graphic is the
+    whole of that environment. Two ``\includegraphics`` side by side inside one
+    ``center`` are a row, not a figure: floating either would drop the other
+    out of the arrangement the author built.
+    """
+    if _continues_line(plan, reference) or not _starts_line(plan, reference):
+        return (
+            "inline in running text; floating it would break the sentence "
+            "around it, so no caption was added"
+        )
+    span = _enclosing_centring(plan.original, reference)
+    if span is not None:
+        body_start, end = span
+        if (
+            plan.original[body_start : reference.start].strip()
+            or plan.original[reference.end : end].strip()
+        ):
+            return (
+                "shares its centring group with other content; floating it "
+                "would break that arrangement, so no caption was added"
+            )
+    return None
+
+
 def _float_and_caption(plan: ApplyPlan, reference: FigureRef) -> bool:
     r"""Wrap a floatless figure in ``figure`` so a caption can legally sit on it.
 
-    Only for a figure that already stands on its own line. An inline
-    ``\includegraphics`` mid-sentence cannot be floated without breaking the
-    sentence around it -- the same distinction ``_wrap_described`` and
-    ``_wrap_placeholder`` already draw between their block and inline forms --
-    so that case is left with a caption unwritten and a reason logged, same as
-    before this existed.
+    Only for a figure that stands on its own: alone on its line, and alone in
+    its centring group. Anything less cannot be floated without breaking the
+    sentence or the row it sits in -- the same distinction ``_wrap_described``
+    and ``_wrap_placeholder`` already draw between their block and inline forms
+    -- so it is left with a caption unwritten and a reason logged, same as
+    before this existed. A raster gets no exemption: ``\includegraphics``
+    inside ``\begin{center}`` is the commonest figure in this corpus, and the
+    old blanket ``is_raster`` guard skipped every one of them.
     """
-    if reference.is_raster or _continues_line(plan, reference):
-        plan.skipped.append(
-            (
-                reference.id,
-                "inline in running text; floating it would break the "
-                "sentence around it, so no caption was added",
-            )
-        )
+    obstacle = _floating_obstacle(plan, reference)
+    if obstacle is not None:
+        plan.skipped.append((reference.id, obstacle))
         return False
     _ensure_axis_height(plan, reference)
     _ensure_axis_trim(plan, reference)

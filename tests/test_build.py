@@ -1296,6 +1296,38 @@ def test_a_stale_copy_beside_the_driver_is_swept(tmp_path: Path):
     assert (corpus / "latexally-core.sty").is_file()
 
 
+def test_copy_back_covers_the_drivers_shared_dependencies(tmp_path: Path):
+    r"""The bug this pins: `edit` mode's write-back walked only the assignment's
+    own mirrored folder, but a driver `\input`s the shared question bank three
+    levels up and that is where the captions land. The driver came back
+    captioned and the question file it includes did not.
+
+    Measured on `fa26/hw/4`: `ally-out/tex/questionBank/hw/4/q_squarewave.tex`
+    gained `\caption{<<TODO:...>>}` after each `\end{tikzpicture}`, while the
+    corpus `questionBank/hw/4/q_squarewave.tex` was left exactly as it was --
+    so the caption "never generated" as far as anyone editing that file could
+    see, however many times the run was repeated.
+    """
+    from latexally.build import copy_back
+
+    corpus, prepared, config, profile = _edit_run(
+        tmp_path,
+        "\\input{../../../questionBank/hw/1/q_x}\n\\begin{document}x\\end{document}\n",
+    )
+    corpus_shared = corpus / "questionBank" / "hw" / "1"
+    mirror_shared = corpus / "ally-out" / "tex" / "questionBank" / "hw" / "1"
+    corpus_shared.mkdir(parents=True)
+    mirror_shared.mkdir(parents=True)
+    (corpus_shared / "q_x.tex").write_text("\\begin{tikzpicture}\n\\end{tikzpicture}\n")
+    (mirror_shared / "q_x.tex").write_text(
+        "\\begin{tikzpicture}\n\\end{tikzpicture}\n\\caption{<<TODO:fig-abc>>}\n"
+    )
+
+    copy_back(prepared, config, profile)
+
+    assert "\\caption{<<TODO:fig-abc>>}" in (corpus_shared / "q_x.tex").read_text()
+
+
 def test_a_second_edit_run_reconverts_instead_of_stacking():
     r"""`edit` writes its preamble into the corpus, and the next run reads that
     back: converting it again gave a second `\DocumentMetadata`, which is a hard

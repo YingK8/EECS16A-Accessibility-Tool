@@ -140,24 +140,24 @@ A graphic listed in the profile's `figures.artifact_allowlist` is wrapped in
 `\begin{Decorative}` instead — an artifact a reader skips entirely. That list is
 hand-curated; nothing is ever inferred from a filename.
 
-**Your `.tex` is not edited unless you ask.** By default a run writes an
-assignment's output into that assignment's own `accessible/` folder — the
-converted `.tex`, the PDF and the logs together — and leaves your sources
-alone:
+**A run rewrites your `.tex` by default.** `edit` mode writes the converted
+sources back over the corpus originals, installs the `latexally-*.sty` they
+need, and puts the PDFs in `ally-out/pdf/` — so the folder builds with a bare
+`pdflatex` afterwards. It refuses to start on a dirty git worktree, which is
+what makes `latexally revert` a total undo:
 
 ```
 fa26/hw/1/
-├── prob1.tex                  your source, untouched
-└── accessible/
-    ├── pdf/                   the tagged PDFs
-    ├── tex/                   what they were built from
-    └── logs/
+├── prob1.tex                  rewritten: tagged, captioned, described
+└── …
+ally-out/
+├── pdf/                       the tagged PDFs
+└── descriptions/              alt-text worklogs
 ```
 
-The captions and markers go into the copies under `accessible/tex/`. `--edit`
-is what puts them over the originals instead, and it refuses to start on a
-dirty git worktree so the undo below stays total. `-o` with `mirror` mode keeps
-everything in one tree away from the corpus.
+The captions and markers go into the sources themselves. `--in-place` writes
+the PDF beside the document instead and edits nothing; `-o` with `mirror` mode
+keeps everything in one tree away from the corpus.
 
 Alt-text worklogs stay in `ally-out/descriptions/` rather than moving into each
 assignment: one description serves every assignment that inputs the figure.

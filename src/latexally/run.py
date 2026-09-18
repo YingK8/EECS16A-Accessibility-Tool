@@ -455,10 +455,13 @@ class Output:
     #: names one. A bare relative default meant "wherever you happened to be
     #: standing", which put a run's output inside the tool's own checkout.
     root: Path = Path("ally-out")
-    #: ``in-place``: the PDF lands beside the document it was built from, which
-    #: is where someone looking for it expects it. Still not a licence to edit
-    #: the source -- only ``edit`` does that.
-    write_mode: str = "in-place"
+    #: ``edit``: the converted sources are written back over the corpus
+    #: originals, so the folder builds with a bare ``pdflatex``; the PDF lands
+    #: in the output tree. ``in-place`` puts the PDF beside the document
+    #: instead and rewrites nothing. Rewriting course material is a real
+    #: consequence, which is why ``latexally revert`` exists -- and why the
+    #: clean-worktree guard is keyed on this mode.
+    write_mode: str = "edit"
     keep_pdf: bool = True
     keep_logs: bool = True
     keep_tex: bool = True

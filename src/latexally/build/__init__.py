@@ -2063,6 +2063,11 @@ def copy_back(prepared: Prepared, config: RunConfig, profile: Profile) -> list[P
     worst possible failure mode of this tool, so the successful PDF is the
     precondition.
 
+    The files considered are the assignment's mirrored folder plus everything
+    its driver reaches by a relative path -- the same closure
+    :func:`apply_descriptions` edits, so no edit this run made is left behind
+    in the mirror.
+
     Two rules decide what comes back, and both are about what must NOT:
 
     1. **A file must already exist in the corpus.** The mirror holds more than
@@ -2086,7 +2091,18 @@ def copy_back(prepared: Prepared, config: RunConfig, profile: Profile) -> list[P
     corpus_root = profile.corpus.root.resolve()
     written: list[Path] = []
 
-    for source in sorted(prepared.work_dir.rglob("*")):
+    # `work_dir` is only the assignment's own mirrored folder, and the edits a
+    # run makes are not confined to it: a driver `\input`s the shared question
+    # bank three levels up, and `apply_descriptions` writes the captions and
+    # `Described` wrappers into those mirrored copies. Walking `work_dir` alone
+    # therefore dropped every one of them -- the driver came back with a
+    # caption while the shared question file it includes did not, and the next
+    # run regenerated the same unwritten edit from the corpus. The driver's
+    # dependency closure is exactly the set `apply_descriptions` edited.
+    sources = set(prepared.work_dir.rglob("*"))
+    sources.update(relative_dependencies(prepared.driver))
+
+    for source in sorted(sources):
         if not source.is_file() or source.name.endswith(f"-{ORIGINAL_SUFFIX}.tex"):
             continue
         try:
@@ -2510,8 +2526,8 @@ def build_run(
     # `edits_sources`, NOT `in_place`: git is what makes a REWRITTEN source
     # revertible, and `in-place` rewrites nothing -- it only chooses where the
     # finished PDF lands. Guarding on `in_place` demanded a clean worktree of
-    # every run that wanted its PDF beside the document, which is now the
-    # default and would have made the default unusable in a dirty checkout.
+    # every run that wanted its PDF beside the document, which would have made
+    # `in-place` unusable in a dirty checkout.
     if config.write and config.output.edits_sources:
         require_clean_worktree(
             profile.corpus.root.resolve(),

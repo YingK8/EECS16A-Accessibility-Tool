@@ -548,3 +548,80 @@ def test_inline_raster_is_left_alone_rather_than_floated(
     assert plan.captioned == 0
     assert plan.skipped and "inline" in plan.skipped[0][1]
     assert plan.buffer.apply(plan.original) == plan.original
+
+
+def test_centred_raster_is_floated_and_captioned(profile: Profile, tmp_path: Path):
+    r"""`\begin{center}\includegraphics\end{center}` is a figure, not a sentence.
+
+    The commonest figure in this corpus, and the one `caption` mode's promise --
+    every figure, not just the ones already inside a float -- was broken for:
+    the guard skipped any graphic whose `kind` was `includegraphics`, so a
+    lone centred image never got a caption at all. Found in the converted
+    `ally-out` tree: `questionBank/sec/11/q_simple_least_squares.tex` came
+    through with its centred diagram still captionless.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{center}\n"
+        "\\includegraphics[width=\\textwidth]{figures/diagram.png}\n"
+        "\\end{center}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+    out = plan.buffer.apply(plan.original)
+
+    assert plan.captioned == 1
+    assert not plan.skipped
+    assert "\\begin{figure}[h!]" in out
+    assert "\\caption{<<TODO:" in out
+    # the graphic itself is untouched between the wrapper's two insertions
+    assert "\\includegraphics[width=\\textwidth]{figures/diagram.png}" in out
+
+
+def test_raster_sharing_a_centring_group_is_left_alone(profile: Profile, tmp_path: Path):
+    r"""Two images side by side are a row, not a figure.
+
+    `questionBank/sec/1/q_vectors.tex` centres a pair of vector plots in one
+    `center`. Floating either one would drop the other out of the arrangement,
+    so the pair is left alone even though each is alone on its own line.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "\\begin{center}\n"
+        "\\includegraphics[width=4cm]{figures/one.png}\n"
+        "\\hspace{5em}\n"
+        "\\includegraphics[width=4cm]{figures/two.png}\n"
+        "\\end{center}\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+
+    assert plan.captioned == 0
+    assert plan.skipped and "centring group" in plan.skipped[0][1]
+    assert plan.buffer.apply(plan.original) == plan.original
+
+
+def test_raster_with_text_before_it_is_left_alone(profile: Profile, tmp_path: Path):
+    r"""A graphic that does not begin its line is mid-sentence, not a figure.
+
+    `_continues_line` alone would call this one block-level -- nothing follows
+    it on the line -- yet floating it would tear it away from the sentence it
+    belongs to.
+    """
+    path = tmp_path / "q.tex"
+    path.write_text(
+        "\\begin{document}\n"
+        "The block diagram below \\includegraphics{figures/diagram.png}\n"
+        "shows the whole system.\n"
+        "\\end{document}\n"
+    )
+
+    plan = plan_file(path, profile, {}, captions=True)
+
+    assert plan.captioned == 0
+    assert plan.skipped and "inline" in plan.skipped[0][1]
+    assert plan.buffer.apply(plan.original) == plan.original

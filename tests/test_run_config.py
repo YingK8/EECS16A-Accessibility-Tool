@@ -319,16 +319,17 @@ def test_output_directories_are_distinct_and_under_the_root():
         assert directory.is_relative_to(output.root)
 
 
-def test_in_place_is_the_default_write_mode():
-    """The PDF lands beside the document; the corpus .tex is still read-only.
+def test_edit_is_the_default_write_mode():
+    """The default rewrites the corpus `.tex`, and only when `write` is set.
 
-    `in-place` names where the finished PDF goes, not a licence to edit -- so
-    the default puts the output where someone looking for it expects it while
-    `edits_sources` stays false. Only `edit` rewrites course material.
+    `edit` is the mode with consequences for somebody's course repository, so
+    it is the one whose default is worth pinning. `write` is what actually
+    commits a run and it stays false, so a default config still writes
+    nothing; the mode only says where output would go.
     """
-    assert Output().write_mode == "in-place"
+    assert Output().write_mode == "edit"
     assert Output().in_place is True
-    assert Output().edits_sources is False
+    assert Output().edits_sources is True
     assert RunConfig().write is False
 
 
